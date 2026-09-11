@@ -30,4 +30,16 @@ Describe 'StableAMD clean-package acceptance harness' {
         $script | Should -Match 'PlanOnly'
         $script | Should -Match 'runtimePlan'
     }
+
+    It 'actually builds a clean package and resolves its locked runtime plan offline' {
+        $acceptanceRoot = Join-Path $TestDrive 'acceptance-package-plan'
+        $report = & $acceptancePath -RepoRoot $repoRoot -AcceptanceRoot $acceptanceRoot -PlanOnly
+
+        $report.mode | Should -Be 'plan-only'
+        Test-Path $report.packageRoot | Should -BeTrue
+        Test-Path (Join-Path $report.packageRoot '.runtime') | Should -BeFalse
+        $report.runtimePlan.GfxTarget | Should -Be 'gfx1030'
+        $report.runtimePlan.TorchPackage | Should -Be 'torch[device-gfx1030]==2.13.0+rocm10.1.0a20260822'
+        $report.runtimePlan.ComfyCommit | Should -Be '40c4fcdf513a4523e39d54a9d391908af8df8171'
+    }
 }
