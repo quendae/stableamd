@@ -107,4 +107,21 @@ function Get-StableAmdSpikeEnvironment {
     return $result
 }
 
-Export-ModuleMember -Function Resolve-StableAmdGfxTarget, Get-StableAmdSupportTier, New-StableAmdPreflightRecord, Get-StableAmdSpikeEnvironment
+function Test-StableAmdDotNet8Sdk {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$SdkList
+    )
+
+    foreach ($sdk in $SdkList) {
+        if ([string]$sdk -match '^8\.0\.\d+\s') {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+Export-ModuleMember -Function Resolve-StableAmdGfxTarget, Get-StableAmdSupportTier, New-StableAmdPreflightRecord, Get-StableAmdSpikeEnvironment, Test-StableAmdDotNet8Sdk
