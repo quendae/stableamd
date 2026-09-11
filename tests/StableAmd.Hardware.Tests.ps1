@@ -82,3 +82,27 @@ Describe 'Test-StableAmdDotNet8Sdk' {
         Test-StableAmdDotNet8Sdk -SdkList @() | Should -BeFalse
     }
 }
+
+Describe 'Resolve-StableAmdSwarmUrl' {
+    It 'uses the actual port reported by SwarmUI instead of assuming 7801' {
+        $url = Resolve-StableAmdSwarmUrl -LogLines @(
+            '14:23:57.138 [Init] Launching server...',
+            '14:23:57.153 [Init] Starting webserver on http://localhost:7802',
+            '14:23:57.300 [Init] Swarm is up to date!'
+        )
+        $url | Should -Be 'http://127.0.0.1:7802/'
+    }
+
+    It 'supports the default 7801 port when Swarm reports it' {
+        Resolve-StableAmdSwarmUrl -LogLines @(
+            '[Init] Starting webserver on http://localhost:7801'
+        ) | Should -Be 'http://127.0.0.1:7801/'
+    }
+
+    It 'returns null before the server URL appears in the log' {
+        Resolve-StableAmdSwarmUrl -LogLines @(
+            '[Init] Prepping webserver...',
+            '[Init] Launching server...'
+        ) | Should -BeNullOrEmpty
+    }
+}
