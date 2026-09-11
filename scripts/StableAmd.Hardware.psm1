@@ -142,4 +142,22 @@ function Resolve-StableAmdSwarmUrl {
     return $null
 }
 
-Export-ModuleMember -Function Resolve-StableAmdGfxTarget, Get-StableAmdSupportTier, New-StableAmdPreflightRecord, Get-StableAmdSpikeEnvironment, Test-StableAmdDotNet8Sdk, Resolve-StableAmdSwarmUrl
+function Get-StableAmdTheRockInstallArgs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^gfx\d+$')]
+        [string]$GfxTarget
+    )
+
+    return [pscustomobject]@{
+        IndexUrl = 'https://rocm.nightlies.amd.com/whl-multi-arch/'
+        Packages = @(
+            "torch[device-$GfxTarget]",
+            "torchvision[device-$GfxTarget]",
+            'torchaudio'
+        )
+    }
+}
+
+Export-ModuleMember -Function Resolve-StableAmdGfxTarget, Get-StableAmdSupportTier, New-StableAmdPreflightRecord, Get-StableAmdSpikeEnvironment, Test-StableAmdDotNet8Sdk, Resolve-StableAmdSwarmUrl, Get-StableAmdTheRockInstallArgs
