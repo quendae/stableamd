@@ -96,7 +96,8 @@ Describe 'Resolve-StableAmdSwarmUrl' {
     It 'supports the default 7801 port when Swarm reports it' {
         Resolve-StableAmdSwarmUrl -LogLines @(
             '[Init] Starting webserver on http://localhost:7801'
-        ) | Should -Be 'http://127.0.0.1:7801/'
+        )
+        $url | Should -Be 'http://127.0.0.1:7801/'
     }
 
     It 'returns null before the server URL appears in the log' {
@@ -147,5 +148,17 @@ Describe 'TheRock ComfyUI integration gate' {
         $script | Should -Not -Match 'pip show \$legacyPackage'
         $script | Should -Not -Match 'robocopy\.exe'
         $script | Should -Not -Match 'Remove-Item.*SwarmUI[\\/]dlbackend[\\/]comfy'
+    }
+
+    It 'launches ComfyUI through a Python bootstrap that injects the isolated checkout into sys.path' {
+        $runnerPath = Join-Path $PSScriptRoot '../scripts/probes/run_comfy_isolated.py'
+        Test-Path $runnerPath | Should -BeTrue
+
+        $runner = Get-Content $runnerPath -Raw
+        $runner | Should -Match 'sys\.path\.insert\(0, comfy_root\)'
+        $runner | Should -Match 'runpy\.run_path'
+
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Test-TheRockComfy.ps1') -Raw
+        $script | Should -Match 'run_comfy_isolated\.py'
     }
 }
