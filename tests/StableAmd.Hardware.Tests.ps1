@@ -94,7 +94,7 @@ Describe 'Resolve-StableAmdSwarmUrl' {
     }
 
     It 'supports the default 7801 port when Swarm reports it' {
-        Resolve-StableAmdSwarmUrl -LogLines @(
+        $url = Resolve-StableAmdSwarmUrl -LogLines @(
             '[Init] Starting webserver on http://localhost:7801'
         )
         $url | Should -Be 'http://127.0.0.1:7801/'
