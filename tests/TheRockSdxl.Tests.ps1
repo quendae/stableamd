@@ -22,4 +22,25 @@ Describe 'TheRock SDXL generation gate' {
         $script | Should -Match ([regex]::Escape(".Replace('\', '/')"))
         $script | Should -Not -Match ([regex]::Escape(".Replace('\\', '/')"))
     }
+
+    It 'validates safetensors bounds before starting ComfyUI' {
+        $validatorPath = Join-Path $PSScriptRoot '../scripts/probes/validate_safetensors.py'
+        Test-Path $validatorPath | Should -BeTrue
+
+        $validator = Get-Content $validatorPath -Raw
+        $validator | Should -Match 'data_offsets'
+        $validator | Should -Match 'file_size'
+        $validator | Should -Match 'valid'
+
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Test-TheRockSdxl.ps1') -Raw
+        $script | Should -Match 'validate_safetensors\.py'
+        $script | Should -Match 'Checkpoint safetensors is incomplete or corrupt'
+    }
+
+    It 'stops polling immediately when ComfyUI records an execution error' {
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Test-TheRockSdxl.ps1') -Raw
+        $script | Should -Match "status_str"
+        $script | Should -Match "-eq 'error'"
+        $script | Should -Match 'ComfyUI reported an SDXL execution error'
+    }
 }
