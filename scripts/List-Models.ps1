@@ -26,12 +26,11 @@ foreach ($root in @($config.models.roots)) {
 
 $discovered = @(Find-StableAmdCheckpoints -Roots $roots)
 if ($NoRegistryUpdate) {
-    Write-Output -NoEnumerate ([object[]]$discovered)
-    return
+    return ,([object[]]$discovered)
 }
 
 $existing = Read-StableAmdModelRegistry -Path $paths.ModelsRegistryPath
 $registry = Merge-StableAmdModelRegistry -ExistingRegistry $existing -DiscoveredModels $discovered
 Write-StableAmdModelRegistry -Path $paths.ModelsRegistryPath -Registry $registry
 
-Write-Output -NoEnumerate ([object[]]@($registry.models))
+return ,([object[]]@($registry.models))
