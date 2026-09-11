@@ -4,7 +4,7 @@ StableAMD is a Windows-first local AI image-generation application focused on AM
 
 ## Current status
 
-StableAMD is currently a **v0.1 product candidate**. The application, packaging and clean-package bootstrap are implemented; the remaining release gate is running the packaged bootstrap and product acceptance flow end-to-end on the target RX 6950 XT.
+StableAMD is currently a **v0.1 product candidate**. The clean-package runtime acceptance now passes on the target **RX 6950 XT**, including private runtime bootstrap, native Radeon FP16 compute, managed ComfyUI startup and the StableAMD application API. The remaining release gate is the full product flow: model folder -> scan -> SDXL generation -> Gallery.
 
 The hardware feasibility path has already been proven on **AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)**:
 
@@ -31,7 +31,8 @@ The machine-readable release lock is in [`config/runtime-lock.v0.1.json`](config
 - RX 6950 XT / `gfx1030` detection and diagnostics;
 - StableAMD product API instead of arbitrary ComfyUI workflow execution;
 - SDXL txt2img generation with prompt, negative prompt, model, size, steps, CFG and seed;
-- local model discovery/import and Hugging Face checkpoint download;
+- recursive model-folder discovery that uses existing checkpoints in place without copying them;
+- optional single-file local import plus Hugging Face checkpoint download;
 - safetensors structural validation and optional SHA-256 verification;
 - generation history and Gallery metadata;
 - responsive local web UI;
@@ -69,7 +70,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1 -SkipRun
 
 ## Models
 
-StableAMD can register/import local `.safetensors` checkpoints and download a file from Hugging Face through the product model flow. Existing SwarmUI Stable Diffusion model folders can also be discovered when present.
+The recommended local workflow is **Models -> Add folder -> Scan models**. StableAMD stores the selected Windows folder in its local configuration, scans it recursively for `.safetensors` checkpoints and passes that folder directly to ComfyUI through the generated `extra_model_paths.yaml`. Multi-gigabyte checkpoints stay in their original location and are not copied.
+
+Use **Browse folder...** to open the native Windows folder picker, or paste a path such as `D:\AI\Models`. Adding or removing a folder automatically refreshes the managed backend when it is running so ComfyUI sees the new search path immediately.
+
+Single-file copy/move import and resumable Hugging Face download remain available under **Other ways to add models**. Existing SwarmUI Stable Diffusion folders are also discovered when present.
 
 The official SDXL 1.0 base checkpoint is the v0.1 compatibility reference. LoRA, ControlNet, inpainting, Flux and video generation are intentionally deferred.
 
@@ -90,6 +95,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Stop-StableAMD.ps1
 
 # List/discover models
 powershell -ExecutionPolicy Bypass -File .\scripts\List-Models.ps1
+
+# List configured model folders
+powershell -ExecutionPolicy Bypass -File .\scripts\Get-ModelRoots.ps1
+
+# Add an existing model library without copying it
+powershell -ExecutionPolicy Bypass -File .\scripts\Add-ModelRoot.ps1 -Path 'D:\AI\Models'
 
 # Build the source-only v0.1 package
 powershell -ExecutionPolicy Bypass -File .\scripts\Build-StableAMDPackage.ps1
@@ -112,7 +123,7 @@ dist\StableAMD-0.1.0.zip
 
 ## Development and validation
 
-The automated CI suite covers PowerShell parsing, Python API contracts, runtime/model/generation/frontend contracts, launcher behavior, packaging, the exact no-network runtime plan and a real plan-only package build. GPU/runtime downloads are intentionally not performed on GitHub-hosted runners.
+The automated CI suite covers PowerShell parsing, Python API contracts, runtime/model/generation/frontend contracts, Windows PowerShell 5.1 registry compatibility, model-folder configuration, launcher behavior, packaging, the exact no-network runtime plan and a real plan-only package build. GPU/runtime downloads are intentionally not performed on GitHub-hosted runners.
 
 The final target-machine procedure is in [`docs/v0.1-validation.md`](docs/v0.1-validation.md). The earlier feasibility work remains in [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md).
 
