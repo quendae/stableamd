@@ -25,6 +25,30 @@ if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
     $RuntimeRoot = Join-Path $repoRoot '.runtime'
 }
 
+function Show-StableAmdLogTail {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [string]$Label,
+        [int]$Lines = 80
+    )
+
+    Write-Host ''
+    Write-Host "===== $Label (last $Lines lines) =====" -ForegroundColor DarkCyan
+    if (Test-Path $Path) {
+        $content = @(Get-Content -Path $Path -Tail $Lines -ErrorAction SilentlyContinue)
+        if ($content.Count -gt 0) {
+            $content | ForEach-Object { Write-Host $_ }
+        }
+        else {
+            Write-Host '<log is empty>' -ForegroundColor DarkGray
+        }
+    }
+    else {
+        Write-Host '<log file was not created>' -ForegroundColor DarkGray
+    }
+}
+
 $git = Get-Command git -ErrorAction SilentlyContinue
 if ($null -eq $git) {
     throw 'Git is required. Install Git for Windows, reopen PowerShell, then rerun this script.'
@@ -32,8 +56,15 @@ if ($null -eq $git) {
 
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if ($null -eq $dotnet) {
-    throw 'The .NET SDK is required for this manual SwarmUI spike path. Install the current .NET 8 SDK (and optionally .NET 10 as recommended upstream), reopen PowerShell, then rerun this script.'
+    throw 'SwarmUI 0.9.8 requires the .NET 8 SDK. Install it with: winget install Microsoft.DotNet.SDK.8 --accept-source-agreements --accept-package-agreements ; then reopen PowerShell and rerun this script.'
 }
+
+$dotnetSdks = @(& $dotnet.Source --list-sdks 2>&1 | ForEach-Object { [string]$_ })
+if (-not (Test-StableAmdDotNet8Sdk -SdkList $dotnetSdks)) {
+    $installed = if ($dotnetSdks.Count -gt 0) { $dotnetSdks -join '; ' } else { '<none>' }
+    throw "SwarmUI $SwarmRef targets net8.0, but no .NET 8 SDK was detected. Installed SDKs: $installed. Install it with: winget install Microsoft.DotNet.SDK.8 --accept-source-agreements --accept-package-agreements"
+}
+Write-Host "Detected .NET 8 SDK: $($dotnetSdks | Where-Object { $_ -match '^8\.0\.' } | Select-Object -First 1)" -ForegroundColor DarkGreen
 
 $swarmPath = Join-Path $RuntimeRoot 'SwarmUI'
 $diagnosticsPath = Join-Path $repoRoot 'diagnostics'
@@ -130,7 +161,14 @@ while ((Get-Date) -lt $deadline) {
 
 $exitCode = $null
 if ($process.HasExited) {
-    $exitCode = $process.ExitCode
+    $process.WaitForExit()
+    $process.Refresh()
+    try {
+        $exitCode = $process.ExitCode
+    }
+    catch {
+        $exitCode = $null
+    }
 }
 
 $result = [pscustomobject]@{
@@ -143,6 +181,7 @@ $result = [pscustomobject]@{
     ExitCode = $exitCode
     HttpReachable = $reachable
     Url = 'http://127.0.0.1:7801/'
+    DotNetSdks = @($dotnetSdks)
     StdoutLog = $stdoutPath
     StderrLog = $stderrPath
 }
@@ -160,13 +199,18 @@ if ($reachable) {
 }
 else {
     Write-Warning 'SwarmUI did not become reachable within the startup window.'
-    Write-Host "stdout: $stdoutPath"
-    Write-Host "stderr: $stderrPath"
-    Write-Host "report: $resultPath"
+    Show-StableAmdLogTail -Path $stdoutPath -Label 'SwarmUI stdout'
+    Show-StableAmdLogTail -Path $stderrPath -Label 'SwarmUI stderr'
+    Write-Host ''
+    Write-Host "Full stdout: $stdoutPath"
+    Write-Host "Full stderr: $stderrPath"
+    Write-Host "Report: $resultPath"
+
     if ($process.HasExited) {
-        throw "SwarmUI exited with code $($process.ExitCode). Review the diagnostic logs."
+        $exitText = if ($null -eq $exitCode) { '<unavailable>' } else { [string]$exitCode }
+        throw "SwarmUI exited with code $exitText. The relevant log tail is printed above."
     }
-    throw 'SwarmUI is still running but did not answer on port 7801. Review the diagnostic logs.'
+    throw 'SwarmUI is still running but did not answer on port 7801. The relevant log tail is printed above.'
 }
 
 return $result
