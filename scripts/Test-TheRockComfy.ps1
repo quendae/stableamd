@@ -134,22 +134,40 @@ Write-Host "Python:           $theRockPython"
 Write-Host 'The original SwarmUI/ComfyUI backend will not be modified.' -ForegroundColor DarkGray
 
 # The isolated Python may have been cloned before StableAMD learned to remove
-# AMD portable's legacy ROCm 7.2 custom library bundle. If it is still present,
-# remove it and then force-reinstall the matching TheRock rocm-sdk-libraries wheel
-# so no overlapping files are accidentally left missing.
+# AMD portable's legacy ROCm 7.2 custom library bundle. Query the installed
+# package list in one successful pip command instead of using `pip show` on an
+# absent package: Windows PowerShell 5.1 can turn that harmless stderr warning
+# into a terminating NativeCommandError when ErrorActionPreference is Stop.
 $legacyPackage = 'rocm-sdk-libraries-custom'
-$legacyShow = @(& $theRockPython -s -m pip show $legacyPackage 2>$null)
-$legacyWasPresent = ($LASTEXITCODE -eq 0 -and $legacyShow.Count -gt 0)
+$pipListRaw = @()
+$oldEap = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $pipListRaw = @(& $theRockPython -s -m pip list --format=json 2>$null | ForEach-Object { [string]$_ })
+    $pipListExit = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $oldEap
+}
+if ($pipListExit -ne 0) {
+    throw 'Could not query packages installed in the isolated TheRock environment.'
+}
+
+try {
+    $pipPackages = @(($pipListRaw -join "`n") | ConvertFrom-Json)
+}
+catch {
+    throw "Could not parse pip package list from the isolated TheRock environment: $($_.Exception.Message)"
+}
+
+$legacyPackageInfo = $pipPackages | Where-Object { $_.name -ieq $legacyPackage } | Select-Object -First 1
+$legacyWasPresent = $null -ne $legacyPackageInfo
 if ($legacyWasPresent) {
-    $rocmLibrariesShow = @(& $theRockPython -s -m pip show 'rocm-sdk-libraries' 2>$null)
-    if ($LASTEXITCODE -ne 0) {
+    $rocmLibrariesInfo = $pipPackages | Where-Object { $_.name -ieq 'rocm-sdk-libraries' } | Select-Object -First 1
+    if ($null -eq $rocmLibrariesInfo -or [string]::IsNullOrWhiteSpace([string]$rocmLibrariesInfo.version)) {
         throw 'rocm-sdk-libraries is missing from the isolated TheRock environment. Re-run Test-TheRockGfx1030.ps1 -Reset.'
     }
-    $versionLine = $rocmLibrariesShow | Where-Object { $_ -match '^Version:\s*(.+)$' } | Select-Object -First 1
-    if (-not $versionLine -or $versionLine -notmatch '^Version:\s*(.+)$') {
-        throw 'Could not determine the installed rocm-sdk-libraries version.'
-    }
-    $rocmLibrariesVersion = $Matches[1].Trim()
+    $rocmLibrariesVersion = [string]$rocmLibrariesInfo.version
 
     Write-Host "Removing legacy $legacyPackage from the isolated environment..." -ForegroundColor Yellow
     $oldEap = $ErrorActionPreference
