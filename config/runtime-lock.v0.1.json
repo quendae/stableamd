@@ -10,6 +10,8 @@
   },
   "runtime": {
     "python": "3.12.10",
+    "pythonDistribution": "embed-amd64",
+    "pythonArchiveSha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
     "indexUrl": "https://rocm.nightlies.amd.com/whl-multi-arch/",
     "deviceExtra": "device-gfx1030",
     "torch": "2.13.0+rocm10.1.0a20260822",
