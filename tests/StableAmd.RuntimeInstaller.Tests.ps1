@@ -10,10 +10,9 @@ Describe 'StableAMD clean-machine runtime bootstrap' {
 
         $plan = & $installerPath -RepoRoot $repoRoot -PlanOnly
         $plan.PythonVersion | Should -Be '3.12.10'
+        $plan.PythonDistribution | Should -Be 'nuget-x64'
+        $plan.PythonPackageUrl | Should -Be 'https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg'
         $plan.GfxTarget | Should -Be 'gfx1030'
-        $plan.PythonArchiveUrl | Should -Be 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip'
-        $plan.PythonArchiveSha256 | Should -Be '4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3'
-        $plan.GetPipUrl | Should -Be 'https://bootstrap.pypa.io/get-pip.py'
         $plan.TheRockIndexUrl | Should -Be 'https://rocm.nightlies.amd.com/whl-multi-arch/'
         $plan.TorchPackage | Should -Be 'torch[device-gfx1030]==2.13.0+rocm10.1.0a20260822'
         $plan.TorchVisionPackage | Should -Be 'torchvision[device-gfx1030]==0.28.0+rocm10.1.0a20260822'
@@ -22,13 +21,15 @@ Describe 'StableAMD clean-machine runtime bootstrap' {
         $plan.ComfyCommit | Should -Be '40c4fcdf513a4523e39d54a9d391908af8df8171'
     }
 
-    It 'uses an actually portable embedded Python runtime so repeated isolated installs do not register globally' {
+    It 'uses the official side-by-side CPython NuGet runtime with bundled pip' {
         $script = Get-Content -Path $installerPath -Raw
-        $script | Should -Match 'python-\$pythonVersion-embed-amd64\.zip'
-        $script | Should -Match 'Expand-Archive'
-        $script | Should -Match 'python312\._pth'
-        $script | Should -Match 'import site'
-        $script | Should -Match 'get-pip\.py'
+        $script | Should -Match 'api\.nuget\.org/v3-flatcontainer/python/'
+        $script | Should -Match 'python\.\$pythonVersion\.nupkg'
+        $script | Should -Match "Join-Path\s+\$[^\s]+\s+'tools'"
+        $script | Should -Match 'python\.exe'
+        $script | Should -Match "'-m',\s*'pip',\s*'--version'"
+        $script | Should -Not -Match 'get-pip\.py'
+        $script | Should -Not -Match 'python312\._pth'
         $script | Should -Not -Match 'Start-Process\s+-FilePath\s+\$pythonInstaller'
         $script | Should -Not -Match 'InstallAllUsers=0'
     }
