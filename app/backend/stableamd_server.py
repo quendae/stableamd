@@ -125,11 +125,25 @@ class PowerShellBridge:
     def status(self) -> Any:
         return self._run_script("Get-StableAMDStatus.ps1")
 
-    def models(self) -> Any:
-        result = self._run_script("List-Models.ps1")
+    @staticmethod
+    def _normalize_model_payload(result: Any) -> list[Any]:
         if result is None:
             return []
+        if isinstance(result, dict):
+            if "models" in result:
+                nested = result.get("models")
+                if nested is None:
+                    return []
+                return nested if isinstance(nested, list) else [nested]
+            if "value" in result and "Count" in result:
+                nested = result.get("value")
+                if nested is None:
+                    return []
+                return nested if isinstance(nested, list) else [nested]
         return result if isinstance(result, list) else [result]
+
+    def models(self) -> Any:
+        return self._normalize_model_payload(self._run_script("List-Models.ps1"))
 
     def scan_models(self) -> Any:
         return self.models()
@@ -144,31 +158,25 @@ class PowerShellBridge:
         result = self._run_script("Browse-ModelRoot.ps1")
         return result or {"cancelled": True, "path": None}
 
-    def _restart_backend_if_running(self) -> Any:
+    def _backend_restart_required(self) -> bool:
         status = self.status()
-        if isinstance(status, dict) and bool(status.get("Healthy")):
-            return self._run_script("Start-StableAMD.ps1", [("ForceRestart", True)])
-        return status
+        return isinstance(status, dict) and bool(status.get("Healthy"))
 
     def add_model_root(self, path: str) -> Any:
         result = self._run_script("Add-ModelRoot.ps1", [("Path", path)]) or {}
-        backend = None
-        if isinstance(result, dict) and result.get("added"):
-            backend = self._restart_backend_if_running()
+        restart_required = bool(isinstance(result, dict) and result.get("added") and self._backend_restart_required())
         models = self.models()
         if isinstance(result, dict):
-            return {**result, "backend": backend, "models": models}
-        return {"added": False, "path": path, "backend": backend, "models": models}
+            return {**result, "restartRequired": restart_required, "models": models}
+        return {"added": False, "path": path, "restartRequired": False, "models": models}
 
     def remove_model_root(self, path: str) -> Any:
         result = self._run_script("Remove-ModelRoot.ps1", [("Path", path)]) or {}
-        backend = None
-        if isinstance(result, dict) and result.get("removed"):
-            backend = self._restart_backend_if_running()
+        restart_required = bool(isinstance(result, dict) and result.get("removed") and self._backend_restart_required())
         models = self.models()
         if isinstance(result, dict):
-            return {**result, "backend": backend, "models": models}
-        return {"removed": False, "path": path, "backend": backend, "models": models}
+            return {**result, "restartRequired": restart_required, "models": models}
+        return {"removed": False, "path": path, "restartRequired": False, "models": models}
 
     def install_model(self, request: dict[str, Any]) -> Any:
         source = str(request["source"]).lower()
@@ -221,6 +229,9 @@ class PowerShellBridge:
 
     def start_backend(self) -> Any:
         return self._run_script("Start-StableAMD.ps1")
+
+    def restart_backend(self) -> Any:
+        return self._run_script("Start-StableAMD.ps1", [("ForceRestart", True)])
 
     def stop_backend(self) -> Any:
         return self._run_script("Stop-StableAMD.ps1")
@@ -370,6 +381,9 @@ class StableAmdApi:
             if method == "POST" and path == "/api/backend/start":
                 self._decode_json(body)
                 return 200, self.bridge.start_backend()
+            if method == "POST" and path == "/api/backend/restart":
+                self._decode_json(body)
+                return 200, self.bridge.restart_backend()
             if method == "POST" and path == "/api/backend/stop":
                 self._decode_json(body)
                 return 200, self.bridge.stop_backend()
