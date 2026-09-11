@@ -21,7 +21,6 @@ $lock = Get-Content -Path $lockPath -Raw | ConvertFrom-Json
 
 $pythonVersion = [string]$lock.runtime.python
 $pythonDistribution = [string]$lock.runtime.pythonDistribution
-$pythonArchiveSha256 = [string]$lock.runtime.pythonArchiveSha256
 $gfxTarget = [string]$lock.gpu.gfxTarget
 $theRockIndexUrl = [string]$lock.runtime.indexUrl
 $torchVersion = [string]$lock.runtime.torch
@@ -30,23 +29,19 @@ $torchAudioVersion = [string]$lock.runtime.torchaudio
 $comfyVersion = [string]$lock.runtime.comfyui
 $comfyCommit = [string]$lock.runtime.comfyCommit
 
-foreach ($value in @($pythonVersion, $pythonDistribution, $pythonArchiveSha256, $gfxTarget, $theRockIndexUrl, $torchVersion, $torchVisionVersion, $torchAudioVersion, $comfyVersion, $comfyCommit)) {
+foreach ($value in @($pythonVersion, $pythonDistribution, $gfxTarget, $theRockIndexUrl, $torchVersion, $torchVisionVersion, $torchAudioVersion, $comfyVersion, $comfyCommit)) {
     if ([string]::IsNullOrWhiteSpace([string]$value)) {
         throw 'StableAMD runtime lock is incomplete. A pinned runtime component is missing.'
     }
 }
-if ($pythonDistribution -ne 'embed-amd64') {
-    throw "Unsupported locked Python distribution '$pythonDistribution'. StableAMD v0.1 requires embed-amd64."
-}
-if ($pythonArchiveSha256 -notmatch '^[0-9a-fA-F]{64}$') {
-    throw "Invalid locked Python archive SHA-256 '$pythonArchiveSha256'."
+if ($pythonDistribution -ne 'nuget-x64') {
+    throw "Unsupported locked Python distribution '$pythonDistribution'. StableAMD v0.1 requires nuget-x64."
 }
 if ($comfyCommit -notmatch '^[0-9a-fA-F]{40}$') {
     throw "Invalid locked ComfyUI commit '$comfyCommit'."
 }
 
-$pythonArchiveUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip"
-$getPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
+$pythonPackageUrl = "https://api.nuget.org/v3-flatcontainer/python/$pythonVersion/python.$pythonVersion.nupkg"
 $torchPackage = "torch[device-$gfxTarget]==$torchVersion"
 $torchVisionPackage = "torchvision[device-$gfxTarget]==$torchVisionVersion"
 $torchAudioPackage = "torchaudio==$torchAudioVersion"
@@ -56,9 +51,7 @@ $plan = [pscustomobject]@{
     SchemaVersion = 1
     PythonVersion = $pythonVersion
     PythonDistribution = $pythonDistribution
-    PythonArchiveUrl = $pythonArchiveUrl
-    PythonArchiveSha256 = $pythonArchiveSha256.ToLowerInvariant()
-    GetPipUrl = $getPipUrl
+    PythonPackageUrl = $pythonPackageUrl
     GfxTarget = $gfxTarget
     TheRockIndexUrl = $theRockIndexUrl
     TorchPackage = $torchPackage
@@ -198,59 +191,37 @@ if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
     }
     New-Item -ItemType Directory -Path $pythonRoot -Force | Out-Null
 
-    $pythonArchive = Join-Path $cacheRoot "python-$pythonVersion-embed-amd64.zip"
-    if (-not (Test-Path $pythonArchive -PathType Leaf)) {
-        Write-Host "Downloading portable Python $pythonVersion runtime..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $pythonArchiveUrl -OutFile $pythonArchive -UseBasicParsing
+    $pythonPackage = Join-Path $cacheRoot "python.$pythonVersion.nupkg.zip"
+    if (-not (Test-Path $pythonPackage -PathType Leaf)) {
+        Write-Host "Downloading CPython $pythonVersion NuGet runtime..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $pythonPackageUrl -OutFile $pythonPackage -UseBasicParsing
     }
 
-    $actualPythonArchiveSha256 = (Get-FileHash -Path $pythonArchive -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualPythonArchiveSha256 -ne $pythonArchiveSha256.ToLowerInvariant()) {
-        Remove-Item -Path $pythonArchive -Force -ErrorAction SilentlyContinue
-        throw "Downloaded Python archive failed SHA-256 verification. Expected $pythonArchiveSha256, got $actualPythonArchiveSha256."
+    $pythonExtractRoot = Join-Path $cacheRoot "python-$pythonVersion-nuget-extracted"
+    if (Test-Path $pythonExtractRoot) {
+        Remove-Item -Path $pythonExtractRoot -Recurse -Force
     }
+    New-Item -ItemType Directory -Path $pythonExtractRoot -Force | Out-Null
 
     Write-Host "Extracting private Python $pythonVersion runtime..." -ForegroundColor Cyan
-    Expand-Archive -Path $pythonArchive -DestinationPath $pythonRoot -Force
+    Expand-Archive -Path $pythonPackage -DestinationPath $pythonExtractRoot -Force
+    $pythonToolsRoot = Join-Path $pythonExtractRoot 'tools'
+    $packagePython = Join-Path $pythonToolsRoot 'python.exe'
+    if (-not (Test-Path $packagePython -PathType Leaf)) {
+        throw "CPython NuGet package did not contain expected executable '$packagePython'."
+    }
+
+    Get-ChildItem -Path $pythonToolsRoot -Force | ForEach-Object {
+        Move-Item -LiteralPath $_.FullName -Destination $pythonRoot
+    }
+    Remove-Item -Path $pythonExtractRoot -Recurse -Force
+
     if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
-        throw "Python $pythonVersion embedded runtime did not contain expected executable '$($paths.TheRockPython)'."
+        throw "Python $pythonVersion NuGet runtime did not produce expected executable '$($paths.TheRockPython)'."
     }
 
-    $pythonPth = Join-Path $pythonRoot 'python312._pth'
-    if (-not (Test-Path $pythonPth -PathType Leaf)) {
-        throw "Python embedded runtime path file is missing: '$pythonPth'."
-    }
-
-    $siteEnabled = $false
-    $updatedPth = @(
-        foreach ($line in @(Get-Content -Path $pythonPth)) {
-            if ([string]$line -match '^\s*#\s*import site\s*$') {
-                $siteEnabled = $true
-                'import site'
-            }
-            elseif ([string]$line -match '^\s*import site\s*$') {
-                $siteEnabled = $true
-                'import site'
-            }
-            else {
-                [string]$line
-            }
-        }
-    )
-    if (-not $siteEnabled) {
-        $updatedPth += 'import site'
-    }
-    [IO.File]::WriteAllLines($pythonPth, [string[]]$updatedPth, (New-Object Text.UTF8Encoding($false)))
-
-    $getPipPath = Join-Path $cacheRoot 'get-pip.py'
-    if (-not (Test-Path $getPipPath -PathType Leaf)) {
-        Write-Host 'Downloading pip bootstrap...' -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $getPipUrl -OutFile $getPipPath -UseBasicParsing
-    }
-
-    Write-Host 'Bootstrapping pip inside the private Python runtime...' -ForegroundColor Cyan
-    Invoke-StableAmdCheckedNative -FilePath $paths.TheRockPython -Arguments @('-s', $getPipPath) -FailureMessage 'pip bootstrap failed'
-    Invoke-StableAmdCheckedNative -FilePath $paths.TheRockPython -Arguments @('-m', 'pip', '--version') -FailureMessage 'pip verification failed'
+    Write-Host 'Verifying bundled pip in the private Python runtime...' -ForegroundColor Cyan
+    Invoke-StableAmdCheckedNative -FilePath $paths.TheRockPython -Arguments @('-m', 'pip', '--version') -FailureMessage 'bundled pip verification failed'
 }
 
 Write-Host ''
@@ -355,7 +326,6 @@ $manifest = [pscustomobject]@{
     comfyRoot = $paths.ComfyRoot
     pythonVersion = $pythonVersion
     pythonDistribution = $pythonDistribution
-    pythonArchiveSha256 = $pythonArchiveSha256.ToLowerInvariant()
     gfxTarget = $gfxTarget
     torch = $torchVersion
     torchvision = $torchVisionVersion
