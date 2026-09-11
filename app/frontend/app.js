@@ -1,17 +1,12 @@
 const pageMeta = {
   generate: ["Generate", "Create an SDXL image on your Radeon GPU."],
-  models: ["Models", "Checkpoints available to StableAMD."],
+  models: ["Models", "Install and manage checkpoints available to StableAMD."],
   gallery: ["Gallery", "Browse recent generations and reuse their settings."],
   settings: ["Settings", "StableAMD v0.1 runtime and generation defaults."],
   diagnostics: ["Diagnostics", "Inspect backend health and runtime logs."],
 };
 
-const state = {
-  models: [],
-  history: [],
-  status: null,
-};
-
+const state = { models: [], history: [], status: null };
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 
@@ -33,11 +28,12 @@ async function api(path, options = {}) {
     try { payload = JSON.parse(text); }
     catch { payload = { error: text }; }
   }
-  if (!response.ok) {
-    const message = payload?.error || `${response.status} ${response.statusText}`;
-    throw new Error(message);
-  }
+  if (!response.ok) throw new Error(payload?.error || `${response.status} ${response.statusText}`);
   return payload;
+}
+
+function imageUrl(path) {
+  return `/api/image?path=${encodeURIComponent(path)}`;
 }
 
 function showToast(message, kind = "info") {
@@ -54,8 +50,7 @@ function setPage(name) {
   qsa(".nav-item").forEach((item) => {
     const active = item.dataset.page === name;
     item.classList.toggle("is-active", active);
-    if (active) item.setAttribute("aria-current", "page");
-    else item.removeAttribute("aria-current");
+    if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current");
   });
   const [title, subtitle] = pageMeta[name] || pageMeta.generate;
   qs("#page-title").textContent = title;
@@ -68,15 +63,13 @@ function renderStatus(status) {
   state.status = status;
   const statusName = String(getValue(status, "Status", "status") || "unknown").toLowerCase();
   const healthy = Boolean(getValue(status, "Healthy", "healthy"));
-  const label = healthy ? "Backend ready" : statusName === "stopped" ? "Backend stopped" : `Backend ${statusName}`;
-  qs("#runtime-status").textContent = label;
+  qs("#runtime-status").textContent = healthy ? "Backend ready" : statusName === "stopped" ? "Backend stopped" : `Backend ${statusName}`;
   qs("#runtime-dot").dataset.state = healthy ? "ready" : statusName;
 }
 
 async function refreshStatus() {
-  try {
-    renderStatus(await api("/api/status"));
-  } catch (error) {
+  try { renderStatus(await api("/api/status")); }
+  catch (error) {
     qs("#runtime-status").textContent = "Backend unavailable";
     qs("#runtime-dot").dataset.state = "error";
     showToast(error.message, "error");
@@ -88,61 +81,6 @@ function normalizeModels(payload) {
   return Array.isArray(payload) ? payload : [payload];
 }
 
-function renderModels(models) {
-  state.models = models;
-  const select = qs("#model-select");
-  const previous = select.value;
-  select.replaceChildren();
-
-  const sdxl = models.filter((model) => String(getValue(model, "family", "Family") || "").toLowerCase() === "sdxl");
-  if (!sdxl.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "No SDXL checkpoints found";
-    select.append(option);
-  } else {
-    sdxl.forEach((model) => {
-      const option = document.createElement("option");
-      option.value = String(getValue(model, "id", "Id") || "");
-      option.textContent = String(getValue(model, "name", "Name") || option.value);
-      select.append(option);
-    });
-    if (previous && sdxl.some((model) => String(getValue(model, "id", "Id")) === previous)) select.value = previous;
-  }
-
-  const list = qs("#model-list");
-  list.replaceChildren();
-  if (!models.length) {
-    list.innerHTML = '<div class="empty-state"><strong>No checkpoints found</strong><p>Install or import a .safetensors checkpoint, then scan again.</p></div>';
-    return;
-  }
-
-  models.forEach((model) => {
-    const row = document.createElement("article");
-    row.className = "model-row";
-    const name = String(getValue(model, "name", "Name") || "Unnamed model");
-    const family = String(getValue(model, "family", "Family") || "unknown");
-    const source = String(getValue(model, "source", "Source") || "discovered");
-    const bytes = Number(getValue(model, "sizeBytes", "SizeBytes") || 0);
-    row.innerHTML = `
-      <div class="model-main"><strong></strong><span></span></div>
-      <div class="model-meta"><span></span><span></span></div>`;
-    row.querySelector("strong").textContent = name;
-    row.querySelector(".model-main span").textContent = getValue(model, "path", "Path") || "";
-    row.querySelectorAll(".model-meta span")[0].textContent = family.toUpperCase();
-    row.querySelectorAll(".model-meta span")[1].textContent = `${source} · ${formatBytes(bytes)}`;
-    list.append(row);
-  });
-}
-
-async function refreshModels() {
-  try {
-    renderModels(normalizeModels(await api("/api/models")));
-  } catch (error) {
-    showToast(`Model scan failed: ${error.message}`, "error");
-  }
-}
-
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "size unknown";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -152,11 +90,122 @@ function formatBytes(bytes) {
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 }
 
+function renderModels(models) {
+  state.models = models;
+  const select = qs("#model-select");
+  const previous = select.value;
+  select.replaceChildren();
+  const sdxl = models.filter((model) => String(getValue(model, "family", "Family") || "").toLowerCase() === "sdxl");
+  if (!sdxl.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No SDXL checkpoints found";
+    select.append(option);
+  } else {
+    for (const model of sdxl) {
+      const option = document.createElement("option");
+      option.value = String(getValue(model, "id", "Id") || "");
+      option.textContent = String(getValue(model, "name", "Name") || option.value);
+      select.append(option);
+    }
+    if (previous && sdxl.some((model) => String(getValue(model, "id", "Id")) === previous)) select.value = previous;
+  }
+
+  const list = qs("#model-list");
+  list.replaceChildren();
+  if (!models.length) {
+    list.innerHTML = '<div class="empty-state"><strong>No checkpoints found</strong><p>Import a local .safetensors checkpoint or download one from Hugging Face.</p></div>';
+    return;
+  }
+  for (const model of models) {
+    const row = document.createElement("article");
+    row.className = "model-row";
+    row.innerHTML = '<div class="model-main"><strong></strong><span></span></div><div class="model-meta"><span></span><span></span></div>';
+    row.querySelector("strong").textContent = String(getValue(model, "name", "Name") || "Unnamed model");
+    row.querySelector(".model-main span").textContent = String(getValue(model, "path", "Path") || "");
+    row.querySelectorAll(".model-meta span")[0].textContent = String(getValue(model, "family", "Family") || "unknown").toUpperCase();
+    row.querySelectorAll(".model-meta span")[1].textContent = `${getValue(model, "source", "Source") || "discovered"} · ${formatBytes(Number(getValue(model, "sizeBytes", "SizeBytes") || 0))}`;
+    list.append(row);
+  }
+}
+
+async function refreshModels() {
+  try { renderModels(normalizeModels(await api("/api/models"))); }
+  catch (error) { showToast(`Model scan failed: ${error.message}`, "error"); }
+}
+
+async function installModel(form, payload) {
+  const button = form.querySelector('button[type="submit"]');
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = payload.source === "local" ? "Importing…" : "Downloading…";
+  try {
+    const result = await api("/api/models/install", { method: "POST", body: JSON.stringify(payload) });
+    await refreshModels();
+    showToast(`Model ready: ${getValue(result, "name", "Name") || "checkpoint"}`, "success");
+    if (payload.source === "local") {
+      qs("#local-model-path").value = "";
+      qs("#local-model-sha").value = "";
+      qs("#local-model-move").checked = false;
+    }
+  } catch (error) {
+    showToast(`Model install failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+function submitLocalModel(event) {
+  event.preventDefault();
+  installModel(event.currentTarget, {
+    source: "local",
+    localPath: qs("#local-model-path").value.trim(),
+    moveLocal: qs("#local-model-move").checked,
+    expectedSha256: qs("#local-model-sha").value.trim(),
+  });
+}
+
+function submitHuggingFaceModel(event) {
+  event.preventDefault();
+  installModel(event.currentTarget, {
+    source: "huggingface",
+    repository: qs("#hf-repository").value.trim(),
+    filename: qs("#hf-filename").value.trim(),
+    revision: qs("#hf-revision").value.trim() || "main",
+    token: qs("#hf-token").value,
+    expectedSha256: qs("#hf-sha").value.trim(),
+  });
+}
+
 function formatDate(value) {
   if (!value) return "Unknown time";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function makeHistoryVisual(record) {
+  const visual = document.createElement("div");
+  visual.className = "history-visual";
+  const imagePath = getValue(record, "imagePath", "ImagePath");
+  if (imagePath) {
+    const image = document.createElement("img");
+    image.src = imageUrl(String(imagePath));
+    image.alt = String(getValue(record, "prompt", "Prompt") || "Generated StableAMD image");
+    image.loading = "lazy";
+    image.addEventListener("error", () => {
+      image.remove();
+      const fallback = document.createElement("span");
+      fallback.textContent = "Image unavailable";
+      visual.append(fallback);
+    }, { once: true });
+    visual.append(image);
+  } else {
+    const fallback = document.createElement("span");
+    fallback.textContent = "SDXL";
+    visual.append(fallback);
+  }
+  return visual;
 }
 
 function renderHistory(records) {
@@ -167,38 +216,40 @@ function renderHistory(records) {
     grid.innerHTML = '<div class="empty-state"><strong>No generations yet</strong><p>Your successful StableAMD generations will appear here.</p></div>';
     return;
   }
-
   state.history.forEach((record, index) => {
     const card = document.createElement("article");
     card.className = "history-card";
-    const prompt = String(getValue(record, "prompt", "Prompt") || "Untitled generation");
-    const model = String(getValue(record, "modelName", "ModelName") || "Unknown model");
-    const width = getValue(record, "width", "Width") || "?";
-    const height = getValue(record, "height", "Height") || "?";
-    const seed = getValue(record, "seed", "Seed");
-    const created = getValue(record, "createdAtUtc", "CreatedAtUtc");
-    card.innerHTML = `
-      <div class="history-visual"><span>SDXL</span></div>
-      <div class="history-body">
-        <strong class="history-prompt"></strong>
-        <p class="history-model"></p>
-        <div class="history-meta"><span></span><span></span></div>
-        <button class="button button-quiet reuse-button" type="button" data-history-index="${index}">Reuse settings</button>
-      </div>`;
-    card.querySelector(".history-prompt").textContent = prompt;
-    card.querySelector(".history-model").textContent = model;
-    card.querySelectorAll(".history-meta span")[0].textContent = `${width} × ${height} · seed ${seed ?? "random"}`;
-    card.querySelectorAll(".history-meta span")[1].textContent = formatDate(created);
+    card.append(makeHistoryVisual(record));
+
+    const body = document.createElement("div");
+    body.className = "history-body";
+    const prompt = document.createElement("strong");
+    prompt.className = "history-prompt";
+    prompt.textContent = String(getValue(record, "prompt", "Prompt") || "Untitled generation");
+    const model = document.createElement("p");
+    model.className = "history-model";
+    model.textContent = String(getValue(record, "modelName", "ModelName") || "Unknown model");
+    const meta = document.createElement("div");
+    meta.className = "history-meta";
+    const size = document.createElement("span");
+    size.textContent = `${getValue(record, "width", "Width") || "?"} × ${getValue(record, "height", "Height") || "?"} · seed ${getValue(record, "seed", "Seed") ?? "random"}`;
+    const created = document.createElement("span");
+    created.textContent = formatDate(getValue(record, "createdAtUtc", "CreatedAtUtc"));
+    meta.append(size, created);
+    const reuse = document.createElement("button");
+    reuse.className = "button button-quiet reuse-button";
+    reuse.type = "button";
+    reuse.dataset.historyIndex = String(index);
+    reuse.textContent = "Reuse settings";
+    body.append(prompt, model, meta, reuse);
+    card.append(body);
     grid.append(card);
   });
 }
 
 async function refreshHistory() {
-  try {
-    renderHistory(await api("/api/history?limit=60"));
-  } catch (error) {
-    showToast(`Gallery refresh failed: ${error.message}`, "error");
-  }
+  try { renderHistory(await api("/api/history?limit=60")); }
+  catch (error) { showToast(`Gallery refresh failed: ${error.message}`, "error"); }
 }
 
 function reuseHistory(index) {
@@ -217,33 +268,31 @@ function reuseHistory(index) {
   if (modelId && qsa("#model-select option").some((option) => option.value === String(modelId))) qs("#model-select").value = String(modelId);
   setPage("generate");
   qs("#prompt").focus();
-  showToast("Generation settings restored.", "info");
+  showToast("Generation settings restored.");
 }
 
 async function refreshDiagnostics() {
   try {
     const data = await api("/api/diagnostics");
     qs("#diagnostics-runtime").textContent = JSON.stringify(data?.runtime || {}, null, 2);
-    const logList = qs("#diagnostics-logs");
-    logList.replaceChildren();
+    const list = qs("#diagnostics-logs");
+    list.replaceChildren();
     const logs = Array.isArray(data?.logs) ? data.logs : [];
     if (!logs.length) {
-      logList.innerHTML = '<div class="empty-state"><strong>No runtime logs found</strong><p>Logs appear after managed backend sessions.</p></div>';
-    } else {
-      logs.forEach((log) => {
-        const row = document.createElement("div");
-        row.className = "log-row";
-        const name = document.createElement("strong");
-        name.textContent = log.name || "log";
-        const path = document.createElement("span");
-        path.textContent = log.path || "";
-        row.append(name, path);
-        logList.append(row);
-      });
+      list.innerHTML = '<div class="empty-state"><strong>No runtime logs found</strong><p>Logs appear after managed backend sessions.</p></div>';
+      return;
     }
-  } catch (error) {
-    showToast(`Diagnostics failed: ${error.message}`, "error");
-  }
+    for (const log of logs) {
+      const row = document.createElement("div");
+      row.className = "log-row";
+      const name = document.createElement("strong");
+      name.textContent = log.name || "log";
+      const path = document.createElement("span");
+      path.textContent = log.path || "";
+      row.append(name, path);
+      list.append(row);
+    }
+  } catch (error) { showToast(`Diagnostics failed: ${error.message}`, "error"); }
 }
 
 function readNumber(id, fallback = undefined) {
@@ -282,7 +331,6 @@ async function submitGeneration(event) {
   qs("#result-empty strong").textContent = "Generation in progress";
   qs("#result-empty p").textContent = "StableAMD is running the SDXL workflow. This can take a while on the first run.";
   qs("#result-details").hidden = true;
-
   try {
     const result = await api("/api/generate", { method: "POST", body: JSON.stringify(payload) });
     renderGenerationResult(result);
@@ -303,11 +351,19 @@ function renderGenerationResult(result) {
   const target = qs("#result-details");
   target.hidden = false;
   target.replaceChildren();
+  const imagePath = getValue(result, "ImagePath", "imagePath");
+  if (imagePath) {
+    const image = document.createElement("img");
+    image.className = "result-image";
+    image.src = imageUrl(String(imagePath));
+    image.alt = String(getValue(result, "Prompt", "prompt") || "Generated StableAMD image");
+    target.append(image);
+  }
   const title = document.createElement("strong");
   title.className = "result-title";
   title.textContent = "Generation complete";
   const path = document.createElement("code");
-  path.textContent = getValue(result, "ImagePath", "imagePath") || "Image path unavailable";
+  path.textContent = imagePath || "Image path unavailable";
   const meta = document.createElement("dl");
   meta.className = "result-meta";
   const items = [
@@ -316,11 +372,11 @@ function renderGenerationResult(result) {
     ["Seed", getValue(result, "Seed", "seed")],
     ["Time", `${getValue(result, "GenerationSeconds", "generationSeconds") ?? "?"} s`],
   ];
-  items.forEach(([label, value]) => {
+  for (const [label, value] of items) {
     const dt = document.createElement("dt"); dt.textContent = label;
     const dd = document.createElement("dd"); dd.textContent = value ?? "—";
     meta.append(dt, dd);
-  });
+  }
   target.append(title, path, meta);
 }
 
@@ -331,12 +387,8 @@ async function backendAction(action) {
     const status = await api(`/api/backend/${action}`, { method: "POST", body: "{}" });
     renderStatus(status);
     showToast(action === "start" ? "Backend started." : "Backend stopped.", "success");
-  } catch (error) {
-    showToast(error.message, "error");
-  } finally {
-    button.disabled = false;
-    await refreshStatus();
-  }
+  } catch (error) { showToast(error.message, "error"); }
+  finally { button.disabled = false; await refreshStatus(); }
 }
 
 async function refreshCurrentPage() {
@@ -349,6 +401,8 @@ async function refreshCurrentPage() {
 function bindEvents() {
   qsa(".nav-item").forEach((item) => item.addEventListener("click", () => setPage(item.dataset.page)));
   qs("#generate-form").addEventListener("submit", submitGeneration);
+  qs("#local-model-form").addEventListener("submit", submitLocalModel);
+  qs("#hf-model-form").addEventListener("submit", submitHuggingFaceModel);
   qs("#backend-start").addEventListener("click", () => backendAction("start"));
   qs("#backend-stop").addEventListener("click", () => backendAction("stop"));
   qs("#refresh-button").addEventListener("click", refreshCurrentPage);
