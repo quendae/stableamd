@@ -131,6 +131,27 @@ class PowerShellBridge:
             return []
         return result if isinstance(result, list) else [result]
 
+    def install_model(self, request: dict[str, Any]) -> Any:
+        source = str(request["source"]).lower()
+        parameters: list[tuple[str, Any]] = []
+        if source == "local":
+            parameters.append(("LocalPath", request["localPath"]))
+            if request.get("moveLocal"):
+                parameters.append(("MoveLocal", True))
+        else:
+            parameters.extend(
+                [
+                    ("HuggingFaceRepository", request["repository"]),
+                    ("HuggingFaceFilename", request["filename"]),
+                    ("Revision", request.get("revision") or "main"),
+                ]
+            )
+            if request.get("token"):
+                parameters.append(("HuggingFaceToken", request["token"]))
+        if request.get("expectedSha256"):
+            parameters.append(("ExpectedSha256", request["expectedSha256"]))
+        return self._run_script("Install-Model.ps1", parameters)
+
     def history(self, limit: int = 0) -> Any:
         parameters: list[tuple[str, Any]] = []
         if limit > 0:
@@ -201,6 +222,8 @@ class StableAmdApi:
         "scheduler",
         "startBackendIfNeeded",
     }
+    _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
+    _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
 
     def __init__(self, bridge: Any):
         self.bridge = bridge
@@ -217,6 +240,43 @@ class StableAmdApi:
             raise ValueError("Request body must be a JSON object.")
         return value
 
+    @staticmethod
+    def _required_text(request: dict[str, Any], field: str) -> str:
+        value = request.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"Model install field '{field}' must be a non-empty string.")
+        return value.strip()
+
+    def _validate_model_install(self, request: dict[str, Any]) -> dict[str, Any]:
+        source = self._required_text(request, "source").lower()
+        if source == "local":
+            allowed = self._local_model_fields
+            self._required_text(request, "localPath")
+            if "moveLocal" in request and not isinstance(request["moveLocal"], bool):
+                raise ValueError("Model install field 'moveLocal' must be boolean.")
+        elif source == "huggingface":
+            allowed = self._huggingface_model_fields
+            self._required_text(request, "repository")
+            filename = self._required_text(request, "filename")
+            if not filename.lower().endswith(".safetensors"):
+                raise ValueError("Hugging Face filename must identify a .safetensors checkpoint.")
+            if "revision" in request and request["revision"] is not None and not isinstance(request["revision"], str):
+                raise ValueError("Model install field 'revision' must be a string.")
+            if "token" in request and request["token"] is not None and not isinstance(request["token"], str):
+                raise ValueError("Model install field 'token' must be a string.")
+        else:
+            raise ValueError("Model install source must be 'local' or 'huggingface'.")
+
+        unsupported = sorted(set(request) - allowed)
+        if unsupported:
+            raise ValueError("Unsupported model install field(s): " + ", ".join(unsupported))
+        expected = request.get("expectedSha256")
+        if expected not in {None, ""}:
+            if not isinstance(expected, str) or len(expected.strip()) != 64 or any(ch not in "0123456789abcdefABCDEF" for ch in expected.strip()):
+                raise ValueError("expectedSha256 must be a 64-character hexadecimal SHA-256 value.")
+        request["source"] = source
+        return request
+
     def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
         method = (method or "").upper()
         parsed = urlsplit(target)
@@ -230,6 +290,9 @@ class StableAmdApi:
                 return 200, self.bridge.status()
             if method == "GET" and path == "/api/models":
                 return 200, self.bridge.models()
+            if method == "POST" and path == "/api/models/install":
+                request = self._validate_model_install(self._decode_json(body))
+                return 200, self.bridge.install_model(request)
             if method == "GET" and path == "/api/history":
                 raw_limit = query.get("limit", ["0"])[0]
                 try:
