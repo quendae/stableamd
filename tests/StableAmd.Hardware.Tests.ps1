@@ -62,3 +62,23 @@ Describe 'Get-StableAmdSpikeEnvironment' {
         $envMap['HSA_OVERRIDE_GFX_VERSION'] | Should -Be '10.3.0'
     }
 }
+
+Describe 'Test-StableAmdDotNet8Sdk' {
+    It 'accepts an installed .NET 8 SDK' {
+        Test-StableAmdDotNet8Sdk -SdkList @(
+            '8.0.419 [C:\Program Files\dotnet\sdk]',
+            '10.0.100 [C:\Program Files\dotnet\sdk]'
+        ) | Should -BeTrue
+    }
+
+    It 'rejects a machine with only newer SDKs and no .NET 8 SDK' {
+        Test-StableAmdDotNet8Sdk -SdkList @(
+            '9.0.305 [C:\Program Files\dotnet\sdk]',
+            '10.0.100 [C:\Program Files\dotnet\sdk]'
+        ) | Should -BeFalse
+    }
+
+    It 'rejects an empty SDK list' {
+        Test-StableAmdDotNet8Sdk -SdkList @() | Should -BeFalse
+    }
+}
