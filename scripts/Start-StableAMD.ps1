@@ -111,18 +111,30 @@ if ($null -ne $existingState) {
     }
 }
 
+# ComfyUI reads external checkpoint folders only at backend startup. Build the
+# generated extra_model_paths.yaml from every configured StableAMD model root.
+$modelRoots = @()
+$seenRoots = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+foreach ($rawRoot in @($config.models.roots)) {
+    $raw = [string]$rawRoot
+    if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+    $resolved = Resolve-StableAmdPath -Path $raw -RepoRoot $RepoRoot
+    if (-not (Test-Path $resolved -PathType Container)) { continue }
+    if ($seenRoots.Add($resolved)) { $modelRoots += $resolved }
+}
+if ($seenRoots.Add($paths.CheckpointsRoot)) {
+    $modelRoots = @($paths.CheckpointsRoot) + @($modelRoots)
+}
+
 $modelConfigPath = Join-Path $paths.GeneratedConfigRoot 'extra_model_paths.yaml'
 $yaml = New-Object System.Collections.Generic.List[string]
-$stableModelsBase = $paths.ModelsRoot.Replace('\', '/')
-$yaml.Add('stableamd:')
-$yaml.Add("    base_path: `"$stableModelsBase`"")
-$yaml.Add('    checkpoints: checkpoints')
-
-if (Test-Path $paths.SwarmModelsRoot) {
-    $swarmModelsBase = $paths.SwarmModelsRoot.Replace('\', '/')
-    $yaml.Add('stableamd_swarm:')
-    $yaml.Add("    base_path: `"$swarmModelsBase`"")
-    $yaml.Add('    checkpoints: Stable-Diffusion')
+$rootIndex = 0
+foreach ($modelRoot in $modelRoots) {
+    $yamlRoot = $modelRoot.Replace('\', '/')
+    $yaml.Add("stableamd_root_$rootIndex`:")
+    $yaml.Add("    base_path: `"$yamlRoot`"")
+    $yaml.Add('    checkpoints: .')
+    $rootIndex++
 }
 $yaml | Set-Content -Path $modelConfigPath -Encoding UTF8
 
