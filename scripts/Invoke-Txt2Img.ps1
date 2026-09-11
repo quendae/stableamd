@@ -120,6 +120,13 @@ if ([string]::IsNullOrWhiteSpace([string]$checkpointName)) {
     throw "ComfyUI does not expose the selected model '$selectedModelPath'. Restart StableAMD after changing model roots."
 }
 
+# A unique SaveImage prefix gives StableAMD a second reliable correlation key
+# when ComfyUI reports prompt success but omits output-node UI metadata from
+# /history. It also guarantees that the fallback can never select an older
+# image from another generation.
+$generationToken = [guid]::NewGuid().ToString('N')
+$filenamePrefix = "StableAMD_SDXL_$generationToken"
+
 $workflow = New-StableAmdSdxlWorkflow `
     -CheckpointName $checkpointName `
     -Prompt $Prompt `
@@ -131,7 +138,7 @@ $workflow = New-StableAmdSdxlWorkflow `
     -Seed $resolvedSeed `
     -SamplerName $resolvedSampler `
     -Scheduler $resolvedScheduler `
-    -FilenamePrefix 'StableAMD_SDXL'
+    -FilenamePrefix $filenamePrefix
 
 # The normal product flow always builds this fixed SDXL graph internally:
 # CheckpointLoaderSimple -> CLIPTextEncode -> KSampler -> VAEDecode -> SaveImage.
@@ -189,29 +196,20 @@ if ($null -eq $historyEntry) {
     throw "SDXL generation did not complete within $GenerationTimeoutSeconds seconds. Prompt ID: $promptId"
 }
 
-$outputsProperty = $historyEntry.PSObject.Properties['outputs']
-if ($null -eq $outputsProperty) { throw "ComfyUI history for '$promptId' has no outputs." }
-$saveProperty = $outputsProperty.Value.PSObject.Properties['9']
-if ($null -eq $saveProperty) { throw "ComfyUI history for '$promptId' has no SaveImage output." }
-$imagesProperty = $saveProperty.Value.PSObject.Properties['images']
-$images = if ($null -ne $imagesProperty) { @($imagesProperty.Value) } else { @() }
-if ($images.Count -lt 1) { throw "SaveImage returned no image metadata for prompt '$promptId'." }
+$imagePath = Resolve-StableAmdGeneratedImagePath `
+    -HistoryEntry $historyEntry `
+    -OutputRoot $paths.OutputRoot `
+    -FilenamePrefix $filenamePrefix `
+    -SaveNodeId '9'
+if ([string]::IsNullOrWhiteSpace([string]$imagePath)) {
+    $outputsSummary = '{}'
+    $outputsProperty = $historyEntry.PSObject.Properties['outputs']
+    if ($null -ne $outputsProperty -and $null -ne $outputsProperty.Value) {
+        try { $outputsSummary = $outputsProperty.Value | ConvertTo-Json -Depth 8 -Compress } catch { $outputsSummary = '{}' }
+    }
+    throw "ComfyUI completed prompt '$promptId', but StableAMD could not correlate its generated image. Expected prefix '$filenamePrefix' under '$($paths.OutputRoot)'. History outputs: $outputsSummary"
+}
 
-$imageInfo = $images[0]
-$imagePath = $paths.OutputRoot
-$subfolderProperty = $imageInfo.PSObject.Properties['subfolder']
-if ($null -ne $subfolderProperty -and -not [string]::IsNullOrWhiteSpace([string]$subfolderProperty.Value)) {
-    $imagePath = Join-Path $imagePath ([string]$subfolderProperty.Value)
-}
-$filenameProperty = $imageInfo.PSObject.Properties['filename']
-if ($null -eq $filenameProperty -or [string]::IsNullOrWhiteSpace([string]$filenameProperty.Value)) {
-    throw "SaveImage returned an empty filename for prompt '$promptId'."
-}
-$imagePath = Join-Path $imagePath ([string]$filenameProperty.Value)
-if (-not (Test-Path $imagePath -PathType Leaf)) {
-    throw "ComfyUI reported generated image '$imagePath', but the file does not exist."
-}
-$imagePath = [IO.Path]::GetFullPath($imagePath)
 $generationSeconds = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
 $createdAtUtc = [DateTime]::UtcNow.ToString('o')
 
