@@ -131,6 +131,45 @@ class PowerShellBridge:
             return []
         return result if isinstance(result, list) else [result]
 
+    def scan_models(self) -> Any:
+        return self.models()
+
+    def model_roots(self) -> Any:
+        result = self._run_script("Get-ModelRoots.ps1")
+        if result is None:
+            return []
+        return result if isinstance(result, list) else [result]
+
+    def browse_model_root(self) -> Any:
+        result = self._run_script("Browse-ModelRoot.ps1")
+        return result or {"cancelled": True, "path": None}
+
+    def _restart_backend_if_running(self) -> Any:
+        status = self.status()
+        if isinstance(status, dict) and bool(status.get("Healthy")):
+            return self._run_script("Start-StableAMD.ps1", [("ForceRestart", True)])
+        return status
+
+    def add_model_root(self, path: str) -> Any:
+        result = self._run_script("Add-ModelRoot.ps1", [("Path", path)]) or {}
+        backend = None
+        if isinstance(result, dict) and result.get("added"):
+            backend = self._restart_backend_if_running()
+        models = self.models()
+        if isinstance(result, dict):
+            return {**result, "backend": backend, "models": models}
+        return {"added": False, "path": path, "backend": backend, "models": models}
+
+    def remove_model_root(self, path: str) -> Any:
+        result = self._run_script("Remove-ModelRoot.ps1", [("Path", path)]) or {}
+        backend = None
+        if isinstance(result, dict) and result.get("removed"):
+            backend = self._restart_backend_if_running()
+        models = self.models()
+        if isinstance(result, dict):
+            return {**result, "backend": backend, "models": models}
+        return {"removed": False, "path": path, "backend": backend, "models": models}
+
     def install_model(self, request: dict[str, Any]) -> Any:
         source = str(request["source"]).lower()
         parameters: list[tuple[str, Any]] = []
@@ -224,6 +263,7 @@ class StableAmdApi:
     }
     _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
     _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
+    _model_root_fields = {"path"}
 
     def __init__(self, bridge: Any):
         self.bridge = bridge
@@ -245,6 +285,15 @@ class StableAmdApi:
         value = request.get(field)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"Model install field '{field}' must be a non-empty string.")
+        return value.strip()
+
+    def _validate_model_root(self, request: dict[str, Any]) -> str:
+        unsupported = sorted(set(request) - self._model_root_fields)
+        if unsupported:
+            raise ValueError("Unsupported model folder field(s): " + ", ".join(unsupported))
+        value = request.get("path")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Model folder path must be a non-empty string.")
         return value.strip()
 
     def _validate_model_install(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -290,6 +339,20 @@ class StableAmdApi:
                 return 200, self.bridge.status()
             if method == "GET" and path == "/api/models":
                 return 200, self.bridge.models()
+            if method == "POST" and path == "/api/models/scan":
+                self._decode_json(body)
+                return 200, self.bridge.scan_models()
+            if method == "GET" and path == "/api/model-roots":
+                return 200, self.bridge.model_roots()
+            if method == "POST" and path == "/api/model-roots/browse":
+                self._decode_json(body)
+                return 200, self.bridge.browse_model_root()
+            if method == "POST" and path == "/api/model-roots":
+                root = self._validate_model_root(self._decode_json(body))
+                return 200, self.bridge.add_model_root(root)
+            if method == "POST" and path == "/api/model-roots/remove":
+                root = self._validate_model_root(self._decode_json(body))
+                return 200, self.bridge.remove_model_root(root)
             if method == "POST" and path == "/api/models/install":
                 request = self._validate_model_install(self._decode_json(body))
                 return 200, self.bridge.install_model(request)
@@ -416,7 +479,7 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
                 status, payload = api.dispatch(self.command, self.path, body)
             except StableAmdBridgeError as exc:
                 status, payload = 500, {"error": str(exc)}
-            except Exception as exc:  # Keep the local server alive and return a product-level error.
+            except Exception as exc:
                 status, payload = 500, {"error": f"StableAMD API failure: {exc}"}
             self._send_json(status, payload)
 
