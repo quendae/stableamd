@@ -21,7 +21,17 @@ Describe 'StableAMD local web UI' {
         $html | Should -Match 'id="model-select"'
     }
 
-    It 'provides local and Hugging Face model install controls' {
+    It 'makes model folders the primary local model workflow' {
+        $html = Get-Content $indexPath -Raw
+        $html | Should -Match 'id="model-root-form"'
+        $html | Should -Match 'id="model-root-path"'
+        $html | Should -Match 'id="model-root-browse"'
+        $html | Should -Match 'id="model-root-list"'
+        $html | Should -Match 'id="models-refresh"'
+        $html | Should -Match 'Scan models'
+    }
+
+    It 'keeps local file and Hugging Face install controls available as secondary options' {
         $html = Get-Content $indexPath -Raw
         $html | Should -Match 'id="local-model-form"'
         $html | Should -Match 'id="local-model-path"'
@@ -36,6 +46,10 @@ Describe 'StableAMD local web UI' {
 
         $script | Should -Match '/api/status'
         $script | Should -Match '/api/models'
+        $script | Should -Match '/api/models/scan'
+        $script | Should -Match '/api/model-roots'
+        $script | Should -Match '/api/model-roots/browse'
+        $script | Should -Match '/api/model-roots/remove'
         $script | Should -Match '/api/models/install'
         $script | Should -Match '/api/history'
         $script | Should -Match '/api/image\?path='
