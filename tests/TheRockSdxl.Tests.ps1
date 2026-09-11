@@ -16,4 +16,10 @@ Describe 'TheRock SDXL generation gate' {
         $script | Should -Match 'vram_free'
         $script | Should -Not -Match 'Copy-Item.*sd_xl_base_1\.0\.safetensors'
     }
+
+    It 'normalizes single Windows path separators before writing YAML' {
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Test-TheRockSdxl.ps1') -Raw
+        $script | Should -Match ([regex]::Escape(".Replace('\', '/')"))
+        $script | Should -Not -Match ([regex]::Escape(".Replace('\\', '/')"))
+    }
 }
