@@ -21,13 +21,25 @@ Describe 'StableAMD local web UI' {
         $html | Should -Match 'id="model-select"'
     }
 
+    It 'provides local and Hugging Face model install controls' {
+        $html = Get-Content $indexPath -Raw
+        $html | Should -Match 'id="local-model-form"'
+        $html | Should -Match 'id="local-model-path"'
+        $html | Should -Match 'id="hf-model-form"'
+        $html | Should -Match 'id="hf-repository"'
+        $html | Should -Match 'id="hf-filename"'
+    }
+
     It 'uses only StableAMD product API routes from the normal UI' {
         Test-Path $appPath | Should -BeTrue
         $script = Get-Content $appPath -Raw
 
         $script | Should -Match '/api/status'
         $script | Should -Match '/api/models'
+        $script | Should -Match '/api/models/install'
         $script | Should -Match '/api/history'
+        $script | Should -Match '/api/image\?path='
+        $script | Should -Match 'encodeURIComponent'
         $script | Should -Match '/api/generate'
         $script | Should -Match '/api/diagnostics'
         $script | Should -Match '/api/backend/\$\{action\}'
