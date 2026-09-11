@@ -131,6 +131,11 @@ Describe 'StableAMD model command scripts' {
         $script | Should -Match 'TheRockPython'
     }
 
+    It 'accepts a .safetensors.partial staging file for validation before atomic install' {
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Validate-Model.ps1') -Raw
+        $script | Should -Match 'safetensors.*partial'
+    }
+
     It 'lists configured model roots and updates the generated registry' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/List-Models.ps1'
         Test-Path $scriptPath | Should -BeTrue
