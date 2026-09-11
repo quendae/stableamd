@@ -91,7 +91,7 @@ Describe 'StableAMD txt2img command' {
         $script | Should -Match 'New-StableAmdSdxlWorkflow'
         $script | Should -Match 'CheckpointLoaderSimple'
         $script | Should -Match '/prompt'
-        $script | Should -Match '/history/'
+        $script | Should -Match 'history/\$promptId'
         $script | Should -Match "status_str"
         $script | Should -Match "'error'"
         $script | Should -Match 'SaveImage'
