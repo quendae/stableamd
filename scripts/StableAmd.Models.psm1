@@ -1,5 +1,25 @@
 Set-StrictMode -Version 2.0
 
+function Get-StableAmdObjectPropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [psobject]$Object,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [AllowNull()]
+        $Default = $null
+    )
+
+    if ($null -eq $Object) { return $Default }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $Default }
+    return $property.Value
+}
+
 function Get-StableAmdModelId {
     [CmdletBinding()]
     param(
@@ -37,6 +57,80 @@ function Get-StableAmdModelFamily {
     return 'unknown'
 }
 
+function Resolve-StableAmdHuggingFaceUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[^/]+/[^/]+$')]
+        [string]$RepositoryId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Filename,
+
+        [string]$Revision = 'main'
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Filename)) {
+        throw 'Hugging Face filename cannot be empty.'
+    }
+    if ([string]::IsNullOrWhiteSpace($Revision)) {
+        throw 'Hugging Face revision cannot be empty.'
+    }
+
+    $repoParts = $RepositoryId.Split('/') | ForEach-Object { [Uri]::EscapeDataString($_) }
+    $revisionPart = [Uri]::EscapeDataString($Revision)
+    $fileParts = $Filename.Replace('\', '/').Split('/') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { [Uri]::EscapeDataString($_) }
+    if (@($fileParts).Count -eq 0) {
+        throw 'Hugging Face filename did not contain a usable path segment.'
+    }
+
+    return 'https://huggingface.co/{0}/resolve/{1}/{2}?download=true' -f ($repoParts -join '/'), $revisionPart, ($fileParts -join '/')
+}
+
+function Get-StableAmdModelDestinationPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FileName
+    )
+
+    $leaf = [IO.Path]::GetFileName($FileName)
+    if ([string]::IsNullOrWhiteSpace($leaf)) {
+        throw 'Model filename cannot be empty.'
+    }
+
+    $extension = [IO.Path]::GetExtension($leaf)
+    $stem = [IO.Path]::GetFileNameWithoutExtension($leaf)
+    $candidate = Join-Path $DestinationRoot $leaf
+    $counter = 0
+    while ((Test-Path $candidate) -or (Test-Path "$candidate.partial")) {
+        $counter++
+        $candidate = Join-Path $DestinationRoot ("{0}-{1}{2}" -f $stem, $counter, $extension)
+    }
+    return [IO.Path]::GetFullPath($candidate)
+}
+
+function Test-StableAmdModelSha256 {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[0-9a-fA-F]{64}$')]
+        [string]$ExpectedSha256
+    )
+
+    if (-not (Test-Path $Path -PathType Leaf)) {
+        return $false
+    }
+    $actual = (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+    return $actual.Equals($ExpectedSha256, [StringComparison]::OrdinalIgnoreCase)
+}
+
 function New-StableAmdEmptyModelRegistry {
     [CmdletBinding()]
     param()
@@ -59,7 +153,8 @@ function Read-StableAmdModelRegistry {
     }
 
     $registry = Get-Content -Path $Path -Raw | ConvertFrom-Json
-    if ($null -eq $registry.models) {
+    $modelsProperty = $registry.PSObject.Properties['models']
+    if ($null -eq $modelsProperty -or $null -eq $modelsProperty.Value) {
         $registry | Add-Member -MemberType NoteProperty -Name models -Value @() -Force
     }
     return $registry
@@ -130,36 +225,33 @@ function Merge-StableAmdModelRegistry {
     )
 
     $existingByPath = @{}
-    foreach ($model in @($ExistingRegistry.models)) {
-        if ($null -ne $model.path -and -not [string]::IsNullOrWhiteSpace([string]$model.path)) {
-            $existingByPath[[IO.Path]::GetFullPath([string]$model.path).ToLowerInvariant()] = $model
+    $existingModels = @(Get-StableAmdObjectPropertyValue -Object $ExistingRegistry -Name 'models' -Default @())
+    foreach ($model in $existingModels) {
+        $modelPath = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'path' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($modelPath)) {
+            $existingByPath[[IO.Path]::GetFullPath($modelPath).ToLowerInvariant()] = $model
         }
     }
 
     $merged = @()
     foreach ($model in @($DiscoveredModels)) {
-        $key = [IO.Path]::GetFullPath([string]$model.Path).ToLowerInvariant()
+        $newPath = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'Path' -Default '')
+        if ([string]::IsNullOrWhiteSpace($newPath)) { continue }
+        $key = [IO.Path]::GetFullPath($newPath).ToLowerInvariant()
         $old = $existingByPath[$key]
-        if ($null -ne $old) {
-            $validation = if ($null -ne $old.validation) { [string]$old.validation } else { 'unknown' }
-            $source = if ($null -ne $old.source) { [string]$old.source } else { 'discovered' }
-            $sha256 = if ($null -ne $old.sha256) { [string]$old.sha256 } else { $null }
-            $sourceMetadata = if ($null -ne $old.sourceMetadata) { $old.sourceMetadata } else { $null }
-        }
-        else {
-            $validation = [string]$model.Validation
-            $source = [string]$model.Source
-            $sha256 = $null
-            $sourceMetadata = $null
-        }
+
+        $validation = [string](Get-StableAmdObjectPropertyValue -Object $old -Name 'validation' -Default (Get-StableAmdObjectPropertyValue -Object $model -Name 'Validation' -Default 'unknown'))
+        $source = [string](Get-StableAmdObjectPropertyValue -Object $old -Name 'source' -Default (Get-StableAmdObjectPropertyValue -Object $model -Name 'Source' -Default 'discovered'))
+        $sha256 = Get-StableAmdObjectPropertyValue -Object $old -Name 'sha256' -Default $null
+        $sourceMetadata = Get-StableAmdObjectPropertyValue -Object $old -Name 'sourceMetadata' -Default $null
 
         $merged += [pscustomobject]@{
-            id = [string]$model.Id
-            name = [string]$model.Name
-            path = [string]$model.Path
-            family = [string]$model.Family
-            sizeBytes = [Int64]$model.SizeBytes
-            lastWriteTimeUtc = [string]$model.LastWriteTimeUtc
+            id = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'Id' -Default (Get-StableAmdModelId -Path $newPath))
+            name = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'Name' -Default ([IO.Path]::GetFileName($newPath)))
+            path = $newPath
+            family = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'Family' -Default 'unknown')
+            sizeBytes = [Int64](Get-StableAmdObjectPropertyValue -Object $model -Name 'SizeBytes' -Default 0)
+            lastWriteTimeUtc = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'LastWriteTimeUtc' -Default '')
             validation = $validation
             sha256 = $sha256
             source = $source
@@ -174,4 +266,38 @@ function Merge-StableAmdModelRegistry {
     }
 }
 
-Export-ModuleMember -Function Get-StableAmdModelId, Get-StableAmdModelFamily, New-StableAmdEmptyModelRegistry, Read-StableAmdModelRegistry, Write-StableAmdModelRegistry, Find-StableAmdCheckpoints, Merge-StableAmdModelRegistry
+function Upsert-StableAmdModelRegistryEntry {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Registry,
+
+        [Parameter(Mandatory = $true)]
+        [psobject]$Entry
+    )
+
+    $entryPath = [IO.Path]::GetFullPath([string]$Entry.path)
+    $models = New-Object System.Collections.Generic.List[object]
+    $replaced = $false
+    foreach ($model in @(Get-StableAmdObjectPropertyValue -Object $Registry -Name 'models' -Default @())) {
+        $modelPath = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'path' -Default '')
+        if (-not [string]::IsNullOrWhiteSpace($modelPath) -and [IO.Path]::GetFullPath($modelPath).Equals($entryPath, [StringComparison]::OrdinalIgnoreCase)) {
+            if (-not $replaced) {
+                $models.Add($Entry)
+                $replaced = $true
+            }
+        }
+        else {
+            $models.Add($model)
+        }
+    }
+    if (-not $replaced) { $models.Add($Entry) }
+
+    return [pscustomobject]@{
+        schemaVersion = 1
+        updatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        models = @($models)
+    }
+}
+
+Export-ModuleMember -Function Get-StableAmdModelId, Get-StableAmdModelFamily, Resolve-StableAmdHuggingFaceUrl, Get-StableAmdModelDestinationPath, Test-StableAmdModelSha256, New-StableAmdEmptyModelRegistry, Read-StableAmdModelRegistry, Write-StableAmdModelRegistry, Find-StableAmdCheckpoints, Merge-StableAmdModelRegistry, Upsert-StableAmdModelRegistryEntry
