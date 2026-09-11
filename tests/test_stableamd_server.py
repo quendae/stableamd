@@ -24,6 +24,10 @@ class FakeBridge:
         self.calls.append(("models", None))
         return [{"id": "mdl_abc", "name": "sdxl.safetensors", "family": "sdxl"}]
 
+    def install_model(self, request):
+        self.calls.append(("install_model", request))
+        return {"id": "mdl_new", "name": request.get("filename") or Path(request.get("localPath", "model.safetensors")).name}
+
     def history(self, limit=0):
         self.calls.append(("history", limit))
         return [{"promptId": "p1", "prompt": "a red biplane"}]
@@ -127,6 +131,46 @@ class StableAmdApiTests(unittest.TestCase):
         status, payload = self.api.dispatch("POST", "/api/backend/stop", b"{}")
         self.assertEqual(status, 200)
         self.assertEqual(payload["Status"], "stopped")
+
+    def test_local_model_install_uses_product_contract(self):
+        request = {
+            "source": "local",
+            "localPath": r"C:\AI\juggernautXL.safetensors",
+            "moveLocal": False,
+            "expectedSha256": "",
+        }
+        status, payload = self.api.dispatch("POST", "/api/models/install", json.dumps(request).encode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["id"], "mdl_new")
+        self.assertEqual(self.bridge.calls[-1], ("install_model", request))
+
+    def test_huggingface_model_install_uses_product_contract(self):
+        request = {
+            "source": "huggingface",
+            "repository": "stabilityai/stable-diffusion-xl-base-1.0",
+            "filename": "sd_xl_base_1.0.safetensors",
+            "revision": "main",
+            "token": "",
+            "expectedSha256": "",
+        }
+        status, payload = self.api.dispatch("POST", "/api/models/install", json.dumps(request).encode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["name"], "sd_xl_base_1.0.safetensors")
+        self.assertEqual(self.bridge.calls[-1], ("install_model", request))
+
+    def test_model_install_rejects_unknown_sources_missing_fields_and_arbitrary_commands(self):
+        invalid_requests = [
+            {"source": "ftp", "repository": "x", "filename": "x.safetensors"},
+            {"source": "local"},
+            {"source": "huggingface", "repository": "owner/repo"},
+            {"source": "local", "localPath": r"C:\x.safetensors", "command": "whoami"},
+        ]
+        for request in invalid_requests:
+            before = len(self.bridge.calls)
+            status, payload = self.api.dispatch("POST", "/api/models/install", json.dumps(request).encode("utf-8"))
+            self.assertEqual(status, 400)
+            self.assertIn("error", payload)
+            self.assertEqual(len(self.bridge.calls), before)
 
     def test_unknown_route_is_not_executed(self):
         status, payload = self.api.dispatch("POST", "/api/run-command", b'{"command":"whoami"}')
