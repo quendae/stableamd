@@ -32,7 +32,7 @@ if ($null -eq $git) {
 
 $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
 if ($null -eq $dotnet) {
-    Write-Warning 'dotnet is not currently on PATH. SwarmUI may bootstrap prerequisites on Windows 11, but manual installation can require the .NET SDK.'
+    throw 'The .NET SDK is required for this manual SwarmUI spike path. Install the current .NET 8 SDK (and optionally .NET 10 as recommended upstream), reopen PowerShell, then rerun this script.'
 }
 
 $swarmPath = Join-Path $RuntimeRoot 'SwarmUI'
@@ -128,6 +128,11 @@ while ((Get-Date) -lt $deadline) {
     }
 }
 
+$exitCode = $null
+if ($process.HasExited) {
+    $exitCode = $process.ExitCode
+}
+
 $result = [pscustomobject]@{
     CreatedAtUtc = [DateTime]::UtcNow.ToString('o')
     Mode = $Mode
@@ -135,7 +140,7 @@ $result = [pscustomobject]@{
     SwarmPath = $swarmPath
     ProcessId = $process.Id
     ProcessExited = $process.HasExited
-    ExitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
+    ExitCode = $exitCode
     HttpReachable = $reachable
     Url = 'http://127.0.0.1:7801/'
     StdoutLog = $stdoutPath
