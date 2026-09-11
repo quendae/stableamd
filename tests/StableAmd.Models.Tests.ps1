@@ -54,6 +54,14 @@ Describe 'StableAMD model registry primitives' {
         $registry.schemaVersion | Should -Be 1
         @($registry.models).Count | Should -Be 0
     }
+
+    It 'merges an empty discovery result into an empty registry' {
+        $registry = New-StableAmdEmptyModelRegistry
+        $merged = Merge-StableAmdModelRegistry -ExistingRegistry $registry -DiscoveredModels @()
+
+        $merged.schemaVersion | Should -Be 1
+        @($merged.models).Count | Should -Be 0
+    }
 }
 
 Describe 'StableAMD checkpoint discovery' {
