@@ -303,7 +303,7 @@ try {
     $statusString = [string]$historyEntry.status.status_str
     if ($statusString -eq 'error') {
         $statusJson = $historyEntry.status | ConvertTo-Json -Depth 16 -Compress
-        throw "ComfyUI reported an SDXL execution error for prompt $promptId: $statusJson"
+        throw "ComfyUI reported an SDXL execution error for prompt ${promptId}: $statusJson"
     }
     if ($statusString -ne 'success') {
         throw "ComfyUI completed the prompt with status '$statusString': $($historyEntry.status | ConvertTo-Json -Depth 12 -Compress)"
