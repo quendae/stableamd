@@ -95,3 +95,44 @@ Describe 'StableAMD default config file' {
         $fileConfig.models.roots.Count | Should -Be 2
     }
 }
+
+Describe 'StableAMD managed backend lifecycle scripts' {
+    It 'starts the isolated TheRock ComfyUI backend on loopback and persists health state' {
+        $scriptPath = Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1'
+        Test-Path $scriptPath | Should -BeTrue
+
+        $script = Get-Content $scriptPath -Raw
+        $script | Should -Match 'StableAmd\.Runtime\.psm1'
+        $script | Should -Match 'run_comfy_isolated\.py'
+        $script | Should -Match '--listen'
+        $script | Should -Match 'system_stats'
+        $script | Should -Match 'Write-StableAmdBackendState'
+        $script | Should -Match '127\.0\.0\.1'
+        $script | Should -Not -Match '--listen\s+0\.0\.0\.0'
+    }
+
+    It 'reports stopped running and degraded states from managed state plus HTTP health' {
+        $scriptPath = Join-Path $PSScriptRoot '../scripts/Get-StableAMDStatus.ps1'
+        Test-Path $scriptPath | Should -BeTrue
+
+        $script = Get-Content $scriptPath -Raw
+        $script | Should -Match 'Read-StableAmdBackendState'
+        $script | Should -Match 'Get-Process'
+        $script | Should -Match 'system_stats'
+        $script | Should -Match "'stopped'"
+        $script | Should -Match "'running'"
+        $script | Should -Match "'degraded'"
+    }
+
+    It 'stops only the process id recorded in StableAMD state and clears active state' {
+        $scriptPath = Join-Path $PSScriptRoot '../scripts/Stop-StableAMD.ps1'
+        Test-Path $scriptPath | Should -BeTrue
+
+        $script = Get-Content $scriptPath -Raw
+        $script | Should -Match 'Read-StableAmdBackendState'
+        $script | Should -Match 'Stop-Process'
+        $script | Should -Match 'state\.pid|statePid'
+        $script | Should -Match 'Remove-StableAmdBackendState'
+        $script | Should -Not -Match 'Get-Process\s+python.*Stop-Process'
+    }
+}
