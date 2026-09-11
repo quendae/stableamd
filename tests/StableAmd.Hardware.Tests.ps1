@@ -117,3 +117,13 @@ Describe 'Backend probe launcher' {
         $launcher | Should -Not -Match '-c\s+\$pythonProbe'
     }
 }
+
+Describe 'Get-StableAmdTheRockInstallArgs' {
+    It 'targets the official multi-arch nightly index and gfx1030 device extra' {
+        $args = Get-StableAmdTheRockInstallArgs -GfxTarget 'gfx1030'
+        $args.IndexUrl | Should -Be 'https://rocm.nightlies.amd.com/whl-multi-arch/'
+        $args.Packages | Should -Contain 'torch[device-gfx1030]'
+        $args.Packages | Should -Contain 'torchvision[device-gfx1030]'
+        $args.Packages | Should -Contain 'torchaudio'
+    }
+}
