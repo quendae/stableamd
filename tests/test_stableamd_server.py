@@ -24,6 +24,26 @@ class FakeBridge:
         self.calls.append(("models", None))
         return [{"id": "mdl_abc", "name": "sdxl.safetensors", "family": "sdxl"}]
 
+    def scan_models(self):
+        self.calls.append(("scan_models", None))
+        return self.models()
+
+    def model_roots(self):
+        self.calls.append(("model_roots", None))
+        return [{"path": r"C:\AI\Models", "exists": True, "managed": False}]
+
+    def browse_model_root(self):
+        self.calls.append(("browse_model_root", None))
+        return {"cancelled": False, "path": r"D:\Models"}
+
+    def add_model_root(self, path):
+        self.calls.append(("add_model_root", path))
+        return {"added": True, "path": path, "models": self.models()}
+
+    def remove_model_root(self, path):
+        self.calls.append(("remove_model_root", path))
+        return {"removed": True, "path": path, "models": self.models()}
+
     def install_model(self, request):
         self.calls.append(("install_model", request))
         return {"id": "mdl_new", "name": request.get("filename") or Path(request.get("localPath", "model.safetensors")).name}
@@ -78,6 +98,10 @@ class StableAmdApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload[0]["family"], "sdxl")
 
+        status, payload = self.api.dispatch("GET", "/api/model-roots")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload[0]["path"], r"C:\AI\Models")
+
         status, payload = self.api.dispatch("GET", "/api/history?limit=12")
         self.assertEqual(status, 200)
         self.assertEqual(payload[0]["promptId"], "p1")
@@ -88,8 +112,43 @@ class StableAmdApiTests(unittest.TestCase):
 
         self.assertEqual(
             self.bridge.calls,
-            [("status", None), ("models", None), ("history", 12), ("diagnostics", None)],
+            [("status", None), ("models", None), ("model_roots", None), ("history", 12), ("diagnostics", None)],
         )
+
+    def test_model_folder_routes_browse_add_remove_and_scan(self):
+        status, payload = self.api.dispatch("POST", "/api/model-roots/browse", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["path"], r"D:\Models")
+
+        request = {"path": r"D:\Models"}
+        status, payload = self.api.dispatch("POST", "/api/model-roots", json.dumps(request).encode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["added"])
+
+        status, payload = self.api.dispatch("POST", "/api/models/scan", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload[0]["id"], "mdl_abc")
+
+        status, payload = self.api.dispatch("POST", "/api/model-roots/remove", json.dumps(request).encode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["removed"])
+
+        self.assertIn(("browse_model_root", None), self.bridge.calls)
+        self.assertIn(("add_model_root", r"D:\Models"), self.bridge.calls)
+        self.assertIn(("scan_models", None), self.bridge.calls)
+        self.assertIn(("remove_model_root", r"D:\Models"), self.bridge.calls)
+
+    def test_model_folder_routes_reject_missing_path_and_extra_fields(self):
+        for target, request in (
+            ("/api/model-roots", {}),
+            ("/api/model-roots", {"path": r"D:\Models", "command": "whoami"}),
+            ("/api/model-roots/remove", {"path": "   "}),
+        ):
+            before = len(self.bridge.calls)
+            status, payload = self.api.dispatch("POST", target, json.dumps(request).encode("utf-8"))
+            self.assertEqual(status, 400)
+            self.assertIn("error", payload)
+            self.assertEqual(len(self.bridge.calls), before)
 
     def test_generate_accepts_product_fields_and_rejects_raw_workflow_fields(self):
         request = {
