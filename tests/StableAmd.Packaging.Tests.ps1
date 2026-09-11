@@ -17,8 +17,12 @@ Describe 'StableAMD v0.1 release packaging' {
         $lock.schemaVersion | Should -Be 1
         $lock.release | Should -Be '0.1.0'
         $lock.gpu.gfxTarget | Should -Be 'gfx1030'
+        $lock.runtime.python | Should -Be '3.12.10'
         $lock.runtime.torch | Should -Be '2.13.0+rocm10.1.0a20260822'
+        $lock.runtime.torchvision | Should -Be '0.28.0+rocm10.1.0a20260822'
+        $lock.runtime.torchaudio | Should -Be '2.11.0+rocm10.1.0a20260822'
         $lock.runtime.comfyui | Should -Be '0.35.0'
+        $lock.runtime.comfyCommit | Should -Be '40c4fcdf513a4523e39d54a9d391908af8df8171'
         $lock.runtime.indexUrl | Should -Be 'https://rocm.nightlies.amd.com/whl-multi-arch/'
     }
 
@@ -44,13 +48,13 @@ Describe 'StableAMD v0.1 release packaging' {
         Test-Path (Join-Path $result.PackageRoot '.git') | Should -BeFalse
     }
 
-    It 'documents the remaining hardware acceptance gate instead of claiming unverified clean-install support' {
+    It 'documents the remaining target-GPU acceptance gate instead of claiming unverified clean-install support' {
         $validation = Get-Content -Path (Join-Path $repoRoot 'docs/v0.1-validation.md') -Raw
         $validation | Should -Match 'RX 6950 XT'
         $validation | Should -Match 'gfx1030'
         $validation | Should -Match '2\.13\.0\+rocm10\.1\.0a20260822'
         $validation | Should -Match '1024x1024'
-        $validation | Should -Match 'clean-machine'
+        $validation | Should -Match 'clean-package'
         $validation | Should -Match 'pending'
     }
 }
