@@ -43,7 +43,7 @@ if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
 
 $resolvedAppPort = $AppPort
 $appUrl = "http://127.0.0.1:$resolvedAppPort/"
-$healthUrl = "${appUrl}api/health"
+$healthUrl = "http://127.0.0.1:$resolvedAppPort/api/health"
 
 function Get-StableAmdAppHealth {
     try {
