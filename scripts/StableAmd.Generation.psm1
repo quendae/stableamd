@@ -130,4 +130,95 @@ function New-StableAmdRandomSeed {
     return [BitConverter]::ToInt64($bytes, 0)
 }
 
-Export-ModuleMember -Function New-StableAmdSdxlWorkflow, Resolve-StableAmdComfyCheckpointName, New-StableAmdRandomSeed
+function Save-StableAmdGenerationRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HistoryRoot,
+
+        [Parameter(Mandatory = $true)]
+        [psobject]$Record
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HistoryRoot)) { throw 'HistoryRoot cannot be empty.' }
+    if ($null -eq $Record) { throw 'Record cannot be null.' }
+
+    New-Item -ItemType Directory -Path $HistoryRoot -Force | Out-Null
+
+    $createdAtText = [string]$Record.createdAtUtc
+    $createdAt = [DateTimeOffset]::UtcNow
+    if (-not [string]::IsNullOrWhiteSpace($createdAtText)) {
+        $parsed = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse($createdAtText, [ref]$parsed)) {
+            $createdAt = $parsed.ToUniversalTime()
+        }
+    }
+
+    $promptId = [string]$Record.promptId
+    if ([string]::IsNullOrWhiteSpace($promptId)) {
+        $promptId = [guid]::NewGuid().ToString('N')
+    }
+    $safePromptId = [regex]::Replace($promptId, '[^A-Za-z0-9._-]', '_')
+    if ($safePromptId.Length -gt 64) { $safePromptId = $safePromptId.Substring(0, 64) }
+
+    $baseName = '{0}_{1}' -f $createdAt.ToString('yyyyMMddTHHmmssfffZ'), $safePromptId
+    $destination = Join-Path $HistoryRoot ($baseName + '.json')
+    $counter = 1
+    while (Test-Path $destination) {
+        $destination = Join-Path $HistoryRoot ('{0}_{1}.json' -f $baseName, $counter)
+        $counter++
+    }
+
+    $temporary = $destination + '.tmp-' + [guid]::NewGuid().ToString('N')
+    try {
+        $Record | ConvertTo-Json -Depth 20 | Set-Content -Path $temporary -Encoding UTF8
+        Move-Item -Path $temporary -Destination $destination -Force
+    }
+    finally {
+        Remove-Item -Path $temporary -Force -ErrorAction SilentlyContinue
+    }
+
+    return [IO.Path]::GetFullPath($destination)
+}
+
+function Get-StableAmdGenerationHistory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HistoryRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HistoryRoot) -or -not (Test-Path $HistoryRoot -PathType Container)) {
+        return @()
+    }
+
+    $records = @()
+    foreach ($file in @(Get-ChildItem -Path $HistoryRoot -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $record = Get-Content -Path $file.FullName -Raw | ConvertFrom-Json
+            if ($null -eq $record) { continue }
+
+            $createdAt = [DateTimeOffset]::MinValue
+            $createdAtText = [string]$record.createdAtUtc
+            if (-not [string]::IsNullOrWhiteSpace($createdAtText)) {
+                $parsed = [DateTimeOffset]::MinValue
+                if ([DateTimeOffset]::TryParse($createdAtText, [ref]$parsed)) {
+                    $createdAt = $parsed.ToUniversalTime()
+                }
+            }
+
+            $records += [pscustomobject]@{
+                SortCreatedAtUtc = $createdAt
+                Record = $record
+            }
+        }
+        catch {
+            # A partially written or user-edited sidecar must not make Gallery unusable.
+            continue
+        }
+    }
+
+    return @($records | Sort-Object SortCreatedAtUtc -Descending | ForEach-Object { $_.Record })
+}
+
+Export-ModuleMember -Function New-StableAmdSdxlWorkflow, Resolve-StableAmdComfyCheckpointName, New-StableAmdRandomSeed, Save-StableAmdGenerationRecord, Get-StableAmdGenerationHistory
