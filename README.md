@@ -1,29 +1,28 @@
 # StableAMD
 
-StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. It keeps ComfyUI as an internal inference engine, but the normal user experience is a much smaller product UI with **Generate, Models, Gallery, Settings and Diagnostics**.
+StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. It keeps ComfyUI as an internal inference engine while the normal user experience stays product-level: **Generate, Models, Gallery, Settings and Diagnostics**.
 
 ## Current status
 
-StableAMD is currently a **v0.1 product candidate**. The clean-package runtime acceptance now passes on the target **RX 6950 XT**, including private runtime bootstrap, native Radeon FP16 compute, managed ComfyUI startup and the StableAMD application API. The remaining release gate is the full product flow: model folder -> scan -> SDXL generation -> Gallery.
-
-The hardware feasibility path has already been proven on **AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)**:
+StableAMD v0.1 is **hardware-accepted on AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)**. The target-machine acceptance completed on 2026-09-11 covered a fresh source-package runtime bootstrap, native Radeon FP16 compute, managed ComfyUI and application startup, recursive external model discovery, SDXL 1024x1024 generation through StableAMD, output persistence and Gallery display.
 
 ```text
-RX 6950 XT -> TheRock multi-arch ROCm -> PyTorch -> ComfyUI -> SDXL 1024x1024
+RX 6950 XT -> TheRock multi-arch ROCm -> PyTorch -> ComfyUI -> StableAMD -> SDXL 1024x1024
 ```
 
-The validated reference run used:
+The accepted locked stack is:
 
+- private CPython `3.12.10` from the CPython NuGet x64 package;
 - `device-gfx1030`;
 - PyTorch `2.13.0+rocm10.1.0a20260822`;
-- torchvision `0.28.0+rocm10.1.0a20260822` for the pinned product bootstrap;
-- torchaudio `2.11.0+rocm10.1.0a20260822` for the pinned product bootstrap;
+- torchvision `0.28.0+rocm10.1.0a20260822`;
+- torchaudio `2.11.0+rocm10.1.0a20260822`;
 - ComfyUI `0.35.0`, pinned to commit `40c4fcdf513a4523e39d54a9d391908af8df8171`;
-- Stable Diffusion XL 1.0 base;
-- 1024x1024, 20 steps, batch 1;
-- about 102 seconds and about 14 GiB peak VRAM on the tested RX 6950 XT.
+- Stable Diffusion XL 1.0 base as the compatibility reference.
 
-The machine-readable release lock is in [`config/runtime-lock.v0.1.json`](config/runtime-lock.v0.1.json).
+The earlier feasibility reference run at 1024x1024 / 20 steps used about 102 seconds and about 14 GiB peak VRAM on the tested RX 6950 XT. The machine-readable runtime lock and acceptance state are in [`config/runtime-lock.v0.1.json`](config/runtime-lock.v0.1.json).
+
+Other Radeon GPUs are not implicitly validated by this result; each target needs its own runtime/generation acceptance.
 
 ## What v0.1 contains
 
@@ -37,10 +36,10 @@ The machine-readable release lock is in [`config/runtime-lock.v0.1.json`](config
 - generation history and Gallery metadata;
 - responsive local web UI;
 - one-click Windows launcher;
-- automatic first-launch bootstrap of private Python + the **pinned** TheRock ROCm/PyTorch stack + pinned ComfyUI when the runtime is missing;
-- real FP16 Radeon compute verification before the bootstrapped runtime is accepted;
+- automatic first-launch bootstrap of private CPython + the pinned TheRock ROCm/PyTorch stack + pinned ComfyUI;
+- real FP16 Radeon compute verification before a bootstrapped runtime is accepted;
 - source-only ZIP packaging that deliberately excludes runtimes, models and generated data;
-- an isolated clean-package acceptance harness that does not touch the development runtime.
+- isolated clean-package acceptance that does not touch the development runtime.
 
 All services bind to `127.0.0.1`; v0.1 does not expose remote access, telemetry or cloud upload.
 
@@ -58,7 +57,7 @@ or run:
 powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1
 ```
 
-If the managed runtime is missing, the launcher invokes `Install-StableAMDRuntime.ps1`. The first launch downloads a private Python 3.12.10 installation, the locked TheRock `gfx1030` package set and ComfyUI source, installs ComfyUI dependencies without allowing PyPI to replace the locked AMD torch family, then runs the existing FP16 GPU probe. This can download more than 1 GB.
+If the managed runtime is missing, the launcher invokes `Install-StableAMDRuntime.ps1`. First launch downloads the private CPython 3.12.10 NuGet runtime, the locked TheRock `gfx1030` package set and pinned ComfyUI source, installs ComfyUI dependencies without allowing PyPI to replace the locked AMD torch family, then runs the Radeon FP16 compute probe. This can download more than 1 GB.
 
 If the runtime already exists, StableAMD reuses it. The launcher then starts or reuses the managed compute backend, starts the application server, waits for `/api/health`, writes logs under `.runtime\stableamd\logs`, and opens the local UI.
 
@@ -70,11 +69,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1 -SkipRun
 
 ## Models
 
-The recommended local workflow is **Models -> Add folder -> Scan models**. StableAMD stores the selected Windows folder in its local configuration, scans it recursively for `.safetensors` checkpoints and passes that folder directly to ComfyUI through the generated `extra_model_paths.yaml`. Multi-gigabyte checkpoints stay in their original location and are not copied.
+The recommended local workflow is **Models -> Add folder -> Scan models**. StableAMD stores selected Windows folders in its local configuration, scans them recursively for `.safetensors` checkpoints and passes them directly to ComfyUI through generated `extra_model_paths.yaml`. Multi-gigabyte checkpoints stay in their original location and are not copied.
 
-Use **Browse folder...** to open the native Windows folder picker, or paste a path such as `D:\AI\Models`. Adding or removing a folder automatically refreshes the managed backend when it is running so ComfyUI sees the new search path immediately.
+Use **Browse folder...** to open the native Windows folder picker, or paste a path such as `D:\AI\Models`. Adding or removing a folder refreshes the managed backend when needed so ComfyUI sees the new search path. Existing SwarmUI Stable Diffusion folders are also discovered when present.
 
-Single-file copy/move import and resumable Hugging Face download remain available under **Other ways to add models**. Existing SwarmUI Stable Diffusion folders are also discovered when present.
+Single-file copy/move import and resumable Hugging Face download remain available under **Other ways to add models**.
 
 The official SDXL 1.0 base checkpoint is the v0.1 compatibility reference. LoRA, ControlNet, inpainting, Flux and video generation are intentionally deferred.
 
@@ -105,10 +104,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Add-ModelRoot.ps1 -Path 'D:\A
 # Build the source-only v0.1 package
 powershell -ExecutionPolicy Bypass -File .\scripts\Build-StableAMDPackage.ps1
 
-# Build a fresh package and resolve its install plan without downloading runtime files
+# Resolve a clean package install plan without downloading runtime files
 powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1 -PlanOnly
 
-# Full isolated clean-package runtime acceptance on the Radeon machine
+# Repeat the full isolated clean-package GPU/runtime acceptance
 powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1
 ```
 
@@ -119,13 +118,13 @@ dist\StableAMD-0.1.0\
 dist\StableAMD-0.1.0.zip
 ```
 
-`.runtime`, model checkpoints, generated images, diagnostics, tests and Git metadata are not shipped inside that ZIP. The full package acceptance harness builds a fresh copy under `diagnostics\acceptance-package-*`, gives it separate local ports, installs its own runtime, verifies `/api/health` and the managed backend, then removes the successful isolated runtime unless `-KeepRuntime` is supplied. Failed acceptance directories are kept for diagnosis.
+`.runtime`, model checkpoints, generated images, diagnostics, tests and Git metadata are not shipped inside that ZIP. The full package acceptance harness builds a fresh copy under `diagnostics\acceptance-package-*`, gives it separate local ports, installs its own runtime, verifies FP16 compute plus application/backend health, then removes the successful isolated runtime unless `-KeepRuntime` is supplied. Failed acceptance directories are kept for diagnosis.
 
 ## Development and validation
 
-The automated CI suite covers PowerShell parsing, Python API contracts, runtime/model/generation/frontend contracts, Windows PowerShell 5.1 registry compatibility, model-folder configuration, launcher behavior, packaging, the exact no-network runtime plan and a real plan-only package build. GPU/runtime downloads are intentionally not performed on GitHub-hosted runners.
+The automated CI suite covers PowerShell parsing, Python API contracts, runtime/model/generation/frontend contracts, Windows PowerShell 5.1 compatibility, external model-folder configuration, launcher behavior, generated-output correlation, packaging, the exact no-network runtime plan and a real plan-only package build. GPU/runtime downloads are intentionally not performed on GitHub-hosted runners.
 
-The final target-machine procedure is in [`docs/v0.1-validation.md`](docs/v0.1-validation.md). The earlier feasibility work remains in [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md).
+Target-machine evidence and repeatable acceptance commands are in [`docs/v0.1-validation.md`](docs/v0.1-validation.md). The earlier feasibility work remains in [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md).
 
 Product design and implementation plan:
 
