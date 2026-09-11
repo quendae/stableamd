@@ -87,6 +87,41 @@ Describe 'StableAMD checkpoint discovery' {
     }
 }
 
+Describe 'StableAMD model installation helpers' {
+    It 'builds the canonical Hugging Face resolve URL' {
+        $url = Resolve-StableAmdHuggingFaceUrl -RepositoryId 'stabilityai/stable-diffusion-xl-base-1.0' -Filename 'sd_xl_base_1.0.safetensors' -Revision 'main'
+        $url | Should -Be 'https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors?download=true'
+    }
+
+    It 'chooses a collision-safe destination name' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-model-destination-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            $first = Join-Path $tempRoot 'model.safetensors'
+            Set-Content -Path $first -Value 'existing'
+
+            $destination = Get-StableAmdModelDestinationPath -DestinationRoot $tempRoot -FileName 'model.safetensors'
+            $destination | Should -Be (Join-Path $tempRoot 'model-1.safetensors')
+        }
+        finally {
+            Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'verifies SHA256 case-insensitively' {
+        $tempFile = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-hash-' + [guid]::NewGuid().ToString('N') + '.bin')
+        try {
+            [IO.File]::WriteAllText($tempFile, 'stableamd')
+            $actual = (Get-FileHash -Path $tempFile -Algorithm SHA256).Hash
+            Test-StableAmdModelSha256 -Path $tempFile -ExpectedSha256 $actual.ToLowerInvariant() | Should -BeTrue
+            Test-StableAmdModelSha256 -Path $tempFile -ExpectedSha256 ('0' * 64) | Should -BeFalse
+        }
+        finally {
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'StableAMD model command scripts' {
     It 'validates safetensors through the existing structural validator' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/Validate-Model.ps1'
@@ -102,6 +137,19 @@ Describe 'StableAMD model command scripts' {
         $script = Get-Content $scriptPath -Raw
         $script | Should -Match 'Find-StableAmdCheckpoints'
         $script | Should -Match 'ModelsRegistryPath'
+        $script | Should -Match 'Write-StableAmdModelRegistry'
+    }
+
+    It 'installs local or Hugging Face models with resume validation and source metadata' {
+        $scriptPath = Join-Path $PSScriptRoot '../scripts/Install-Model.ps1'
+        Test-Path $scriptPath | Should -BeTrue
+        $script = Get-Content $scriptPath -Raw
+        $script | Should -Match 'HuggingFace'
+        $script | Should -Match 'LocalPath'
+        $script | Should -Match '\.partial'
+        $script | Should -Match 'Range'
+        $script | Should -Match 'Validate-Model\.ps1'
+        $script | Should -Match "'huggingface'|'local'"
         $script | Should -Match 'Write-StableAmdModelRegistry'
     }
 }
