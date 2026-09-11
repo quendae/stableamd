@@ -221,6 +221,7 @@ function Merge-StableAmdModelRegistry {
         [psobject]$ExistingRegistry,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [object[]]$DiscoveredModels
     )
 
