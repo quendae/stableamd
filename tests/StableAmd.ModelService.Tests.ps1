@@ -24,7 +24,7 @@ Describe 'StableAMD model service serialization' {
         New-Item -ItemType Directory -Path $isolatedRoot -Force | Out-Null
         $escapedScript = $listModelsScript.Replace("'", "''")
         $escapedRoot = $isolatedRoot.Replace("'", "''")
-        $command = "& '$escapedScript' -RepoRoot '$escapedRoot' | ConvertTo-Json -Depth 20 -Compress"
+        $command = "`$WarningPreference = 'SilentlyContinue'; & '$escapedScript' -RepoRoot '$escapedRoot' | ConvertTo-Json -Depth 20 -Compress"
 
         $json = (& $windowsPowerShell.Source -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $command | Out-String).Trim()
 
