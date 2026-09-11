@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "release": "0.1.0",
-  "status": "validated-spike-clean-install-pending",
+  "status": "hardware-accepted-rx6950xt",
   "gpu": {
     "vendor": "AMD",
     "model": "Radeon RX 6950 XT",
@@ -26,5 +26,22 @@
     "batchSize": 1,
     "approxSeconds": 102,
     "approxPeakVramGiB": 14
+  },
+  "acceptance": {
+    "date": "2026-09-11",
+    "cleanPackage": {
+      "status": "passed",
+      "gpu": "AMD Radeon RX 6950 XT",
+      "runtimeBootstrap": "fresh-private-runtime",
+      "fp16Probe": "passed",
+      "managedBackend": "passed",
+      "applicationHealth": "passed"
+    },
+    "productFlow": {
+      "status": "passed",
+      "modelDiscovery": "external-folder-and-existing-swarm-library",
+      "generation": "sdxl-1024x1024",
+      "gallery": "passed"
+    }
   }
 }
