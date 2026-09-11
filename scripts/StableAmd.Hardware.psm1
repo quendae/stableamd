@@ -124,4 +124,22 @@ function Test-StableAmdDotNet8Sdk {
     return $false
 }
 
-Export-ModuleMember -Function Resolve-StableAmdGfxTarget, Get-StableAmdSupportTier, New-StableAmdPreflightRecord, Get-StableAmdSpikeEnvironment, Test-StableAmdDotNet8Sdk
+function Resolve-StableAmdSwarmUrl {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [string[]]$LogLines
+    )
+
+    for ($i = $LogLines.Count - 1; $i -ge 0; $i--) {
+        $line = [string]$LogLines[$i]
+        if ($line -match '(?i)Starting webserver on\s+https?://(?:localhost|127\.0\.0\.1):(?<port>\d+)') {
+            return "http://127.0.0.1:$($Matches['port'])/"
+        }
+    }
+
+    return $null
+}
+
+Export-ModuleMember -Function Resolve-StableAmdGfxTarget, Get-StableAmdSupportTier, New-StableAmdPreflightRecord, Get-StableAmdSpikeEnvironment, Test-StableAmdDotNet8Sdk, Resolve-StableAmdSwarmUrl
