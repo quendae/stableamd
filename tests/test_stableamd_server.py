@@ -9,7 +9,7 @@ BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from stableamd_server import StableAmdApi, resolve_output_image, validate_loopback_host
+from stableamd_server import PowerShellBridge, StableAmdApi, resolve_output_image, validate_loopback_host
 
 
 class FakeBridge:
@@ -38,11 +38,11 @@ class FakeBridge:
 
     def add_model_root(self, path):
         self.calls.append(("add_model_root", path))
-        return {"added": True, "path": path, "models": self.models()}
+        return {"added": True, "path": path, "models": self.models(), "restartRequired": True}
 
     def remove_model_root(self, path):
         self.calls.append(("remove_model_root", path))
-        return {"removed": True, "path": path, "models": self.models()}
+        return {"removed": True, "path": path, "models": self.models(), "restartRequired": True}
 
     def install_model(self, request):
         self.calls.append(("install_model", request))
@@ -60,6 +60,10 @@ class FakeBridge:
         self.calls.append(("start_backend", None))
         return {"Status": "running", "Healthy": True}
 
+    def restart_backend(self):
+        self.calls.append(("restart_backend", None))
+        return {"Status": "running", "Healthy": True, "Reused": False}
+
     def stop_backend(self):
         self.calls.append(("stop_backend", None))
         return {"Status": "stopped", "Healthy": False}
@@ -67,6 +71,38 @@ class FakeBridge:
     def diagnostics(self):
         self.calls.append(("diagnostics", None))
         return {"runtime": {"status": "running"}, "logs": []}
+
+
+class RecordingPowerShellBridge(PowerShellBridge):
+    def __post_init__(self):
+        self.repo_root = Path(self.repo_root).resolve()
+        self.calls = []
+
+    def _run_script(self, name, parameters=None):
+        self.calls.append((name, parameters or []))
+        if name == "Add-ModelRoot.ps1":
+            return {"added": True, "path": r"D:\Models", "reason": "added"}
+        if name == "Remove-ModelRoot.ps1":
+            return {"removed": True, "path": r"D:\Models", "reason": "removed"}
+        if name == "Get-StableAMDStatus.ps1":
+            return {"Status": "running", "Healthy": True}
+        if name == "List-Models.ps1":
+            return []
+        if name == "Start-StableAMD.ps1":
+            return {"Status": "running", "Healthy": True}
+        raise AssertionError(f"unexpected script: {name}")
+
+
+class PowerShellBridgeModelRootTests(unittest.TestCase):
+    def test_add_model_root_does_not_block_on_backend_restart(self):
+        bridge = RecordingPowerShellBridge(REPO_ROOT, powershell="powershell.exe")
+
+        result = bridge.add_model_root(r"D:\Models")
+
+        self.assertTrue(result["added"])
+        self.assertTrue(result["restartRequired"])
+        script_names = [name for name, _ in bridge.calls]
+        self.assertNotIn("Start-StableAMD.ps1", script_names)
 
 
 class StableAmdApiTests(unittest.TestCase):
@@ -124,6 +160,7 @@ class StableAmdApiTests(unittest.TestCase):
         status, payload = self.api.dispatch("POST", "/api/model-roots", json.dumps(request).encode("utf-8"))
         self.assertEqual(status, 200)
         self.assertTrue(payload["added"])
+        self.assertTrue(payload["restartRequired"])
 
         status, payload = self.api.dispatch("POST", "/api/models/scan", b"{}")
         self.assertEqual(status, 200)
@@ -186,6 +223,11 @@ class StableAmdApiTests(unittest.TestCase):
         status, payload = self.api.dispatch("POST", "/api/backend/start", b"{}")
         self.assertEqual(status, 200)
         self.assertEqual(payload["Status"], "running")
+
+        status, payload = self.api.dispatch("POST", "/api/backend/restart", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["Status"], "running")
+        self.assertIn(("restart_backend", None), self.bridge.calls)
 
         status, payload = self.api.dispatch("POST", "/api/backend/stop", b"{}")
         self.assertEqual(status, 200)
