@@ -63,7 +63,7 @@ New-Item -ItemType Directory -Path $imageOutputRoot -Force | Out-Null
 
 # Point ComfyUI at SwarmUI's existing model library. No multi-gigabyte model is
 # copied or hard-linked. Forward slashes keep the YAML path portable on Windows.
-$yamlModelRoot = $swarmModelsRoot.Replace('\\', '/')
+$yamlModelRoot = $swarmModelsRoot.Replace('\', '/')
 @"
 stableamd_swarm:
     base_path: "$yamlModelRoot"
