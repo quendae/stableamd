@@ -27,9 +27,16 @@ else {
 if (-not (Test-Path $resolvedModelPath -PathType Leaf)) {
     throw "Model file was not found: '$resolvedModelPath'."
 }
-if ([IO.Path]::GetExtension($resolvedModelPath) -ine '.safetensors') {
-    throw "StableAMD v0.1 validation currently supports .safetensors files only: '$resolvedModelPath'."
+
+# Hugging Face downloads are staged as `<name>.safetensors.partial` so they can
+# be resumed and structurally checked before the atomic rename to the final
+# `.safetensors` path. Both forms contain the same safetensors bytes.
+$modelLeaf = [IO.Path]::GetFileName($resolvedModelPath)
+if ($modelLeaf -notmatch '(?i)\.safetensors(?:\.partial)?$') {
+    throw "StableAMD v0.1 validation supports .safetensors and .safetensors.partial files only: '$resolvedModelPath'."
 }
+$logicalModelName = $modelLeaf -replace '(?i)\.partial$', ''
+
 if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
     throw "StableAMD TheRock Python is missing at '$($paths.TheRockPython)'. Install the runtime before validating models."
 }
@@ -69,9 +76,9 @@ try {
 
     return [pscustomobject]@{
         Id = Get-StableAmdModelId -Path $resolvedModelPath
-        Name = [IO.Path]::GetFileName($resolvedModelPath)
+        Name = $logicalModelName
         Path = $resolvedModelPath
-        Family = Get-StableAmdModelFamily -Name ([IO.Path]::GetFileName($resolvedModelPath))
+        Family = Get-StableAmdModelFamily -Name $logicalModelName
         Valid = $valid
         Validation = if ($valid) { 'valid' } else { 'invalid' }
         Sha256 = $sha256
