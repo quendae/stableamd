@@ -23,8 +23,8 @@ jobs:
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
-            foreach ($error in $errors) {
-              $allErrors += "$($file.FullName):$($error.Extent.StartLineNumber): $($error.Message)"
+            foreach ($parseError in $errors) {
+              $allErrors += "$($file.FullName):$($parseError.Extent.StartLineNumber): $($parseError.Message)"
             }
           }
           if ($allErrors.Count -gt 0) {
