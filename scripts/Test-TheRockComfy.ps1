@@ -35,6 +35,7 @@ $theRockRoot = Join-Path $RuntimeRoot 'therock-gfx1030'
 $theRockPythonRoot = Join-Path $theRockRoot 'python_embeded'
 $theRockPython = Join-Path $theRockPythonRoot 'python.exe'
 $probePath = Join-Path $PSScriptRoot 'probes/amd_backend_probe.py'
+$comfyRunner = Join-Path $PSScriptRoot 'probes/run_comfy_isolated.py'
 $nightlyIndex = 'https://rocm.nightlies.amd.com/whl-multi-arch/'
 
 if (-not (Test-Path $sourceComfyMain)) {
@@ -51,6 +52,9 @@ if (-not (Test-Path $theRockPython)) {
 }
 if (-not (Test-Path $probePath)) {
     throw "GPU probe was not found at '$probePath'."
+}
+if (-not (Test-Path $comfyRunner)) {
+    throw "ComfyUI bootstrap was not found at '$comfyRunner'."
 }
 
 $copyIsComplete = (Test-Path $comfyMain) -and (Test-Path $isolatedComfyPackage)
@@ -226,7 +230,7 @@ Remove-Item Env:HSA_OVERRIDE_GFX_VERSION -ErrorAction SilentlyContinue
 $process = $null
 try {
     Write-Host "Starting isolated ComfyUI on $url ..." -ForegroundColor Cyan
-    $arguments = "-s `"$comfyMain`" --listen 127.0.0.1 --port $Port"
+    $arguments = "-s `"$comfyRunner`" `"$comfyRoot`" --listen 127.0.0.1 --port $Port"
     $process = Start-Process `
         -FilePath $theRockPython `
         -ArgumentList $arguments `
@@ -267,6 +271,7 @@ try {
         SourceCommit = if ($sourceCommit) { $sourceCommit } else { $null }
         ComfyRoot = $comfyRoot
         ComfyMain = $comfyMain
+        ComfyRunner = $comfyRunner
         PythonPath = $theRockPython
         Url = $url
         SystemStatsUrl = $statsUrl
