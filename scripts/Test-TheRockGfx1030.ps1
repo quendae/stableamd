@@ -57,6 +57,27 @@ if (-not (Test-Path $testPython)) {
     if ($copyExit -gt 7) {
         throw "robocopy failed while cloning the embedded Python environment (exit code $copyExit)."
     }
+
+    # AMD's portable ComfyUI package contains a ROCm 7.2 custom library bundle.
+    # Remove it before installing TheRock so pip never has two distributions
+    # claiming the same ROCm library files.
+    $legacyPackage = 'rocm-sdk-libraries-custom'
+    $legacyShow = @(& $testPython -s -m pip show $legacyPackage 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $legacyShow.Count -gt 0) {
+        Write-Host "Removing legacy $legacyPackage from the isolated copy before TheRock installation..." -ForegroundColor Yellow
+        $oldEap = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $testPython -s -m pip uninstall -y $legacyPackage 2>&1 | ForEach-Object { Write-Host $_ }
+            $legacyExit = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $oldEap
+        }
+        if ($legacyExit -ne 0) {
+            throw "Failed to remove legacy package '$legacyPackage' before TheRock installation."
+        }
+    }
 }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -203,6 +224,6 @@ if ($pythonExitCode -ne 0 -or $null -eq $parsedProbe -or -not $parsedProbe.gpu_a
 
 Write-Host ''
 Write-Host 'THE ROCK GFX1030 GPU COMPUTE PASSED.' -ForegroundColor Green
-Write-Host 'The next step is to transplant these tested packages into a copied SwarmUI backend before touching the real installation.' -ForegroundColor Cyan
+Write-Host 'The next step is to run scripts/Test-TheRockComfy.ps1 for an isolated ComfyUI launch test.' -ForegroundColor Cyan
 
 return $report
