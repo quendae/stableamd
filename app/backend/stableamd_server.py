@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 SERVICE_NAME = "StableAMD"
 API_VERSION = 1
 MAX_REQUEST_BYTES = 1024 * 1024
+SUPPORTED_OUTPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 class StableAmdBridgeError(RuntimeError):
@@ -28,6 +29,21 @@ def validate_loopback_host(host: str) -> str:
     if normalized == "::1":
         return "::1"
     raise ValueError("StableAMD v0.1 may bind only to a loopback host.")
+
+
+def resolve_output_image(repo_root: Path, requested_path: str) -> Path:
+    if not requested_path or not str(requested_path).strip():
+        raise ValueError("Generated image path is required.")
+
+    root = (Path(repo_root).resolve() / ".runtime" / "stableamd" / "output").resolve()
+    candidate = Path(requested_path).expanduser().resolve()
+    if candidate == root or root not in candidate.parents:
+        raise ValueError("Generated image path is outside the StableAMD output directory.")
+    if candidate.suffix.lower() not in SUPPORTED_OUTPUT_IMAGE_SUFFIXES:
+        raise ValueError("Requested output is not a supported image type.")
+    if not candidate.is_file():
+        raise ValueError("Generated image file was not found.")
+    return candidate
 
 
 def _powershell_literal(value: str) -> str:
@@ -246,8 +262,9 @@ class StableAmdApi:
         return 404, {"error": "API route not found."}
 
 
-def make_handler(api: StableAmdApi, frontend_root: Path | None = None):
+def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root: Path | None = None):
     static_root = Path(frontend_root).resolve() if frontend_root is not None else None
+    resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
 
     class StableAmdRequestHandler(BaseHTTPRequestHandler):
         server_version = "StableAMD/0.1"
@@ -269,6 +286,26 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None):
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(payload)
+
+        def _serve_generated_image(self) -> bool:
+            parsed = urlsplit(self.path)
+            if self.command != "GET" or parsed.path != "/api/image":
+                return False
+            if resolved_repo_root is None:
+                self._send_json(500, {"error": "StableAMD output root is not configured."})
+                return True
+
+            query = parse_qs(parsed.query)
+            requested = query.get("path", [""])[0]
+            try:
+                image_path = resolve_output_image(resolved_repo_root, requested)
+            except ValueError as exc:
+                self._send_json(404, {"error": str(exc)})
+                return True
+
+            content_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+            self._send_bytes(200, content_type, image_path.read_bytes(), cache_control="private, no-store")
+            return True
 
         def _serve_frontend(self) -> bool:
             if static_root is None or not static_root.is_dir():
@@ -293,6 +330,9 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None):
             return True
 
         def _dispatch(self) -> None:
+            if self._serve_generated_image():
+                return
+
             parsed_path = urlsplit(self.path).path
             if self.command == "GET" and not parsed_path.startswith("/api/") and parsed_path != "/api":
                 if self._serve_frontend():
@@ -340,7 +380,7 @@ def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
         raise StableAmdBridgeError(f"StableAMD frontend index.html is missing: {index_path}")
     bridge = PowerShellBridge(repo_root)
     api = StableAmdApi(bridge)
-    server = ThreadingHTTPServer((bind_host, port), make_handler(api, frontend_root))
+    server = ThreadingHTTPServer((bind_host, port), make_handler(api, frontend_root, repo_root))
     print(f"StableAMD local application listening on http://{bind_host}:{port}/", flush=True)
     try:
         server.serve_forever()
