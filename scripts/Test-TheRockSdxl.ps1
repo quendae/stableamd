@@ -32,6 +32,7 @@ $comfyMain = Join-Path $comfyRoot 'main.py'
 $comfyApiInput = Join-Path $comfyRoot 'comfy_api/input/__init__.py'
 $theRockPython = Join-Path $RuntimeRoot 'therock-gfx1030/python_embeded/python.exe'
 $comfyRunner = Join-Path $PSScriptRoot 'probes/run_comfy_isolated.py'
+$validatorPath = Join-Path $PSScriptRoot 'probes/validate_safetensors.py'
 $comfySmoke = Join-Path $PSScriptRoot 'Test-TheRockComfy.ps1'
 
 # The generation gate intentionally reuses the isolated ComfyUI checkout that
@@ -42,7 +43,7 @@ if (-not (Test-Path $comfyMain) -or -not (Test-Path $comfyApiInput)) {
     & $comfySmoke -RuntimeRoot $RuntimeRoot -OutputDirectory $OutputDirectory | Out-Null
 }
 
-foreach ($required in @($comfyMain, $comfyApiInput, $theRockPython, $comfyRunner)) {
+foreach ($required in @($comfyMain, $comfyApiInput, $theRockPython, $comfyRunner, $validatorPath)) {
     if (-not (Test-Path $required)) {
         throw "Required generation-test component is missing: '$required'."
     }
@@ -50,6 +51,33 @@ foreach ($required in @($comfyMain, $comfyApiInput, $theRockPython, $comfyRunner
 if (-not (Test-Path $checkpointPath)) {
     throw "The SwarmUI SDXL checkpoint was not found at '$checkpointPath'. Finish the SwarmUI model download (sdxl1) before running this gate."
 }
+
+# Safetensors exposes all tensor byte ranges in its JSON header. Validate those
+# ranges before starting ComfyUI so a truncated multi-GB model fails in seconds
+# instead of being queued and then waiting for the generation timeout.
+$validatorRaw = @()
+$oldEap = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $validatorRaw = @(& $theRockPython -s $validatorPath $checkpointPath 2>$null | ForEach-Object { [string]$_ })
+    $validatorExit = $LASTEXITCODE
+}
+finally {
+    $ErrorActionPreference = $oldEap
+}
+
+$validatorJson = $validatorRaw | Where-Object { $_.Trim().StartsWith('{') -and $_.Trim().EndsWith('}') } | Select-Object -Last 1
+$checkpointValidation = $null
+if ($validatorJson) {
+    try { $checkpointValidation = $validatorJson | ConvertFrom-Json } catch { $checkpointValidation = $null }
+}
+if ($validatorExit -ne 0 -or $null -eq $checkpointValidation -or -not $checkpointValidation.valid) {
+    $reason = if ($null -ne $checkpointValidation -and $checkpointValidation.reason) { [string]$checkpointValidation.reason } else { 'validator did not return a valid result' }
+    $sizeText = if ($null -ne $checkpointValidation -and $null -ne $checkpointValidation.file_size) { " Local size: $($checkpointValidation.file_size) bytes." } else { '' }
+    $missingText = if ($null -ne $checkpointValidation -and $null -ne $checkpointValidation.missing_bytes) { " Missing at least $($checkpointValidation.missing_bytes) bytes for the tensor declared in the header." } else { '' }
+    throw "Checkpoint safetensors is incomplete or corrupt: $reason.$sizeText$missingText File: '$checkpointPath'. Re-download this checkpoint before rerunning the SDXL gate."
+}
+Write-Host "Checkpoint structure valid: $($checkpointValidation.tensor_count) tensors, $($checkpointValidation.file_size) bytes." -ForegroundColor DarkGreen
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $runRoot = Join-Path $RuntimeRoot "therock-sdxl-$stamp"
@@ -245,7 +273,12 @@ try {
             $historyProperty = $history.PSObject.Properties[$promptId]
             if ($null -ne $historyProperty) {
                 $candidate = $historyProperty.Value
-                if ($candidate.status.completed) {
+                $candidateStatus = [string]$candidate.status.status_str
+                if ($candidateStatus -eq 'error') {
+                    $historyEntry = $candidate
+                    break
+                }
+                if ($candidate.status.completed -or $candidateStatus -eq 'success') {
                     $historyEntry = $candidate
                     break
                 }
@@ -268,6 +301,10 @@ try {
     }
 
     $statusString = [string]$historyEntry.status.status_str
+    if ($statusString -eq 'error') {
+        $statusJson = $historyEntry.status | ConvertTo-Json -Depth 16 -Compress
+        throw "ComfyUI reported an SDXL execution error for prompt $promptId: $statusJson"
+    }
     if ($statusString -ne 'success') {
         throw "ComfyUI completed the prompt with status '$statusString': $($historyEntry.status | ConvertTo-Json -Depth 12 -Compress)"
     }
@@ -303,6 +340,7 @@ try {
         Steps = 20
         CheckpointPath = $checkpointPath
         CheckpointName = [string]$checkpointName
+        CheckpointValidation = $checkpointValidation
         PythonPath = $theRockPython
         TorchDevice = [string]$gpuDevice.name
         GenerationSeconds = [math]::Round($generationWatch.Elapsed.TotalSeconds, 3)
