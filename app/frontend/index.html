@@ -107,56 +107,79 @@
       <section class="page" id="page-models" data-page="models">
         <div class="section-toolbar">
           <div>
-            <h2>Installed checkpoints</h2>
-            <p>Import a local checkpoint, download from Hugging Face, or scan configured model folders.</p>
+            <h2>Model folders</h2>
+            <p>Point StableAMD at folders you already use. Models stay where they are; scanning never copies them.</p>
           </div>
           <button class="button button-secondary" id="models-refresh" type="button">Scan models</button>
         </div>
 
-        <div class="model-install-grid">
-          <form class="install-card" id="local-model-form">
-            <div class="install-card-heading">
-              <strong>Import local checkpoint</strong>
-              <span>Copy or move an existing .safetensors file into StableAMD.</span>
-            </div>
-            <label class="field">
-              <span>Windows file path</span>
-              <input id="local-model-path" type="text" required placeholder="C:\AI\models\checkpoint.safetensors" autocomplete="off">
+        <div class="model-root-card">
+          <form id="model-root-form" class="model-root-form">
+            <label class="field model-root-field">
+              <span>Folder containing checkpoints</span>
+              <div class="path-picker-row">
+                <input id="model-root-path" type="text" required placeholder="D:\AI\Models" autocomplete="off">
+                <button class="button button-quiet" id="model-root-browse" type="button">Browse folder…</button>
+                <button class="button button-secondary" type="submit">Add folder</button>
+              </div>
             </label>
-            <label class="checkbox-field"><input id="local-model-move" type="checkbox"> <span>Move file instead of copying</span></label>
-            <label class="field">
-              <span>Expected SHA-256 <small>optional</small></span>
-              <input id="local-model-sha" type="text" maxlength="64" placeholder="64 hex characters" autocomplete="off">
-            </label>
-            <button class="button button-secondary" type="submit">Import checkpoint</button>
           </form>
-
-          <form class="install-card" id="hf-model-form">
-            <div class="install-card-heading">
-              <strong>Download from Hugging Face</strong>
-              <span>Downloads are resumable and validated before registration.</span>
-            </div>
-            <label class="field">
-              <span>Repository</span>
-              <input id="hf-repository" type="text" required placeholder="stabilityai/stable-diffusion-xl-base-1.0" autocomplete="off">
-            </label>
-            <label class="field">
-              <span>Filename</span>
-              <input id="hf-filename" type="text" required placeholder="sd_xl_base_1.0.safetensors" autocomplete="off">
-            </label>
-            <div class="field-grid field-grid-2">
-              <label class="field"><span>Revision</span><input id="hf-revision" type="text" value="main" autocomplete="off"></label>
-              <label class="field"><span>Token <small>optional/private repos</small></span><input id="hf-token" type="password" autocomplete="off"></label>
-            </div>
-            <label class="field">
-              <span>Expected SHA-256 <small>optional</small></span>
-              <input id="hf-sha" type="text" maxlength="64" placeholder="64 hex characters" autocomplete="off">
-            </label>
-            <button class="button button-secondary" type="submit">Download checkpoint</button>
-          </form>
+          <div class="model-root-list" id="model-root-list"></div>
         </div>
 
+        <div class="section-toolbar model-list-heading">
+          <div>
+            <h2>Detected checkpoints</h2>
+            <p>Recursive scan of every configured model folder.</p>
+          </div>
+        </div>
         <div class="model-list" id="model-list"></div>
+
+        <details class="secondary-model-options">
+          <summary>Other ways to add models</summary>
+          <div class="model-install-grid">
+            <form class="install-card" id="local-model-form">
+              <div class="install-card-heading">
+                <strong>Copy or move one checkpoint</strong>
+                <span>Optional legacy import. Folder scanning above is recommended for existing model libraries.</span>
+              </div>
+              <label class="field">
+                <span>Windows file path</span>
+                <input id="local-model-path" type="text" required placeholder="C:\AI\models\checkpoint.safetensors" autocomplete="off">
+              </label>
+              <label class="checkbox-field"><input id="local-model-move" type="checkbox"> <span>Move file instead of copying</span></label>
+              <label class="field">
+                <span>Expected SHA-256 <small>optional</small></span>
+                <input id="local-model-sha" type="text" maxlength="64" placeholder="64 hex characters" autocomplete="off">
+              </label>
+              <button class="button button-secondary" type="submit">Import checkpoint</button>
+            </form>
+
+            <form class="install-card" id="hf-model-form">
+              <div class="install-card-heading">
+                <strong>Download from Hugging Face</strong>
+                <span>Downloads are resumable and validated before registration.</span>
+              </div>
+              <label class="field">
+                <span>Repository</span>
+                <input id="hf-repository" type="text" required placeholder="stabilityai/stable-diffusion-xl-base-1.0" autocomplete="off">
+              </label>
+              <label class="field">
+                <span>Filename</span>
+                <input id="hf-filename" type="text" required placeholder="sd_xl_base_1.0.safetensors" autocomplete="off">
+              </label>
+              <div class="field-grid field-grid-2">
+                <label class="field"><span>Revision</span><input id="hf-revision" type="text" value="main" autocomplete="off"></label>
+                <label class="field"><span>Token <small>optional/private repos</small></span><input id="hf-token" type="password" autocomplete="off"></label>
+              </div>
+              <label class="field">
+                <span>Expected SHA-256 <small>optional</small></span>
+                <input id="hf-sha" type="text" maxlength="64" placeholder="64 hex characters" autocomplete="off">
+              </label>
+              <button class="button button-secondary" type="submit">Download checkpoint</button>
+            </form>
+          </div>
+        </details>
       </section>
 
       <section class="page" id="page-gallery" data-page="gallery">
