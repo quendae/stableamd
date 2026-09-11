@@ -26,9 +26,11 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $swarmRoot = Join-Path $RuntimeRoot 'SwarmUI'
 $sourceComfyRoot = Join-Path $swarmRoot 'dlbackend/comfy/ComfyUI'
 $sourceComfyMain = Join-Path $sourceComfyRoot 'main.py'
+$sourceComfyPackage = Join-Path $sourceComfyRoot 'comfy/options.py'
 $isolatedComfyBase = Join-Path $RuntimeRoot 'therock-comfy'
 $comfyRoot = Join-Path $isolatedComfyBase 'ComfyUI'
 $comfyMain = Join-Path $comfyRoot 'main.py'
+$isolatedComfyPackage = Join-Path $comfyRoot 'comfy/options.py'
 $theRockRoot = Join-Path $RuntimeRoot 'therock-gfx1030'
 $theRockPythonRoot = Join-Path $theRockRoot 'python_embeded'
 $theRockPython = Join-Path $theRockPythonRoot 'python.exe'
@@ -38,6 +40,12 @@ $nightlyIndex = 'https://rocm.nightlies.amd.com/whl-multi-arch/'
 if (-not (Test-Path $sourceComfyMain)) {
     throw "SwarmUI ComfyUI main.py was not found at '$sourceComfyMain'. Complete the SwarmUI backend installation first."
 }
+if (-not (Test-Path $sourceComfyPackage)) {
+    throw "SwarmUI ComfyUI source is incomplete: '$sourceComfyPackage' is missing. The source backend itself needs repair before testing TheRock."
+}
+if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+    throw 'git.exe is required to make a complete isolated ComfyUI checkout.'
+}
 if (-not (Test-Path $theRockPython)) {
     throw "The tested TheRock Python was not found at '$theRockPython'. Run scripts/Test-TheRockGfx1030.ps1 first."
 }
@@ -45,27 +53,76 @@ if (-not (Test-Path $probePath)) {
     throw "GPU probe was not found at '$probePath'."
 }
 
-if ($RefreshCopy -and (Test-Path $isolatedComfyBase)) {
-    Write-Host "Refreshing isolated ComfyUI copy at $isolatedComfyBase ..." -ForegroundColor Yellow
-    Remove-Item -Path $isolatedComfyBase -Recurse -Force
+$copyIsComplete = (Test-Path $comfyMain) -and (Test-Path $isolatedComfyPackage)
+if ($RefreshCopy -or ((Test-Path $isolatedComfyBase) -and -not $copyIsComplete)) {
+    if (Test-Path $isolatedComfyBase) {
+        if ($RefreshCopy) {
+            Write-Host "Refreshing isolated ComfyUI copy at $isolatedComfyBase ..." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "Removing incomplete isolated ComfyUI copy at $isolatedComfyBase ..." -ForegroundColor Yellow
+        }
+        Remove-Item -Path $isolatedComfyBase -Recurse -Force
+    }
+    $copyIsComplete = $false
 }
 
-if (-not (Test-Path $comfyMain)) {
+if (-not $copyIsComplete) {
     Write-Host ''
-    Write-Host 'Creating an isolated copy of the SwarmUI ComfyUI code...' -ForegroundColor Cyan
-    Write-Host 'Models, outputs, user data, git metadata, and caches are not copied.' -ForegroundColor DarkGray
-    New-Item -ItemType Directory -Path $comfyRoot -Force | Out-Null
+    Write-Host 'Creating a complete isolated checkout of the SwarmUI ComfyUI code...' -ForegroundColor Cyan
+    Write-Host 'A local git clone copies tracked source files only; models, outputs, user data, and caches are not copied.' -ForegroundColor DarkGray
+    New-Item -ItemType Directory -Path $isolatedComfyBase -Force | Out-Null
 
-    $robocopyArgs = @(
-        $sourceComfyRoot,
-        $comfyRoot,
-        '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
-        '/XD', '.git', 'output', 'input', 'temp', 'user', '__pycache__'
-    )
-    $null = & robocopy.exe @robocopyArgs
-    $copyExit = $LASTEXITCODE
-    if ($copyExit -gt 7) {
-        throw "robocopy failed while cloning the ComfyUI code (exit code $copyExit)."
+    $oldEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $sourceCommitLines = @(& git.exe -C $sourceComfyRoot rev-parse HEAD 2>&1 | ForEach-Object { [string]$_ })
+        $revParseExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldEap
+    }
+    if ($revParseExit -ne 0 -or $sourceCommitLines.Count -eq 0) {
+        throw "The SwarmUI ComfyUI source at '$sourceComfyRoot' is not a readable git checkout. git rev-parse output: $($sourceCommitLines -join ' ')"
+    }
+    $sourceCommit = $sourceCommitLines[-1].Trim()
+
+    $cloneOutput = @()
+    $oldEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $cloneOutput = @(& git.exe clone --no-hardlinks --local --no-tags $sourceComfyRoot $comfyRoot 2>&1 | ForEach-Object { [string]$_ })
+        $cloneExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldEap
+    }
+    if ($cloneExit -ne 0) {
+        throw "Local ComfyUI git clone failed with exit code $cloneExit. Output: $($cloneOutput -join ' ')"
+    }
+
+    $checkoutOutput = @()
+    $oldEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $checkoutOutput = @(& git.exe -C $comfyRoot checkout --detach $sourceCommit 2>&1 | ForEach-Object { [string]$_ })
+        $checkoutExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldEap
+    }
+    if ($checkoutExit -ne 0) {
+        throw "Could not pin the isolated ComfyUI copy to source commit $sourceCommit. Output: $($checkoutOutput -join ' ')"
+    }
+
+    if (-not (Test-Path $comfyMain) -or -not (Test-Path $isolatedComfyPackage)) {
+        throw "The isolated ComfyUI checkout is incomplete after git clone. Expected '$comfyMain' and '$isolatedComfyPackage'."
+    }
+
+    # The copy is now self-contained source code. Git metadata is not needed for this smoke test.
+    $isolatedGit = Join-Path $comfyRoot '.git'
+    if (Test-Path $isolatedGit) {
+        Remove-Item -Path $isolatedGit -Recurse -Force
     }
 }
 
@@ -189,6 +246,7 @@ try {
     $result = [pscustomobject]@{
         CreatedAtUtc = [DateTime]::UtcNow.ToString('o')
         SourceComfyRoot = $sourceComfyRoot
+        SourceCommit = if ($sourceCommit) { $sourceCommit } else { $null }
         ComfyRoot = $comfyRoot
         ComfyMain = $comfyMain
         PythonPath = $theRockPython
