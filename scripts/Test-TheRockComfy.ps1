@@ -4,6 +4,7 @@ param(
     [string]$OutputDirectory = '',
     [int]$Port = 8190,
     [int]$StartupTimeoutSeconds = 240,
+    [switch]$RefreshCopy,
     [switch]$KeepRunning
 )
 
@@ -23,15 +24,18 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
 $swarmRoot = Join-Path $RuntimeRoot 'SwarmUI'
-$comfyRoot = Join-Path $swarmRoot 'dlbackend/comfy/ComfyUI'
+$sourceComfyRoot = Join-Path $swarmRoot 'dlbackend/comfy/ComfyUI'
+$sourceComfyMain = Join-Path $sourceComfyRoot 'main.py'
+$isolatedComfyBase = Join-Path $RuntimeRoot 'therock-comfy'
+$comfyRoot = Join-Path $isolatedComfyBase 'ComfyUI'
 $comfyMain = Join-Path $comfyRoot 'main.py'
 $theRockRoot = Join-Path $RuntimeRoot 'therock-gfx1030'
 $theRockPythonRoot = Join-Path $theRockRoot 'python_embeded'
 $theRockPython = Join-Path $theRockPythonRoot 'python.exe'
 $probePath = Join-Path $PSScriptRoot 'probes/amd_backend_probe.py'
 
-if (-not (Test-Path $comfyMain)) {
-    throw "SwarmUI ComfyUI main.py was not found at '$comfyMain'. Complete the SwarmUI backend installation first."
+if (-not (Test-Path $sourceComfyMain)) {
+    throw "SwarmUI ComfyUI main.py was not found at '$sourceComfyMain'. Complete the SwarmUI backend installation first."
 }
 if (-not (Test-Path $theRockPython)) {
     throw "The tested TheRock Python was not found at '$theRockPython'. Run scripts/Test-TheRockGfx1030.ps1 first."
@@ -40,15 +44,39 @@ if (-not (Test-Path $probePath)) {
     throw "GPU probe was not found at '$probePath'."
 }
 
+if ($RefreshCopy -and (Test-Path $isolatedComfyBase)) {
+    Write-Host "Refreshing isolated ComfyUI copy at $isolatedComfyBase ..." -ForegroundColor Yellow
+    Remove-Item -Path $isolatedComfyBase -Recurse -Force
+}
+
+if (-not (Test-Path $comfyMain)) {
+    Write-Host ''
+    Write-Host 'Creating an isolated copy of the SwarmUI ComfyUI code...' -ForegroundColor Cyan
+    Write-Host 'Models, outputs, user data, git metadata, and caches are not copied.' -ForegroundColor DarkGray
+    New-Item -ItemType Directory -Path $comfyRoot -Force | Out-Null
+
+    $robocopyArgs = @(
+        $sourceComfyRoot,
+        $comfyRoot,
+        '/MIR', '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
+        '/XD', '.git', 'output', 'input', 'temp', 'user', '__pycache__'
+    )
+    $null = & robocopy.exe @robocopyArgs
+    $copyExit = $LASTEXITCODE
+    if ($copyExit -gt 7) {
+        throw "robocopy failed while cloning the ComfyUI code (exit code $copyExit)."
+    }
+}
+
 Write-Host ''
 Write-Host 'StableAMD TheRock -> ComfyUI integration test' -ForegroundColor Cyan
-Write-Host "ComfyUI code: $comfyRoot"
-Write-Host "Python:       $theRockPython"
-Write-Host 'The original SwarmUI Python environment will not be modified.' -ForegroundColor DarkGray
+Write-Host "Source ComfyUI:   $sourceComfyRoot"
+Write-Host "Isolated ComfyUI: $comfyRoot"
+Write-Host "Python:           $theRockPython"
+Write-Host 'The original SwarmUI/ComfyUI backend will not be modified.' -ForegroundColor DarkGray
 
 # The isolated Python was initially cloned from SwarmUI's ROCm 7.2 portable package.
-# Remove its legacy custom library bundle so the integration test uses one coherent
-# ROCm stack (TheRock nightly) instead of mixing 7.2 and 10.x libraries.
+# Remove its legacy custom library bundle so this test uses one coherent TheRock stack.
 $legacyPackage = 'rocm-sdk-libraries-custom'
 $legacyShow = @(& $theRockPython -s -m pip show $legacyPackage 2>$null)
 if ($LASTEXITCODE -eq 0 -and $legacyShow.Count -gt 0) {
@@ -94,7 +122,7 @@ Remove-Item Env:HSA_OVERRIDE_GFX_VERSION -ErrorAction SilentlyContinue
 
 $process = $null
 try {
-    Write-Host "Starting ComfyUI on $url ..." -ForegroundColor Cyan
+    Write-Host "Starting isolated ComfyUI on $url ..." -ForegroundColor Cyan
     $arguments = "-s `"$comfyMain`" --listen 127.0.0.1 --port $Port"
     $process = Start-Process `
         -FilePath $theRockPython `
@@ -132,6 +160,7 @@ try {
 
     $result = [pscustomobject]@{
         CreatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        SourceComfyRoot = $sourceComfyRoot
         ComfyRoot = $comfyRoot
         ComfyMain = $comfyMain
         PythonPath = $theRockPython
@@ -171,7 +200,7 @@ try {
     }
 
     if ($KeepRunning) {
-        Write-Host 'KeepRunning was requested; leaving ComfyUI alive for manual testing.' -ForegroundColor Yellow
+        Write-Host 'KeepRunning was requested; leaving isolated ComfyUI alive for manual testing.' -ForegroundColor Yellow
         $process = $null
     }
     else {
