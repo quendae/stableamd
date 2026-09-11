@@ -79,7 +79,10 @@ async function refreshStatus() {
 
 function normalizeModels(payload) {
   if (!payload) return [];
-  return Array.isArray(payload) ? payload : [payload];
+  if (Array.isArray(payload)) return payload;
+  if (payload.models !== undefined) return Array.isArray(payload.models) ? payload.models : payload.models ? [payload.models] : [];
+  if (payload.value !== undefined && payload.Count !== undefined) return Array.isArray(payload.value) ? payload.value : payload.value ? [payload.value] : [];
+  return [payload];
 }
 
 function normalizeRoots(payload) {
@@ -207,6 +210,20 @@ async function browseModelRoot() {
   }
 }
 
+async function restartBackendAfterModelRootChange() {
+  qs("#runtime-status").textContent = "Restarting backend…";
+  qs("#runtime-dot").dataset.state = "starting";
+  try {
+    const status = await api("/api/backend/restart", { method: "POST", body: "{}" });
+    renderStatus(status);
+    await refreshModels();
+    showToast("Backend refreshed for the new model folders.", "success");
+  } catch (error) {
+    showToast(`Model folder saved, but backend restart failed: ${error.message}`, "error");
+    await refreshStatus();
+  }
+}
+
 async function submitModelRoot(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -219,10 +236,13 @@ async function submitModelRoot(event) {
   try {
     const result = await api("/api/model-roots", { method: "POST", body: JSON.stringify({ path }) });
     const models = getValue(result, "models", "Models");
-    if (models) renderModels(normalizeModels(models));
+    if (models !== undefined) renderModels(normalizeModels(models));
     qs("#model-root-path").value = "";
-    await Promise.allSettled([refreshModelRoots(), refreshStatus()]);
-    showToast(getValue(result, "added", "Added") ? "Model folder added and backend refreshed." : "Model folder is already configured.", "success");
+    await refreshModelRoots();
+    const added = Boolean(getValue(result, "added", "Added"));
+    const restartRequired = Boolean(getValue(result, "restartRequired", "RestartRequired"));
+    showToast(added ? (restartRequired ? "Model folder added. Restarting backend in the background…" : "Model folder added.") : "Model folder is already configured.", "success");
+    if (restartRequired) void restartBackendAfterModelRootChange();
   } catch (error) {
     showToast(`Could not add model folder: ${error.message}`, "error");
   } finally {
@@ -236,9 +256,12 @@ async function removeModelRoot(path, button) {
   try {
     const result = await api("/api/model-roots/remove", { method: "POST", body: JSON.stringify({ path }) });
     const models = getValue(result, "models", "Models");
-    if (models) renderModels(normalizeModels(models));
-    await Promise.allSettled([refreshModelRoots(), refreshStatus()]);
-    showToast(getValue(result, "removed", "Removed") ? "Model folder removed." : "Model folder was not configured.", "success");
+    if (models !== undefined) renderModels(normalizeModels(models));
+    await refreshModelRoots();
+    const removed = Boolean(getValue(result, "removed", "Removed"));
+    const restartRequired = Boolean(getValue(result, "restartRequired", "RestartRequired"));
+    showToast(removed ? (restartRequired ? "Model folder removed. Restarting backend in the background…" : "Model folder removed.") : "Model folder was not configured.", "success");
+    if (restartRequired) void restartBackendAfterModelRootChange();
   } catch (error) {
     showToast(`Could not remove model folder: ${error.message}`, "error");
   } finally {
