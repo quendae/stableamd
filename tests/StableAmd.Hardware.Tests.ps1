@@ -143,6 +143,8 @@ Describe 'TheRock ComfyUI integration gate' {
         $script | Should -Match '--no-hardlinks'
         $script | Should -Match 'system_stats'
         $script | Should -Match 'rocm-sdk-libraries-custom'
+        $script | Should -Match 'pip list --format=json'
+        $script | Should -Not -Match 'pip show \$legacyPackage'
         $script | Should -Not -Match 'robocopy\.exe'
         $script | Should -Not -Match 'Remove-Item.*SwarmUI[\\/]dlbackend[\\/]comfy'
     }
