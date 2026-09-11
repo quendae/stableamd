@@ -3,7 +3,8 @@ param(
     [string]$RepoRoot = '',
     [int]$AppPort = 8188,
     [int]$AppStartupTimeoutSeconds = 30,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [switch]$SkipRuntimeInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,8 +38,27 @@ $appServer = Join-Path $RepoRoot 'app/backend/stableamd_server.py'
 if (-not (Test-Path $appServer -PathType Leaf)) {
     throw "StableAMD application server is missing: '$appServer'."
 }
-if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
-    throw "StableAMD TheRock runtime is missing at '$($paths.TheRockPython)'. Prepare the validated gfx1030 runtime before launching the product UI."
+
+$comfyMain = Join-Path $paths.ComfyRoot 'main.py'
+$comfyApiInput = Join-Path $paths.ComfyRoot 'comfy_api/input/__init__.py'
+$runtimeMissing = (-not (Test-Path $paths.TheRockPython -PathType Leaf)) -or (-not (Test-Path $comfyMain -PathType Leaf)) -or (-not (Test-Path $comfyApiInput -PathType Leaf))
+if ($runtimeMissing) {
+    if ($SkipRuntimeInstall) {
+        throw "StableAMD runtime is missing or incomplete. Expected Python '$($paths.TheRockPython)' and ComfyUI '$($paths.ComfyRoot)'."
+    }
+
+    $runtimeInstaller = Join-Path $PSScriptRoot 'Install-StableAMDRuntime.ps1'
+    if (-not (Test-Path $runtimeInstaller -PathType Leaf)) {
+        throw "StableAMD runtime is missing and the bootstrap installer was not found at '$runtimeInstaller'."
+    }
+
+    Write-Host ''
+    Write-Host 'StableAMD runtime is missing or incomplete. Preparing the pinned Radeon runtime...' -ForegroundColor Yellow
+    Write-Host 'The first launch downloads Python, the locked TheRock ROCm/PyTorch stack and ComfyUI. This can download more than 1 GB.' -ForegroundColor DarkGray
+    $runtimeInstall = & $runtimeInstaller -RepoRoot $RepoRoot
+    if ($null -eq $runtimeInstall -or -not (Test-Path $paths.TheRockPython -PathType Leaf) -or -not (Test-Path $comfyMain -PathType Leaf)) {
+        throw 'StableAMD runtime bootstrap returned without creating the required managed runtime.'
+    }
 }
 
 $resolvedAppPort = $AppPort
