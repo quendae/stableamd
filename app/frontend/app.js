@@ -1,12 +1,12 @@
 const pageMeta = {
   generate: ["Generate", "Create an SDXL image on your Radeon GPU."],
-  models: ["Models", "Install and manage checkpoints available to StableAMD."],
+  models: ["Models", "Use existing checkpoint folders without duplicating model files."],
   gallery: ["Gallery", "Browse recent generations and reuse their settings."],
   settings: ["Settings", "StableAMD v0.1 runtime and generation defaults."],
   diagnostics: ["Diagnostics", "Inspect backend health and runtime logs."],
 };
 
-const state = { models: [], history: [], status: null };
+const state = { models: [], modelRoots: [], history: [], status: null };
 const qs = (selector) => document.querySelector(selector);
 const qsa = (selector) => Array.from(document.querySelectorAll(selector));
 
@@ -55,6 +55,7 @@ function setPage(name) {
   const [title, subtitle] = pageMeta[name] || pageMeta.generate;
   qs("#page-title").textContent = title;
   qs("#page-subtitle").textContent = subtitle;
+  if (name === "models") Promise.allSettled([refreshModelRoots(), refreshModels()]);
   if (name === "gallery") refreshHistory();
   if (name === "diagnostics") refreshDiagnostics();
 }
@@ -77,6 +78,11 @@ async function refreshStatus() {
 }
 
 function normalizeModels(payload) {
+  if (!payload) return [];
+  return Array.isArray(payload) ? payload : [payload];
+}
+
+function normalizeRoots(payload) {
   if (!payload) return [];
   return Array.isArray(payload) ? payload : [payload];
 }
@@ -114,7 +120,7 @@ function renderModels(models) {
   const list = qs("#model-list");
   list.replaceChildren();
   if (!models.length) {
-    list.innerHTML = '<div class="empty-state"><strong>No checkpoints found</strong><p>Import a local .safetensors checkpoint or download one from Hugging Face.</p></div>';
+    list.innerHTML = '<div class="empty-state"><strong>No checkpoints found</strong><p>Add a model folder above, then scan it. StableAMD will use files in place.</p></div>';
     return;
   }
   for (const model of models) {
@@ -132,6 +138,129 @@ function renderModels(models) {
 async function refreshModels() {
   try { renderModels(normalizeModels(await api("/api/models"))); }
   catch (error) { showToast(`Model scan failed: ${error.message}`, "error"); }
+}
+
+function renderModelRoots(roots) {
+  state.modelRoots = roots;
+  const list = qs("#model-root-list");
+  list.replaceChildren();
+  if (!roots.length) {
+    list.innerHTML = '<div class="empty-state compact"><strong>No model folders configured</strong><p>Add a folder containing .safetensors checkpoints.</p></div>';
+    return;
+  }
+
+  for (const root of roots) {
+    const path = String(getValue(root, "path", "Path") || "");
+    const managed = Boolean(getValue(root, "managed", "Managed"));
+    const exists = Boolean(getValue(root, "exists", "Exists"));
+    const row = document.createElement("div");
+    row.className = "model-root-row";
+
+    const main = document.createElement("div");
+    main.className = "model-root-main";
+    const title = document.createElement("strong");
+    title.textContent = managed ? "StableAMD managed models" : "External model folder";
+    const pathText = document.createElement("code");
+    pathText.textContent = path;
+    main.append(title, pathText);
+
+    const actions = document.createElement("div");
+    actions.className = "model-root-actions";
+    const status = document.createElement("span");
+    status.className = `root-state ${exists ? "is-ready" : "is-missing"}`;
+    status.textContent = exists ? "Available" : "Missing";
+    actions.append(status);
+    if (!managed) {
+      const remove = document.createElement("button");
+      remove.className = "button button-quiet";
+      remove.type = "button";
+      remove.dataset.modelRootRemove = path;
+      remove.textContent = "Remove";
+      actions.append(remove);
+    }
+    row.append(main, actions);
+    list.append(row);
+  }
+}
+
+async function refreshModelRoots() {
+  try { renderModelRoots(normalizeRoots(await api("/api/model-roots"))); }
+  catch (error) { showToast(`Model folders failed: ${error.message}`, "error"); }
+}
+
+async function browseModelRoot() {
+  const button = qs("#model-root-browse");
+  button.disabled = true;
+  const oldText = button.textContent;
+  button.textContent = "Opening…";
+  try {
+    const result = await api("/api/model-roots/browse", { method: "POST", body: "{}" });
+    if (!getValue(result, "cancelled", "Cancelled") && getValue(result, "path", "Path")) {
+      qs("#model-root-path").value = String(getValue(result, "path", "Path"));
+      qs("#model-root-path").focus();
+    }
+  } catch (error) {
+    showToast(`Folder picker failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function submitModelRoot(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const path = qs("#model-root-path").value.trim();
+  if (!path) { showToast("Choose a model folder first.", "error"); return; }
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Adding…";
+  try {
+    const result = await api("/api/model-roots", { method: "POST", body: JSON.stringify({ path }) });
+    const models = getValue(result, "models", "Models");
+    if (models) renderModels(normalizeModels(models));
+    qs("#model-root-path").value = "";
+    await Promise.allSettled([refreshModelRoots(), refreshStatus()]);
+    showToast(getValue(result, "added", "Added") ? "Model folder added and backend refreshed." : "Model folder is already configured.", "success");
+  } catch (error) {
+    showToast(`Could not add model folder: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function removeModelRoot(path, button) {
+  button.disabled = true;
+  try {
+    const result = await api("/api/model-roots/remove", { method: "POST", body: JSON.stringify({ path }) });
+    const models = getValue(result, "models", "Models");
+    if (models) renderModels(normalizeModels(models));
+    await Promise.allSettled([refreshModelRoots(), refreshStatus()]);
+    showToast(getValue(result, "removed", "Removed") ? "Model folder removed." : "Model folder was not configured.", "success");
+  } catch (error) {
+    showToast(`Could not remove model folder: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function scanModels() {
+  const button = qs("#models-refresh");
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Scanning…";
+  try {
+    renderModels(normalizeModels(await api("/api/models/scan", { method: "POST", body: "{}" })));
+    await refreshModelRoots();
+    showToast("Model scan complete.", "success");
+  } catch (error) {
+    showToast(`Model scan failed: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
 }
 
 async function installModel(form, payload) {
@@ -392,7 +521,7 @@ async function backendAction(action) {
 }
 
 async function refreshCurrentPage() {
-  await Promise.allSettled([refreshStatus(), refreshModels()]);
+  await Promise.allSettled([refreshStatus(), refreshModels(), refreshModelRoots()]);
   const visible = qs(".page.is-visible")?.dataset.page;
   if (visible === "gallery") await refreshHistory();
   if (visible === "diagnostics") await refreshDiagnostics();
@@ -401,12 +530,18 @@ async function refreshCurrentPage() {
 function bindEvents() {
   qsa(".nav-item").forEach((item) => item.addEventListener("click", () => setPage(item.dataset.page)));
   qs("#generate-form").addEventListener("submit", submitGeneration);
+  qs("#model-root-form").addEventListener("submit", submitModelRoot);
+  qs("#model-root-browse").addEventListener("click", browseModelRoot);
+  qs("#model-root-list").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-model-root-remove]");
+    if (button) removeModelRoot(button.dataset.modelRootRemove, button);
+  });
   qs("#local-model-form").addEventListener("submit", submitLocalModel);
   qs("#hf-model-form").addEventListener("submit", submitHuggingFaceModel);
   qs("#backend-start").addEventListener("click", () => backendAction("start"));
   qs("#backend-stop").addEventListener("click", () => backendAction("stop"));
   qs("#refresh-button").addEventListener("click", refreshCurrentPage);
-  qs("#models-refresh").addEventListener("click", refreshModels);
+  qs("#models-refresh").addEventListener("click", scanModels);
   qs("#gallery-refresh").addEventListener("click", refreshHistory);
   qs("#diagnostics-refresh").addEventListener("click", refreshDiagnostics);
   qs("#gallery-grid").addEventListener("click", (event) => {
@@ -417,7 +552,7 @@ function bindEvents() {
 
 async function boot() {
   bindEvents();
-  await Promise.allSettled([refreshStatus(), refreshModels()]);
+  await Promise.allSettled([refreshStatus(), refreshModels(), refreshModelRoots()]);
 }
 
 document.addEventListener("DOMContentLoaded", boot);
