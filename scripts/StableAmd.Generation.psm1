@@ -115,6 +115,81 @@ function Resolve-StableAmdComfyCheckpointName {
     return $null
 }
 
+function Resolve-StableAmdGeneratedImagePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [psobject]$HistoryEntry,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$FilenamePrefix,
+
+        [string]$SaveNodeId = '9'
+    )
+
+    if ([string]::IsNullOrWhiteSpace($OutputRoot)) { throw 'OutputRoot cannot be empty.' }
+    if ([string]::IsNullOrWhiteSpace($FilenamePrefix)) { throw 'FilenamePrefix cannot be empty.' }
+    if ([string]::IsNullOrWhiteSpace($SaveNodeId)) { throw 'SaveNodeId cannot be empty.' }
+
+    $rootFull = [IO.Path]::GetFullPath($OutputRoot)
+    $rootWithSeparator = $rootFull.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
+
+    # Prefer the canonical SaveImage metadata from ComfyUI history when it is
+    # present. Newer ComfyUI execution/history paths can report a successful
+    # prompt without preserving output-node UI metadata, so this must not be
+    # the only way StableAMD correlates the file written by SaveImage.
+    if ($null -ne $HistoryEntry) {
+        $outputsProperty = $HistoryEntry.PSObject.Properties['outputs']
+        if ($null -ne $outputsProperty -and $null -ne $outputsProperty.Value) {
+            $saveProperty = $outputsProperty.Value.PSObject.Properties[$SaveNodeId]
+            if ($null -ne $saveProperty -and $null -ne $saveProperty.Value) {
+                $imagesProperty = $saveProperty.Value.PSObject.Properties['images']
+                $images = if ($null -ne $imagesProperty -and $null -ne $imagesProperty.Value) { @($imagesProperty.Value) } else { @() }
+                foreach ($imageInfo in $images) {
+                    if ($null -eq $imageInfo) { continue }
+                    $filenameProperty = $imageInfo.PSObject.Properties['filename']
+                    if ($null -eq $filenameProperty -or [string]::IsNullOrWhiteSpace([string]$filenameProperty.Value)) { continue }
+
+                    $candidateRoot = $rootFull
+                    $subfolderProperty = $imageInfo.PSObject.Properties['subfolder']
+                    if ($null -ne $subfolderProperty -and -not [string]::IsNullOrWhiteSpace([string]$subfolderProperty.Value)) {
+                        $candidateRoot = Join-Path $candidateRoot ([string]$subfolderProperty.Value)
+                    }
+
+                    try {
+                        $candidate = [IO.Path]::GetFullPath((Join-Path $candidateRoot ([string]$filenameProperty.Value)))
+                    }
+                    catch {
+                        continue
+                    }
+
+                    if (-not $candidate.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)) { continue }
+                    if (Test-Path $candidate -PathType Leaf) { return $candidate }
+                }
+            }
+        }
+    }
+
+    # SaveImage writes PNG files before its UI metadata is recorded. Every
+    # product generation uses a GUID-bearing prefix, so this fallback can find
+    # only the file(s) belonging to this exact request instead of guessing the
+    # newest image in the shared output directory.
+    if (-not (Test-Path $rootFull -PathType Container)) { return $null }
+    $pattern = $FilenamePrefix + '*.png'
+    $fallback = Get-ChildItem -Path $rootFull -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    if ($null -eq $fallback) { return $null }
+
+    $fallbackFull = [IO.Path]::GetFullPath($fallback.FullName)
+    if (-not $fallbackFull.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    return $fallbackFull
+}
+
 function New-StableAmdRandomSeed {
     [CmdletBinding()]
     param()
@@ -221,4 +296,4 @@ function Get-StableAmdGenerationHistory {
     return @($records | Sort-Object SortCreatedAtUtc -Descending | ForEach-Object { $_.Record })
 }
 
-Export-ModuleMember -Function New-StableAmdSdxlWorkflow, Resolve-StableAmdComfyCheckpointName, New-StableAmdRandomSeed, Save-StableAmdGenerationRecord, Get-StableAmdGenerationHistory
+Export-ModuleMember -Function New-StableAmdSdxlWorkflow, Resolve-StableAmdComfyCheckpointName, Resolve-StableAmdGeneratedImagePath, New-StableAmdRandomSeed, Save-StableAmdGenerationRecord, Get-StableAmdGenerationHistory
