@@ -278,21 +278,24 @@ function Upsert-StableAmdModelRegistryEntry {
     )
 
     $entryPath = [IO.Path]::GetFullPath([string]$Entry.path)
-    $models = New-Object System.Collections.Generic.List[object]
+    # Plain PowerShell arrays are deliberate here. Windows PowerShell 5.1 can
+    # throw "Argument types do not match" when a generic List[object] is wrapped
+    # in @() while constructing a PSCustomObject property.
+    $models = @()
     $replaced = $false
     foreach ($model in @(Get-StableAmdObjectPropertyValue -Object $Registry -Name 'models' -Default @())) {
         $modelPath = [string](Get-StableAmdObjectPropertyValue -Object $model -Name 'path' -Default '')
         if (-not [string]::IsNullOrWhiteSpace($modelPath) -and [IO.Path]::GetFullPath($modelPath).Equals($entryPath, [StringComparison]::OrdinalIgnoreCase)) {
             if (-not $replaced) {
-                $models.Add($Entry)
+                $models += $Entry
                 $replaced = $true
             }
         }
         else {
-            $models.Add($model)
+            $models += $model
         }
     }
-    if (-not $replaced) { $models.Add($Entry) }
+    if (-not $replaced) { $models += $Entry }
 
     return [pscustomobject]@{
         schemaVersion = 1
