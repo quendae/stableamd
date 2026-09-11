@@ -127,3 +127,17 @@ Describe 'Get-StableAmdTheRockInstallArgs' {
         $args.Packages | Should -Contain 'torchaudio'
     }
 }
+
+Describe 'TheRock ComfyUI integration gate' {
+    It 'uses the isolated TheRock Python to launch the existing ComfyUI code without modifying the SwarmUI backend' {
+        $scriptPath = Join-Path $PSScriptRoot '../scripts/Test-TheRockComfy.ps1'
+        Test-Path $scriptPath | Should -BeTrue
+
+        $script = Get-Content $scriptPath -Raw
+        $script | Should -Match 'therock-gfx1030'
+        $script | Should -Match 'ComfyUI[\\/]main\.py'
+        $script | Should -Match 'system_stats'
+        $script | Should -Match 'rocm-sdk-libraries-custom'
+        $script | Should -Not -Match 'Remove-Item.*SwarmUI[\\/]dlbackend[\\/]comfy'
+    }
+}
