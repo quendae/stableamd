@@ -27,10 +27,12 @@ $swarmRoot = Join-Path $RuntimeRoot 'SwarmUI'
 $sourceComfyRoot = Join-Path $swarmRoot 'dlbackend/comfy/ComfyUI'
 $sourceComfyMain = Join-Path $sourceComfyRoot 'main.py'
 $sourceComfyPackage = Join-Path $sourceComfyRoot 'comfy/options.py'
+$sourceComfyApiInput = Join-Path $sourceComfyRoot 'comfy_api/input/__init__.py'
 $isolatedComfyBase = Join-Path $RuntimeRoot 'therock-comfy'
 $comfyRoot = Join-Path $isolatedComfyBase 'ComfyUI'
 $comfyMain = Join-Path $comfyRoot 'main.py'
 $isolatedComfyPackage = Join-Path $comfyRoot 'comfy/options.py'
+$isolatedComfyApiInput = Join-Path $comfyRoot 'comfy_api/input/__init__.py'
 $theRockRoot = Join-Path $RuntimeRoot 'therock-gfx1030'
 $theRockPythonRoot = Join-Path $theRockRoot 'python_embeded'
 $theRockPython = Join-Path $theRockPythonRoot 'python.exe'
@@ -43,6 +45,9 @@ if (-not (Test-Path $sourceComfyMain)) {
 }
 if (-not (Test-Path $sourceComfyPackage)) {
     throw "SwarmUI ComfyUI source is incomplete: '$sourceComfyPackage' is missing. The source backend itself needs repair before testing TheRock."
+}
+if (-not (Test-Path $sourceComfyApiInput)) {
+    throw "SwarmUI ComfyUI source is internally incomplete for this revision: '$sourceComfyApiInput' is missing, but current comfy_api code imports comfy_api.input. Repair or refresh the source ComfyUI checkout before testing TheRock."
 }
 if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
     throw 'git.exe is required to make a complete isolated ComfyUI checkout.'
@@ -57,7 +62,7 @@ if (-not (Test-Path $comfyRunner)) {
     throw "ComfyUI bootstrap was not found at '$comfyRunner'."
 }
 
-$copyIsComplete = (Test-Path $comfyMain) -and (Test-Path $isolatedComfyPackage)
+$copyIsComplete = (Test-Path $comfyMain) -and (Test-Path $isolatedComfyPackage) -and (Test-Path $isolatedComfyApiInput)
 if ($RefreshCopy -or ((Test-Path $isolatedComfyBase) -and -not $copyIsComplete)) {
     if (Test-Path $isolatedComfyBase) {
         if ($RefreshCopy) {
@@ -65,6 +70,7 @@ if ($RefreshCopy -or ((Test-Path $isolatedComfyBase) -and -not $copyIsComplete))
         }
         else {
             Write-Host "Removing incomplete isolated ComfyUI copy at $isolatedComfyBase ..." -ForegroundColor Yellow
+            Write-Host "Required file missing: $isolatedComfyApiInput" -ForegroundColor DarkGray
         }
         Remove-Item -Path $isolatedComfyBase -Recurse -Force
     }
@@ -119,8 +125,8 @@ if (-not $copyIsComplete) {
         throw "Could not pin the isolated ComfyUI copy to source commit $sourceCommit. Output: $($checkoutOutput -join ' ')"
     }
 
-    if (-not (Test-Path $comfyMain) -or -not (Test-Path $isolatedComfyPackage)) {
-        throw "The isolated ComfyUI checkout is incomplete after git clone. Expected '$comfyMain' and '$isolatedComfyPackage'."
+    if (-not (Test-Path $comfyMain) -or -not (Test-Path $isolatedComfyPackage) -or -not (Test-Path $isolatedComfyApiInput)) {
+        throw "The isolated ComfyUI checkout is incomplete after git clone. Expected '$comfyMain', '$isolatedComfyPackage', and '$isolatedComfyApiInput'. Source commit: $sourceCommit"
     }
 
     # The copy is now self-contained source code. Git metadata is not needed for this smoke test.
