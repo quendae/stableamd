@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "backend": {
+    "host": "127.0.0.1",
+    "port": 8190,
+    "startupTimeoutSeconds": 240
+  },
+  "generation": {
+    "outputDirectory": ".runtime/stableamd/output",
+    "defaultWidth": 1024,
+    "defaultHeight": 1024,
+    "defaultSteps": 20,
+    "defaultCfg": 7.0,
+    "defaultSampler": "euler",
+    "defaultScheduler": "normal"
+  },
+  "models": {
+    "roots": [
+      ".runtime/stableamd/models/checkpoints",
+      ".runtime/SwarmUI/Models/Stable-Diffusion"
+    ]
+  }
+}
