@@ -1,6 +1,8 @@
-$repoRoot = Split-Path -Parent $PSScriptRoot
-
 Describe 'StableAMD v0.1 release packaging' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    }
+
     It 'ships a packaging script, runtime lock and acceptance document' {
         Test-Path (Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1') | Should -BeTrue
         Test-Path (Join-Path $repoRoot 'config/runtime-lock.v0.1.json') | Should -BeTrue
