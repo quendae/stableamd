@@ -106,3 +106,14 @@ Describe 'Resolve-StableAmdSwarmUrl' {
         ) | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Backend probe launcher' {
+    It 'uses a standalone Python probe file instead of python -c quoting' {
+        $probePath = Join-Path $PSScriptRoot '../scripts/probes/amd_backend_probe.py'
+        Test-Path $probePath | Should -BeTrue
+
+        $launcher = Get-Content (Join-Path $PSScriptRoot '../scripts/Test-SwarmBackend.ps1') -Raw
+        $launcher | Should -Match 'amd_backend_probe\.py'
+        $launcher | Should -Not -Match '-c\s+\$pythonProbe'
+    }
+}
