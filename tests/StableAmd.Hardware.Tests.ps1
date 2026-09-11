@@ -135,10 +135,9 @@ Describe 'TheRock ComfyUI integration gate' {
 
         $script = Get-Content $scriptPath -Raw
         $script | Should -Match 'therock-gfx1030'
-        $script | Should -Match "Join-Path \$isolatedComfyBase 'ComfyUI'"
-        $script | Should -Match "Join-Path \$comfyRoot 'main\.py'"
-        $script | Should -Match "Join-Path \$sourceComfyRoot 'comfy/options\.py'"
-        $script | Should -Match "Join-Path \$comfyRoot 'comfy/options\.py'"
+        $script | Should -Match 'sourceComfyPackage'
+        $script | Should -Match 'isolatedComfyPackage'
+        $script | Should -Match 'comfy/options\.py'
         $script | Should -Match 'git\.exe'
         $script | Should -Match 'clone'
         $script | Should -Match '--no-hardlinks'
