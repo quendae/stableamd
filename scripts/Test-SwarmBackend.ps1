@@ -26,72 +26,23 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 
 $swarmPath = Join-Path $RuntimeRoot 'SwarmUI'
 $pythonPath = Join-Path $swarmPath 'dlbackend/comfy/python_embeded/python.exe'
+$probePath = Join-Path $PSScriptRoot 'probes/amd_backend_probe.py'
 
 if (-not (Test-Path $pythonPath)) {
     throw "SwarmUI's embedded ComfyUI Python was not found at '$pythonPath'. Start SwarmUI, finish its installer, and choose the AMD-compatible ComfyUI backend first."
 }
-
-New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-
-$pythonProbe = @'
-import json
-import platform
-import sys
-import time
-
-result = {
-    "python_version": platform.python_version(),
-    "torch_version": None,
-    "hip_version": None,
-    "gpu_available": False,
-    "device_name": None,
-    "device_index": None,
-    "vram_bytes": None,
-    "fp16_matmul_ok": False,
-    "fp16_matmul_ms": None,
-    "error_type": None,
-    "error": None,
+if (-not (Test-Path $probePath)) {
+    throw "StableAMD backend probe was not found at '$probePath'. Run 'git pull' on the spike branch and retry."
 }
 
-try:
-    import torch
-
-    result["torch_version"] = torch.__version__
-    result["hip_version"] = getattr(torch.version, "hip", None)
-    result["gpu_available"] = bool(torch.cuda.is_available())
-
-    if not result["gpu_available"]:
-        raise RuntimeError("torch.cuda.is_available() returned False; ROCm PyTorch did not expose a usable GPU")
-
-    device_index = torch.cuda.current_device()
-    props = torch.cuda.get_device_properties(device_index)
-    result["device_index"] = int(device_index)
-    result["device_name"] = torch.cuda.get_device_name(device_index)
-    result["vram_bytes"] = int(props.total_memory)
-
-    a = torch.randn((2048, 2048), device="cuda", dtype=torch.float16)
-    b = torch.randn((2048, 2048), device="cuda", dtype=torch.float16)
-    torch.cuda.synchronize()
-    started = time.perf_counter()
-    c = a @ b
-    torch.cuda.synchronize()
-    result["fp16_matmul_ms"] = round((time.perf_counter() - started) * 1000.0, 3)
-    result["fp16_matmul_ok"] = bool(torch.isfinite(c).all().item())
-
-    if not result["fp16_matmul_ok"]:
-        raise RuntimeError("FP16 matrix multiplication completed but produced non-finite values")
-except Exception as exc:
-    result["error_type"] = type(exc).__name__
-    result["error"] = str(exc)
-    print(json.dumps(result, separators=(",", ":")))
-    sys.exit(1)
-
-print(json.dumps(result, separators=(",", ":")))
-'@
+New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 
 $environmentForChild = Get-StableAmdSpikeEnvironment -Mode $Mode
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
 $hadOverride = $null -ne $oldOverride
+$oldErrorActionPreference = $ErrorActionPreference
+$rawOutput = @()
+$pythonExitCode = $null
 
 try {
     if ($Mode -eq 'GfxOverride') {
@@ -103,10 +54,15 @@ try {
         Write-Host 'Backend probe is running in baseline mode with no HSA override.' -ForegroundColor Yellow
     }
 
-    $rawOutput = @(& $pythonPath -s -c $pythonProbe 2>&1)
+    # Windows PowerShell 5.1 can mangle nested quotes in a multiline `python -c` argument.
+    # Run a real .py file instead, and temporarily avoid promoting native stderr to a
+    # terminating PowerShell NativeCommandError so diagnostics can still be collected.
+    $ErrorActionPreference = 'Continue'
+    $rawOutput = @(& $pythonPath -s $probePath 2>&1)
     $pythonExitCode = $LASTEXITCODE
 }
 finally {
+    $ErrorActionPreference = $oldErrorActionPreference
     if ($hadOverride) {
         $env:HSA_OVERRIDE_GFX_VERSION = $oldOverride
     }
@@ -128,7 +84,7 @@ if ($null -ne $jsonLine) {
     }
 }
 else {
-    $parseError = 'The embedded Python probe did not emit a JSON result line.'
+    $parseError = 'The standalone Python probe did not emit a JSON result line.'
 }
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -137,6 +93,7 @@ $report = [pscustomobject]@{
     Mode = $Mode
     HsaOverrideApplied = ($Mode -eq 'GfxOverride')
     PythonPath = $pythonPath
+    ProbePath = $probePath
     PythonExitCode = $pythonExitCode
     Parsed = $parsedProbe
     ParseError = $parseError
@@ -164,12 +121,19 @@ if ($null -ne $parsedProbe) {
         Write-Warning "$($parsedProbe.error_type): $($parsedProbe.error)"
     }
 }
+else {
+    Write-Warning "Probe result could not be parsed: $parseError"
+    if ($rawOutput.Count -gt 0) {
+        Write-Host 'Raw probe output:' -ForegroundColor DarkCyan
+        $rawOutput | ForEach-Object { Write-Host ([string]$_) }
+    }
+}
 
 if ($pythonExitCode -ne 0 -or $null -eq $parsedProbe -or -not $parsedProbe.gpu_available -or -not $parsedProbe.fp16_matmul_ok) {
-    throw "AMD backend smoke test failed in $Mode mode. Share '$reportPath' and the SwarmUI launch logs for diagnosis."
+    throw "AMD backend smoke test failed in $Mode mode. Share '$reportPath' for diagnosis."
 }
 
 Write-Host 'GPU compute smoke test PASSED.' -ForegroundColor Green
-Write-Host 'Next gate: install an SDXL model in SwarmUI and generate one 1024x1024 image.' -ForegroundColor Cyan
+Write-Host 'Next gate: generate one SDXL 1024x1024 image in SwarmUI and record time/VRAM.' -ForegroundColor Cyan
 
 return $report
