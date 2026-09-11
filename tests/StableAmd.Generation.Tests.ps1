@@ -79,6 +79,65 @@ Describe 'Resolve-StableAmdComfyCheckpointName' {
     }
 }
 
+Describe 'StableAMD generation history' {
+    It 'persists a generation record and returns its path' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-history-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $record = [pscustomobject]@{
+                createdAtUtc = '2026-09-11T16:00:00Z'
+                promptId = 'abc-123'
+                prompt = 'a red biplane'
+                modelId = 'mdl_0123456789abcdef'
+                width = 1024
+                height = 1024
+                imagePath = 'C:\StableAMD\output\image.png'
+            }
+
+            $savedPath = Save-StableAmdGenerationRecord -HistoryRoot $tempRoot -Record $record
+            Test-Path $savedPath | Should -BeTrue
+
+            $saved = Get-Content $savedPath -Raw | ConvertFrom-Json
+            $saved.promptId | Should -Be 'abc-123'
+            $saved.prompt | Should -Be 'a red biplane'
+            $saved.width | Should -Be 1024
+        }
+        finally {
+            Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'returns generation records newest first and ignores malformed sidecars' {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-history-sort-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        try {
+            @{
+                createdAtUtc = '2026-09-11T16:00:00Z'
+                promptId = 'older'
+                imagePath = 'older.png'
+            } | ConvertTo-Json | Set-Content -Path (Join-Path $tempRoot 'older.json') -Encoding UTF8
+            @{
+                createdAtUtc = '2026-09-11T17:00:00Z'
+                promptId = 'newer'
+                imagePath = 'newer.png'
+            } | ConvertTo-Json | Set-Content -Path (Join-Path $tempRoot 'newer.json') -Encoding UTF8
+            Set-Content -Path (Join-Path $tempRoot 'broken.json') -Value '{not json' -Encoding UTF8
+
+            $history = @(Get-StableAmdGenerationHistory -HistoryRoot $tempRoot)
+            $history.Count | Should -Be 2
+            $history[0].promptId | Should -Be 'newer'
+            $history[1].promptId | Should -Be 'older'
+        }
+        finally {
+            Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'returns an empty list when history storage does not exist' {
+        $missing = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-history-missing-' + [guid]::NewGuid().ToString('N'))
+        @(Get-StableAmdGenerationHistory -HistoryRoot $missing).Count | Should -Be 0
+    }
+}
+
 Describe 'StableAMD txt2img command' {
     It 'uses managed backend status, registered models and Comfy prompt/history endpoints' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/Invoke-Txt2Img.ps1'
@@ -95,10 +154,25 @@ Describe 'StableAMD txt2img command' {
         $script | Should -Match "status_str"
         $script | Should -Match "'error'"
         $script | Should -Match 'SaveImage'
+        $script | Should -Match 'Save-StableAmdGenerationRecord'
+        $script | Should -Match 'HistoryPath'
     }
 
     It 'does not accept arbitrary ComfyUI workflow JSON from the normal product command' {
         $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Invoke-Txt2Img.ps1') -Raw
         $script | Should -Not -Match 'WorkflowJson|RawWorkflow|CustomWorkflow'
+    }
+}
+
+Describe 'StableAMD generation history command' {
+    It 'reads history from the canonical runtime path' {
+        $scriptPath = Join-Path $PSScriptRoot '../scripts/Get-GenerationHistory.ps1'
+        Test-Path $scriptPath | Should -BeTrue
+
+        $script = Get-Content $scriptPath -Raw
+        $script | Should -Match 'StableAmd\.Runtime\.psm1'
+        $script | Should -Match 'StableAmd\.Generation\.psm1'
+        $script | Should -Match 'HistoryRoot'
+        $script | Should -Match 'Get-StableAmdGenerationHistory'
     }
 }
