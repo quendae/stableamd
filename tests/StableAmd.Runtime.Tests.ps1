@@ -103,7 +103,7 @@ Describe 'StableAMD managed backend lifecycle scripts' {
 
         $script = Get-Content $scriptPath -Raw
         $script | Should -Match 'StableAmd\.Runtime\.psm1'
-        $script | Should -Match 'run_comfy_isolated\.py'
+        $script | Should -Match 'ComfyRunner'
         $script | Should -Match '--listen'
         $script | Should -Match 'system_stats'
         $script | Should -Match 'Write-StableAmdBackendState'
