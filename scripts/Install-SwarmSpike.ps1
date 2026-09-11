@@ -142,21 +142,35 @@ finally {
 
 $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
 $reachable = $false
+$swarmUrl = $null
 while ((Get-Date) -lt $deadline) {
     if ($process.HasExited) {
         break
     }
 
-    try {
-        $response = Invoke-WebRequest -Uri 'http://127.0.0.1:7801/' -UseBasicParsing -TimeoutSec 3
-        if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
-            $reachable = $true
-            break
+    if (Test-Path $stdoutPath) {
+        $launchLines = @(Get-Content -Path $stdoutPath -Tail 120 -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
+        $detectedUrl = Resolve-StableAmdSwarmUrl -LogLines $launchLines
+        if ($detectedUrl -and $detectedUrl -ne $swarmUrl) {
+            $swarmUrl = $detectedUrl
+            Write-Host "Detected SwarmUI URL: $swarmUrl" -ForegroundColor DarkGreen
         }
     }
-    catch {
-        Start-Sleep -Seconds 2
+
+    if ($swarmUrl) {
+        try {
+            $response = Invoke-WebRequest -Uri $swarmUrl -UseBasicParsing -TimeoutSec 3
+            if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+                $reachable = $true
+                break
+            }
+        }
+        catch {
+            # The server URL is known but the HTTP listener may still be starting.
+        }
     }
+
+    Start-Sleep -Seconds 2
 }
 
 $exitCode = $null
@@ -180,7 +194,7 @@ $result = [pscustomobject]@{
     ProcessExited = $process.HasExited
     ExitCode = $exitCode
     HttpReachable = $reachable
-    Url = 'http://127.0.0.1:7801/'
+    Url = $swarmUrl
     DotNetSdks = @($dotnetSdks)
     StdoutLog = $stdoutPath
     StderrLog = $stderrPath
@@ -192,7 +206,7 @@ $result | ConvertTo-Json -Depth 5 | Set-Content -Path $resultPath -Encoding UTF8
 if ($reachable) {
     Write-Host ''
     Write-Host 'SwarmUI is reachable.' -ForegroundColor Green
-    Write-Host 'Open http://127.0.0.1:7801/ and complete the upstream installer.'
+    Write-Host "Open $swarmUrl and complete the upstream installer."
     Write-Host 'Choose the AMD-compatible ComfyUI backend when prompted.' -ForegroundColor Yellow
     Write-Host "Launch report: $resultPath"
     Write-Host 'After the backend installation completes, run scripts/Test-SwarmBackend.ps1.' -ForegroundColor Cyan
@@ -210,7 +224,9 @@ else {
         $exitText = if ($null -eq $exitCode) { '<unavailable>' } else { [string]$exitCode }
         throw "SwarmUI exited with code $exitText. The relevant log tail is printed above."
     }
-    throw 'SwarmUI is still running but did not answer on port 7801. The relevant log tail is printed above.'
+
+    $urlText = if ($swarmUrl) { $swarmUrl } else { '<not detected in launch log>' }
+    throw "SwarmUI is still running but did not answer at $urlText. The relevant log tail is printed above."
 }
 
 return $result
