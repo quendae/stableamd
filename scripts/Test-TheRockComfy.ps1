@@ -33,6 +33,7 @@ $theRockRoot = Join-Path $RuntimeRoot 'therock-gfx1030'
 $theRockPythonRoot = Join-Path $theRockRoot 'python_embeded'
 $theRockPython = Join-Path $theRockPythonRoot 'python.exe'
 $probePath = Join-Path $PSScriptRoot 'probes/amd_backend_probe.py'
+$nightlyIndex = 'https://rocm.nightlies.amd.com/whl-multi-arch/'
 
 if (-not (Test-Path $sourceComfyMain)) {
     throw "SwarmUI ComfyUI main.py was not found at '$sourceComfyMain'. Complete the SwarmUI backend installation first."
@@ -75,11 +76,24 @@ Write-Host "Isolated ComfyUI: $comfyRoot"
 Write-Host "Python:           $theRockPython"
 Write-Host 'The original SwarmUI/ComfyUI backend will not be modified.' -ForegroundColor DarkGray
 
-# The isolated Python was initially cloned from SwarmUI's ROCm 7.2 portable package.
-# Remove its legacy custom library bundle so this test uses one coherent TheRock stack.
+# The isolated Python may have been cloned before StableAMD learned to remove
+# AMD portable's legacy ROCm 7.2 custom library bundle. If it is still present,
+# remove it and then force-reinstall the matching TheRock rocm-sdk-libraries wheel
+# so no overlapping files are accidentally left missing.
 $legacyPackage = 'rocm-sdk-libraries-custom'
 $legacyShow = @(& $theRockPython -s -m pip show $legacyPackage 2>$null)
-if ($LASTEXITCODE -eq 0 -and $legacyShow.Count -gt 0) {
+$legacyWasPresent = ($LASTEXITCODE -eq 0 -and $legacyShow.Count -gt 0)
+if ($legacyWasPresent) {
+    $rocmLibrariesShow = @(& $theRockPython -s -m pip show 'rocm-sdk-libraries' 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        throw 'rocm-sdk-libraries is missing from the isolated TheRock environment. Re-run Test-TheRockGfx1030.ps1 -Reset.'
+    }
+    $versionLine = $rocmLibrariesShow | Where-Object { $_ -match '^Version:\s*(.+)$' } | Select-Object -First 1
+    if (-not $versionLine -or $versionLine -notmatch '^Version:\s*(.+)$') {
+        throw 'Could not determine the installed rocm-sdk-libraries version.'
+    }
+    $rocmLibrariesVersion = $Matches[1].Trim()
+
     Write-Host "Removing legacy $legacyPackage from the isolated environment..." -ForegroundColor Yellow
     $oldEap = $ErrorActionPreference
     try {
@@ -92,6 +106,20 @@ if ($LASTEXITCODE -eq 0 -and $legacyShow.Count -gt 0) {
     }
     if ($uninstallExit -ne 0) {
         throw "Failed to remove legacy package '$legacyPackage' from the isolated TheRock environment."
+    }
+
+    Write-Host "Restoring rocm-sdk-libraries $rocmLibrariesVersion from TheRock nightlies..." -ForegroundColor Yellow
+    $oldEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $theRockPython -s -m pip install --force-reinstall --no-deps --no-cache-dir --index-url $nightlyIndex "rocm-sdk-libraries==$rocmLibrariesVersion" 2>&1 | ForEach-Object { Write-Host $_ }
+        $repairExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldEap
+    }
+    if ($repairExit -ne 0) {
+        throw "Failed to restore rocm-sdk-libraries $rocmLibrariesVersion after legacy cleanup."
     }
 }
 
@@ -174,7 +202,7 @@ try {
         SystemStats = $stats
         StdoutLog = $stdoutPath
         StderrLog = $stderrPath
-        LegacyRocmPackageRemoved = ($legacyShow.Count -gt 0)
+        LegacyRocmPackageRemoved = $legacyWasPresent
     }
     $result | ConvertTo-Json -Depth 12 | Set-Content -Path $reportPath -Encoding UTF8
 
