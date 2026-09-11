@@ -20,6 +20,8 @@ if (-not (Test-Path $lockPath -PathType Leaf)) {
 $lock = Get-Content -Path $lockPath -Raw | ConvertFrom-Json
 
 $pythonVersion = [string]$lock.runtime.python
+$pythonDistribution = [string]$lock.runtime.pythonDistribution
+$pythonArchiveSha256 = [string]$lock.runtime.pythonArchiveSha256
 $gfxTarget = [string]$lock.gpu.gfxTarget
 $theRockIndexUrl = [string]$lock.runtime.indexUrl
 $torchVersion = [string]$lock.runtime.torch
@@ -28,16 +30,23 @@ $torchAudioVersion = [string]$lock.runtime.torchaudio
 $comfyVersion = [string]$lock.runtime.comfyui
 $comfyCommit = [string]$lock.runtime.comfyCommit
 
-foreach ($value in @($pythonVersion, $gfxTarget, $theRockIndexUrl, $torchVersion, $torchVisionVersion, $torchAudioVersion, $comfyVersion, $comfyCommit)) {
+foreach ($value in @($pythonVersion, $pythonDistribution, $pythonArchiveSha256, $gfxTarget, $theRockIndexUrl, $torchVersion, $torchVisionVersion, $torchAudioVersion, $comfyVersion, $comfyCommit)) {
     if ([string]::IsNullOrWhiteSpace([string]$value)) {
         throw 'StableAMD runtime lock is incomplete. A pinned runtime component is missing.'
     }
+}
+if ($pythonDistribution -ne 'embed-amd64') {
+    throw "Unsupported locked Python distribution '$pythonDistribution'. StableAMD v0.1 requires embed-amd64."
+}
+if ($pythonArchiveSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+    throw "Invalid locked Python archive SHA-256 '$pythonArchiveSha256'."
 }
 if ($comfyCommit -notmatch '^[0-9a-fA-F]{40}$') {
     throw "Invalid locked ComfyUI commit '$comfyCommit'."
 }
 
-$pythonInstallerUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-amd64.exe"
+$pythonArchiveUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip"
+$getPipUrl = 'https://bootstrap.pypa.io/get-pip.py'
 $torchPackage = "torch[device-$gfxTarget]==$torchVersion"
 $torchVisionPackage = "torchvision[device-$gfxTarget]==$torchVisionVersion"
 $torchAudioPackage = "torchaudio==$torchAudioVersion"
@@ -46,8 +55,11 @@ $comfyArchiveUrl = "https://github.com/Comfy-Org/ComfyUI/archive/$comfyCommit.zi
 $plan = [pscustomobject]@{
     SchemaVersion = 1
     PythonVersion = $pythonVersion
+    PythonDistribution = $pythonDistribution
+    PythonArchiveUrl = $pythonArchiveUrl
+    PythonArchiveSha256 = $pythonArchiveSha256.ToLowerInvariant()
+    GetPipUrl = $getPipUrl
     GfxTarget = $gfxTarget
-    PythonInstallerUrl = $pythonInstallerUrl
     TheRockIndexUrl = $theRockIndexUrl
     TorchPackage = $torchPackage
     TorchVisionPackage = $torchVisionPackage
@@ -186,23 +198,59 @@ if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
     }
     New-Item -ItemType Directory -Path $pythonRoot -Force | Out-Null
 
-    $pythonInstaller = Join-Path $cacheRoot "python-$pythonVersion-amd64.exe"
-    if (-not (Test-Path $pythonInstaller -PathType Leaf)) {
-        Write-Host "Downloading Python $pythonVersion..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $pythonInstallerUrl -OutFile $pythonInstaller -UseBasicParsing
+    $pythonArchive = Join-Path $cacheRoot "python-$pythonVersion-embed-amd64.zip"
+    if (-not (Test-Path $pythonArchive -PathType Leaf)) {
+        Write-Host "Downloading portable Python $pythonVersion runtime..." -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $pythonArchiveUrl -OutFile $pythonArchive -UseBasicParsing
     }
 
-    $signature = Get-AuthenticodeSignature -FilePath $pythonInstaller
-    if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or [string]$signature.SignerCertificate.Subject -notmatch 'Python Software Foundation') {
-        throw "Downloaded Python installer did not have a valid Python Software Foundation signature. Status: $($signature.Status)"
+    $actualPythonArchiveSha256 = (Get-FileHash -Path $pythonArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualPythonArchiveSha256 -ne $pythonArchiveSha256.ToLowerInvariant()) {
+        Remove-Item -Path $pythonArchive -Force -ErrorAction SilentlyContinue
+        throw "Downloaded Python archive failed SHA-256 verification. Expected $pythonArchiveSha256, got $actualPythonArchiveSha256."
     }
 
-    Write-Host "Installing private Python $pythonVersion runtime..." -ForegroundColor Cyan
-    $installerArgs = "/quiet InstallAllUsers=0 TargetDir=`"$pythonRoot`" Include_pip=1 Include_launcher=0 PrependPath=0 Shortcuts=0 AssociateFiles=0 Include_doc=0 Include_test=0 Include_tcltk=0 CompileAll=0 SimpleInstall=1"
-    $pythonInstall = Start-Process -FilePath $pythonInstaller -ArgumentList $installerArgs -Wait -PassThru
-    if ($pythonInstall.ExitCode -ne 0 -or -not (Test-Path $paths.TheRockPython -PathType Leaf)) {
-        throw "Python $pythonVersion private runtime installation failed with exit code $($pythonInstall.ExitCode)."
+    Write-Host "Extracting private Python $pythonVersion runtime..." -ForegroundColor Cyan
+    Expand-Archive -Path $pythonArchive -DestinationPath $pythonRoot -Force
+    if (-not (Test-Path $paths.TheRockPython -PathType Leaf)) {
+        throw "Python $pythonVersion embedded runtime did not contain expected executable '$($paths.TheRockPython)'."
     }
+
+    $pythonPth = Join-Path $pythonRoot 'python312._pth'
+    if (-not (Test-Path $pythonPth -PathType Leaf)) {
+        throw "Python embedded runtime path file is missing: '$pythonPth'."
+    }
+
+    $siteEnabled = $false
+    $updatedPth = @(
+        foreach ($line in @(Get-Content -Path $pythonPth)) {
+            if ([string]$line -match '^\s*#\s*import site\s*$') {
+                $siteEnabled = $true
+                'import site'
+            }
+            elseif ([string]$line -match '^\s*import site\s*$') {
+                $siteEnabled = $true
+                'import site'
+            }
+            else {
+                [string]$line
+            }
+        }
+    )
+    if (-not $siteEnabled) {
+        $updatedPth += 'import site'
+    }
+    [IO.File]::WriteAllLines($pythonPth, [string[]]$updatedPth, (New-Object Text.UTF8Encoding($false)))
+
+    $getPipPath = Join-Path $cacheRoot 'get-pip.py'
+    if (-not (Test-Path $getPipPath -PathType Leaf)) {
+        Write-Host 'Downloading pip bootstrap...' -ForegroundColor Cyan
+        Invoke-WebRequest -Uri $getPipUrl -OutFile $getPipPath -UseBasicParsing
+    }
+
+    Write-Host 'Bootstrapping pip inside the private Python runtime...' -ForegroundColor Cyan
+    Invoke-StableAmdCheckedNative -FilePath $paths.TheRockPython -Arguments @('-s', $getPipPath) -FailureMessage 'pip bootstrap failed'
+    Invoke-StableAmdCheckedNative -FilePath $paths.TheRockPython -Arguments @('-m', 'pip', '--version') -FailureMessage 'pip verification failed'
 }
 
 Write-Host ''
@@ -306,6 +354,8 @@ $manifest = [pscustomobject]@{
     pythonPath = $paths.TheRockPython
     comfyRoot = $paths.ComfyRoot
     pythonVersion = $pythonVersion
+    pythonDistribution = $pythonDistribution
+    pythonArchiveSha256 = $pythonArchiveSha256.ToLowerInvariant()
     gfxTarget = $gfxTarget
     torch = $torchVersion
     torchvision = $torchVisionVersion
