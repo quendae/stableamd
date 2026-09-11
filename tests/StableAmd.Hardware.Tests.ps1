@@ -129,7 +129,7 @@ Describe 'Get-StableAmdTheRockInstallArgs' {
 }
 
 Describe 'TheRock ComfyUI integration gate' {
-    It 'uses isolated TheRock Python and an isolated ComfyUI code copy without modifying the SwarmUI backend' {
+    It 'uses isolated TheRock Python and a complete git checkout of ComfyUI' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/Test-TheRockComfy.ps1'
         Test-Path $scriptPath | Should -BeTrue
 
@@ -137,9 +137,14 @@ Describe 'TheRock ComfyUI integration gate' {
         $script | Should -Match 'therock-gfx1030'
         $script | Should -Match "Join-Path \$isolatedComfyBase 'ComfyUI'"
         $script | Should -Match "Join-Path \$comfyRoot 'main\.py'"
-        $script | Should -Match 'robocopy\.exe'
+        $script | Should -Match "Join-Path \$sourceComfyRoot 'comfy/options\.py'"
+        $script | Should -Match "Join-Path \$comfyRoot 'comfy/options\.py'"
+        $script | Should -Match 'git\.exe'
+        $script | Should -Match 'clone'
+        $script | Should -Match '--no-hardlinks'
         $script | Should -Match 'system_stats'
         $script | Should -Match 'rocm-sdk-libraries-custom'
+        $script | Should -Not -Match 'robocopy\.exe'
         $script | Should -Not -Match 'Remove-Item.*SwarmUI[\\/]dlbackend[\\/]comfy'
     }
 }
