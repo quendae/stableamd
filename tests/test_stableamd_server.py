@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,7 +9,7 @@ BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from stableamd_server import StableAmdApi, validate_loopback_host
+from stableamd_server import StableAmdApi, resolve_output_image, validate_loopback_host
 
 
 class FakeBridge:
@@ -132,6 +133,44 @@ class StableAmdApiTests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertIn("not found", payload["error"].lower())
         self.assertEqual(self.bridge.calls, [])
+
+
+class StableAmdOutputImageTests(unittest.TestCase):
+    def test_resolves_only_existing_supported_images_under_output_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            output_root = repo_root / ".runtime" / "stableamd" / "output"
+            nested = output_root / "session"
+            nested.mkdir(parents=True)
+            image = nested / "result.png"
+            image.write_bytes(b"fake-png")
+
+            resolved = resolve_output_image(repo_root, str(image))
+            self.assertEqual(resolved, image.resolve())
+
+    def test_rejects_paths_outside_output_root(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            output_root = repo_root / ".runtime" / "stableamd" / "output"
+            output_root.mkdir(parents=True)
+            outside = repo_root / "secret.png"
+            outside.write_bytes(b"secret")
+
+            with self.assertRaises(ValueError):
+                resolve_output_image(repo_root, str(outside))
+
+    def test_rejects_non_image_extensions_and_missing_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            output_root = repo_root / ".runtime" / "stableamd" / "output"
+            output_root.mkdir(parents=True)
+            text_file = output_root / "notes.txt"
+            text_file.write_text("not an image", encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                resolve_output_image(repo_root, str(text_file))
+            with self.assertRaises(ValueError):
+                resolve_output_image(repo_root, str(output_root / "missing.webp"))
 
 
 if __name__ == "__main__":
