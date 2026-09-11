@@ -2,33 +2,41 @@
 
 StableAMD is a planned simple local AI image-generation application focused first on AMD Radeon GPUs on Windows.
 
-The initial target is **Radeon RX 6950 XT 16 GB (`gfx1030`)**. The current architecture direction is:
+The initial hardware target is **Radeon RX 6950 XT 16 GB (`gfx1030`)**. Windows ROCm support for this card is treated as **experimental**: AMD's current Windows HIP SDK compatibility table does not mark RX 6950 XT as supported, although TheRock now builds and sanity-tests `gfx1030` on Windows.
 
-- native Windows **ROCm + PyTorch** as the default compute backend;
-- **ComfyUI** as a managed local inference engine/API;
-- a much simpler Fooocus-style StableAMD interface instead of exposing the ComfyUI node graph;
-- built-in model discovery/downloads, starting with **Hugging Face**;
-- curated/versioned workflow recipes for supported model families;
-- WSL2/ROCDXG, ZLUDA and DirectML only as optional fallback paths.
+The current product direction is:
 
-For the full comparison of ComfyUI, SwarmUI, SD.Next, Stability Matrix, Fooocus, AUTOMATIC1111 and InvokeAI, plus the proposed installer/model-manager architecture, see:
+- use **SwarmUI** as the practical open-source base after hardware validation;
+- keep **ComfyUI** as the managed inference backend under SwarmUI;
+- simplify the normal experience toward Generate / Models / Gallery / Settings;
+- keep raw Comfy workflows as an advanced mode rather than the default UI;
+- add StableAMD-owned AMD detection, diagnostics and compatibility handling;
+- add built-in model discovery/downloads, starting with Hugging Face;
+- keep WSL2/Linux, ZLUDA and DirectML as deliberate fallback investigations rather than silent automatic fallbacks.
+
+For the original comparison of ComfyUI, SwarmUI, SD.Next, Stability Matrix, Fooocus, AUTOMATIC1111 and InvokeAI, see:
 
 **[AMD RX 6950 XT image-generation stack research](docs/amd-rx6950xt-image-generation-research.md)**
 
-## Current recommendation
+## Current milestone: SwarmUI + RX 6950 XT validation
 
-For the cleanest long-term product, build a small StableAMD frontend/orchestrator around a separately managed ComfyUI backend. If development speed is more important, **SwarmUI** is the strongest existing open-source project to fork and simplify: it is MIT-licensed, already uses ComfyUI as its main backend, and current releases support native ROCm-PyTorch on Windows.
+Before modifying SwarmUI's UI, StableAMD must prove that the current Windows AMD backend can actually execute GPU workloads on the RX 6950 XT.
 
-## Proposed first milestone
+The spike branch contains:
 
-Before building the full UI, prove the critical hardware path:
+- Windows/GPU preflight and diagnostic report;
+- RX 6950 XT -> `gfx1030` classification;
+- pinned SwarmUI bootstrap;
+- clean baseline mode with no HSA override;
+- optional `HSA_OVERRIDE_GFX_VERSION=10.3.0` comparison mode;
+- embedded ComfyUI PyTorch/HIP probe;
+- real FP16 GPU matrix-multiplication smoke test;
+- a manual SDXL 1024x1024 end-to-end gate.
 
-1. Detect RX 6950 XT and resolve it to `gfx1030`.
-2. Create an isolated Python environment.
-3. Install the current AMD multi-architecture ROCm/PyTorch wheels for `gfx1030`.
-4. Install and launch ComfyUI.
-5. Run an automated GPU self-test.
-6. Generate a known SDXL 1024×1024 image entirely on the GPU.
-7. Save a diagnostic report containing runtime, GPU, VRAM and package information.
+See **[RX 6950 XT + SwarmUI Windows spike](docs/RX6950XT-SWARMUI-SPIKE.md)** for the exact test procedure.
 
-Once this is repeatable, build the Generate / Models / Gallery / Settings UI on top.
+## Decision gate
+
+If the baseline or documented gfx1030 compatibility mode is stable enough to run SDXL on the 6950 XT, the next phase is to use SwarmUI as the StableAMD base and start simplifying its UI and model-management experience.
+
+If the Windows backend remains unstable, the diagnostics from this spike will determine whether to fix the gfx1030 packaging path or move the backend to Linux/WSL2. The frontend direction does not need to be discarded.
