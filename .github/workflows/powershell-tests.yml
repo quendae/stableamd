@@ -43,6 +43,12 @@ jobs:
           }
           Write-Host "Compiled $($probes.Count) Python probe helpers."
 
+      - name: Run Python API tests
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tests -p "test_*.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Install Pester 5
         shell: pwsh
         run: |
