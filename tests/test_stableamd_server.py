@@ -1,0 +1,138 @@
+import json
+import sys
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = REPO_ROOT / "app" / "backend"
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from stableamd_server import StableAmdApi, validate_loopback_host
+
+
+class FakeBridge:
+    def __init__(self):
+        self.calls = []
+
+    def status(self):
+        self.calls.append(("status", None))
+        return {"Status": "running", "Healthy": True, "Url": "http://127.0.0.1:8190/"}
+
+    def models(self):
+        self.calls.append(("models", None))
+        return [{"id": "mdl_abc", "name": "sdxl.safetensors", "family": "sdxl"}]
+
+    def history(self, limit=0):
+        self.calls.append(("history", limit))
+        return [{"promptId": "p1", "prompt": "a red biplane"}]
+
+    def generate(self, request):
+        self.calls.append(("generate", request))
+        return {"PromptId": "p2", "ImagePath": "C:/StableAMD/output/image.png", "Seed": request.get("seed", 1)}
+
+    def start_backend(self):
+        self.calls.append(("start_backend", None))
+        return {"Status": "running", "Healthy": True}
+
+    def stop_backend(self):
+        self.calls.append(("stop_backend", None))
+        return {"Status": "stopped", "Healthy": False}
+
+    def diagnostics(self):
+        self.calls.append(("diagnostics", None))
+        return {"runtime": {"status": "running"}, "logs": []}
+
+
+class StableAmdApiTests(unittest.TestCase):
+    def setUp(self):
+        self.bridge = FakeBridge()
+        self.api = StableAmdApi(self.bridge)
+
+    def test_only_loopback_hosts_are_accepted(self):
+        self.assertEqual(validate_loopback_host("127.0.0.1"), "127.0.0.1")
+        self.assertEqual(validate_loopback_host("localhost"), "127.0.0.1")
+        with self.assertRaises(ValueError):
+            validate_loopback_host("0.0.0.0")
+        with self.assertRaises(ValueError):
+            validate_loopback_host("192.168.1.50")
+
+    def test_health_is_local_and_does_not_invoke_powershell(self):
+        status, payload = self.api.dispatch("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["service"], "StableAMD")
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(self.bridge.calls, [])
+
+    def test_product_get_routes_use_only_known_service_contracts(self):
+        status, payload = self.api.dispatch("GET", "/api/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["Healthy"])
+
+        status, payload = self.api.dispatch("GET", "/api/models")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload[0]["family"], "sdxl")
+
+        status, payload = self.api.dispatch("GET", "/api/history?limit=12")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload[0]["promptId"], "p1")
+
+        status, payload = self.api.dispatch("GET", "/api/diagnostics")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["runtime"]["status"], "running")
+
+        self.assertEqual(
+            self.bridge.calls,
+            [("status", None), ("models", None), ("history", 12), ("diagnostics", None)],
+        )
+
+    def test_generate_accepts_product_fields_and_rejects_raw_workflow_fields(self):
+        request = {
+            "prompt": "a red biplane",
+            "negativePrompt": "blurry",
+            "modelId": "mdl_abc",
+            "width": 1024,
+            "height": 1024,
+            "steps": 20,
+            "cfg": 7.0,
+            "seed": 123,
+            "samplerName": "euler",
+            "scheduler": "normal",
+            "startBackendIfNeeded": True,
+        }
+        status, payload = self.api.dispatch("POST", "/api/generate", json.dumps(request).encode("utf-8"))
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["PromptId"], "p2")
+        self.assertEqual(self.bridge.calls[-1][0], "generate")
+        self.assertEqual(self.bridge.calls[-1][1]["prompt"], "a red biplane")
+
+        for forbidden in ("workflow", "rawWorkflow", "command", "script"):
+            bad = dict(request)
+            bad[forbidden] = {"anything": True}
+            status, payload = self.api.dispatch("POST", "/api/generate", json.dumps(bad).encode("utf-8"))
+            self.assertEqual(status, 400)
+            self.assertIn("unsupported", payload["error"].lower())
+
+    def test_generate_requires_non_empty_prompt(self):
+        status, payload = self.api.dispatch("POST", "/api/generate", b'{"prompt":"   "}')
+        self.assertEqual(status, 400)
+        self.assertIn("prompt", payload["error"].lower())
+
+    def test_backend_lifecycle_routes_are_explicit(self):
+        status, payload = self.api.dispatch("POST", "/api/backend/start", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["Status"], "running")
+
+        status, payload = self.api.dispatch("POST", "/api/backend/stop", b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["Status"], "stopped")
+
+    def test_unknown_route_is_not_executed(self):
+        status, payload = self.api.dispatch("POST", "/api/run-command", b'{"command":"whoami"}')
+        self.assertEqual(status, 404)
+        self.assertIn("not found", payload["error"].lower())
+        self.assertEqual(self.bridge.calls, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
