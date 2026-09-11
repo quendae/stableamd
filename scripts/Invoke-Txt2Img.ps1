@@ -211,6 +211,32 @@ $imagePath = Join-Path $imagePath ([string]$filenameProperty.Value)
 if (-not (Test-Path $imagePath -PathType Leaf)) {
     throw "ComfyUI reported generated image '$imagePath', but the file does not exist."
 }
+$imagePath = [IO.Path]::GetFullPath($imagePath)
+$generationSeconds = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
+$createdAtUtc = [DateTime]::UtcNow.ToString('o')
+
+$historyRecord = [pscustomobject]@{
+    schemaVersion = 1
+    createdAtUtc = $createdAtUtc
+    promptId = $promptId
+    prompt = $Prompt
+    negativePrompt = $NegativePrompt
+    modelId = [string]$model.id
+    modelName = [string]$model.name
+    modelPath = $selectedModelPath
+    checkpointName = $checkpointName
+    width = $resolvedWidth
+    height = $resolvedHeight
+    steps = $resolvedSteps
+    cfg = $resolvedCfg
+    seed = $resolvedSeed
+    sampler = $resolvedSampler
+    scheduler = $resolvedScheduler
+    generationSeconds = $generationSeconds
+    imagePath = $imagePath
+    backendUrl = $baseUrl
+}
+$historyPath = Save-StableAmdGenerationRecord -HistoryRoot $paths.HistoryRoot -Record $historyRecord
 
 return [pscustomobject]@{
     PromptId = $promptId
@@ -227,7 +253,8 @@ return [pscustomobject]@{
     Seed = $resolvedSeed
     Sampler = $resolvedSampler
     Scheduler = $resolvedScheduler
-    GenerationSeconds = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
-    ImagePath = [IO.Path]::GetFullPath($imagePath)
+    GenerationSeconds = $generationSeconds
+    ImagePath = $imagePath
+    HistoryPath = $historyPath
     BackendUrl = $baseUrl
 }
