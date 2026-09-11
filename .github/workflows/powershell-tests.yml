@@ -36,7 +36,12 @@ jobs:
       - name: Compile Python probes
         shell: pwsh
         run: |
-          python -m py_compile ./scripts/probes/amd_backend_probe.py
+          $probes = Get-ChildItem -Path ./scripts/probes -Filter *.py -File
+          foreach ($probe in $probes) {
+            python -m py_compile $probe.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Write-Host "Compiled $($probes.Count) Python probe helpers."
 
       - name: Install Pester 5
         shell: pwsh
