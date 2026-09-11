@@ -1,0 +1,4 @@
+.runtime/
+diagnostics/
+*.log
+*.tmp

@@ -1,0 +1,56 @@
+name: PowerShell tests
+
+on:
+  push:
+    branches:
+      - main
+      - 'spike/**'
+  pull_request:
+
+jobs:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse PowerShell files
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path scripts,tests -Recurse -File | Where-Object { $_.Extension -in '.ps1', '.psm1' }
+          $allErrors = @()
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            foreach ($parseError in $errors) {
+              $allErrors += "$($file.FullName):$($parseError.Extent.StartLineNumber): $($parseError.Message)"
+            }
+          }
+          if ($allErrors.Count -gt 0) {
+            $allErrors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+          Write-Host "Parsed $($files.Count) PowerShell files with no syntax errors."
+
+      - name: Compile Python probes
+        shell: pwsh
+        run: |
+          $probes = Get-ChildItem -Path ./scripts/probes -Filter *.py -File
+          foreach ($probe in $probes) {
+            python -m py_compile $probe.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          Write-Host "Compiled $($probes.Count) Python probe helpers."
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          Invoke-Pester -Path ./tests -CI -Output Detailed
