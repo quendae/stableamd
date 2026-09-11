@@ -30,8 +30,9 @@ Describe 'StableAMD local web UI' {
         $script | Should -Match '/api/history'
         $script | Should -Match '/api/generate'
         $script | Should -Match '/api/diagnostics'
-        $script | Should -Match '/api/backend/start'
-        $script | Should -Match '/api/backend/stop'
+        $script | Should -Match '/api/backend/\$\{action\}'
+        $script | Should -Match 'backendAction\("start"\)'
+        $script | Should -Match 'backendAction\("stop"\)'
         $script | Should -Not -Match 'object_info|/prompt|8190'
     }
 
