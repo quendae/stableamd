@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import mimetypes
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 SERVICE_NAME = "StableAMD"
 API_VERSION = 1
@@ -245,11 +246,13 @@ class StableAmdApi:
         return 404, {"error": "API route not found."}
 
 
-def make_handler(api: StableAmdApi):
+def make_handler(api: StableAmdApi, frontend_root: Path | None = None):
+    static_root = Path(frontend_root).resolve() if frontend_root is not None else None
+
     class StableAmdRequestHandler(BaseHTTPRequestHandler):
         server_version = "StableAMD/0.1"
 
-        def _send(self, status: int, payload: Any) -> None:
+        def _send_json(self, status: int, payload: Any) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -258,16 +261,52 @@ def make_handler(api: StableAmdApi):
             self.end_headers()
             self.wfile.write(encoded)
 
+        def _send_bytes(self, status: int, content_type: str, payload: bytes, cache_control: str = "no-cache") -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", cache_control)
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _serve_frontend(self) -> bool:
+            if static_root is None or not static_root.is_dir():
+                return False
+
+            request_path = unquote(urlsplit(self.path).path)
+            relative = "index.html" if request_path in {"", "/"} else request_path.lstrip("/")
+            candidate = (static_root / relative).resolve()
+            if candidate != static_root and static_root not in candidate.parents:
+                self._send_json(404, {"error": "Frontend asset not found."})
+                return True
+            if not candidate.is_file():
+                self._send_json(404, {"error": "Frontend asset not found."})
+                return True
+
+            content_type, _ = mimetypes.guess_type(candidate.name)
+            if not content_type:
+                content_type = "application/octet-stream"
+            if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+                content_type += "; charset=utf-8"
+            self._send_bytes(200, content_type, candidate.read_bytes())
+            return True
+
         def _dispatch(self) -> None:
+            parsed_path = urlsplit(self.path).path
+            if self.command == "GET" and not parsed_path.startswith("/api/") and parsed_path != "/api":
+                if self._serve_frontend():
+                    return
+
             body = b""
             if self.command in {"POST", "PUT", "PATCH"}:
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
-                    self._send(400, {"error": "Invalid Content-Length."})
+                    self._send_json(400, {"error": "Invalid Content-Length."})
                     return
                 if length < 0 or length > MAX_REQUEST_BYTES:
-                    self._send(413, {"error": "Request body is too large."})
+                    self._send_json(413, {"error": "Request body is too large."})
                     return
                 body = self.rfile.read(length) if length else b""
             try:
@@ -276,7 +315,7 @@ def make_handler(api: StableAmdApi):
                 status, payload = 500, {"error": str(exc)}
             except Exception as exc:  # Keep the local server alive and return a product-level error.
                 status, payload = 500, {"error": f"StableAMD API failure: {exc}"}
-            self._send(status, payload)
+            self._send_json(status, payload)
 
         def do_GET(self) -> None:  # noqa: N802
             self._dispatch()
@@ -294,10 +333,15 @@ def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
     bind_host = validate_loopback_host(host)
     if port < 1 or port > 65535:
         raise ValueError("Port must be between 1 and 65535.")
-    bridge = PowerShellBridge(Path(repo_root))
+    repo_root = Path(repo_root).resolve()
+    frontend_root = repo_root / "app" / "frontend"
+    index_path = frontend_root / "index.html"
+    if not index_path.is_file():
+        raise StableAmdBridgeError(f"StableAMD frontend index.html is missing: {index_path}")
+    bridge = PowerShellBridge(repo_root)
     api = StableAmdApi(bridge)
-    server = ThreadingHTTPServer((bind_host, port), make_handler(api))
-    print(f"StableAMD local API listening on http://{bind_host}:{port}/", flush=True)
+    server = ThreadingHTTPServer((bind_host, port), make_handler(api, frontend_root))
+    print(f"StableAMD local application listening on http://{bind_host}:{port}/", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -308,7 +352,7 @@ def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
 
 def main() -> int:
     default_repo_root = Path(__file__).resolve().parents[2]
-    parser = argparse.ArgumentParser(description="StableAMD v0.1 loopback application API")
+    parser = argparse.ArgumentParser(description="StableAMD v0.1 loopback application API and web UI")
     parser.add_argument("--repo-root", default=str(default_repo_root))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8188)
