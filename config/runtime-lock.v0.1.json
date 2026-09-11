@@ -9,10 +9,14 @@
     "vramGiB": 16
   },
   "runtime": {
+    "python": "3.12.10",
     "indexUrl": "https://rocm.nightlies.amd.com/whl-multi-arch/",
     "deviceExtra": "device-gfx1030",
     "torch": "2.13.0+rocm10.1.0a20260822",
-    "comfyui": "0.35.0"
+    "torchvision": "0.28.0+rocm10.1.0a20260822",
+    "torchaudio": "2.11.0+rocm10.1.0a20260822",
+    "comfyui": "0.35.0",
+    "comfyCommit": "40c4fcdf513a4523e39d54a9d391908af8df8171"
   },
   "referenceGeneration": {
     "model": "Stable Diffusion XL 1.0 base",
