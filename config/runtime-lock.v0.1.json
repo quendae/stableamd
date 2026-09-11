@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "release": "0.1.0",
+  "status": "validated-spike-clean-install-pending",
+  "gpu": {
+    "vendor": "AMD",
+    "model": "Radeon RX 6950 XT",
+    "gfxTarget": "gfx1030",
+    "vramGiB": 16
+  },
+  "runtime": {
+    "indexUrl": "https://rocm.nightlies.amd.com/whl-multi-arch/",
+    "deviceExtra": "device-gfx1030",
+    "torch": "2.13.0+rocm10.1.0a20260822",
+    "comfyui": "0.35.0"
+  },
+  "referenceGeneration": {
+    "model": "Stable Diffusion XL 1.0 base",
+    "resolution": "1024x1024",
+    "steps": 20,
+    "batchSize": 1,
+    "approxSeconds": 102,
+    "approxPeakVramGiB": 14
+  }
+}
