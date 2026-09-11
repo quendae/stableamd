@@ -62,6 +62,46 @@ Describe 'StableAMD model registry primitives' {
         $merged.schemaVersion | Should -Be 1
         @($merged.models).Count | Should -Be 0
     }
+
+    It 'upserts a model into an empty registry without generic-list conversion errors' {
+        $registry = New-StableAmdEmptyModelRegistry
+        $entry = [pscustomobject]@{
+            id = 'mdl_deadbeefdeadbeef'
+            name = 'model.safetensors'
+            path = 'C:\AI\model.safetensors'
+            family = 'sdxl'
+        }
+
+        $updated = Upsert-StableAmdModelRegistryEntry -Registry $registry -Entry $entry
+        @($updated.models).Count | Should -Be 1
+        $updated.models[0].id | Should -Be 'mdl_deadbeefdeadbeef'
+    }
+
+    It 'upserts successfully under Windows PowerShell 5.1' {
+        $windowsPowerShell = Get-Command powershell.exe -ErrorAction SilentlyContinue
+        if ($null -eq $windowsPowerShell) {
+            Set-ItResult -Skipped -Because 'powershell.exe is unavailable'
+            return
+        }
+
+        $tempScript = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-ps5-upsert-' + [guid]::NewGuid().ToString('N') + '.ps1')
+        $escapedModule = $modulePath.Replace("'", "''")
+        @"
+`$ErrorActionPreference = 'Stop'
+Import-Module '$escapedModule' -Force
+`$registry = New-StableAmdEmptyModelRegistry
+`$entry = [pscustomobject]@{ id='mdl_deadbeefdeadbeef'; name='model.safetensors'; path='C:\AI\model.safetensors'; family='sdxl' }
+`$updated = Upsert-StableAmdModelRegistryEntry -Registry `$registry -Entry `$entry
+if (@(`$updated.models).Count -ne 1) { throw 'upsert count mismatch' }
+"@ | Set-Content -Path $tempScript -Encoding UTF8
+        try {
+            & $windowsPowerShell.Source -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $tempScript
+            $LASTEXITCODE | Should -Be 0
+        }
+        finally {
+            Remove-Item -Path $tempScript -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Describe 'StableAMD checkpoint discovery' {
@@ -130,6 +170,36 @@ Describe 'StableAMD model installation helpers' {
     }
 }
 
+Describe 'StableAMD model folder commands' {
+    It 'adds lists and removes an external model folder without copying model files' {
+        $addScript = Join-Path $PSScriptRoot '../scripts/Add-ModelRoot.ps1'
+        $getScript = Join-Path $PSScriptRoot '../scripts/Get-ModelRoots.ps1'
+        $removeScript = Join-Path $PSScriptRoot '../scripts/Remove-ModelRoot.ps1'
+        $browseScript = Join-Path $PSScriptRoot '../scripts/Browse-ModelRoot.ps1'
+        foreach ($path in @($addScript, $getScript, $removeScript, $browseScript)) { Test-Path $path | Should -BeTrue }
+
+        $tempRepo = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-model-roots-' + [guid]::NewGuid().ToString('N'))
+        $externalRoot = Join-Path $tempRepo 'external-models'
+        New-Item -ItemType Directory -Path $externalRoot -Force | Out-Null
+        try {
+            $added = & $addScript -RepoRoot $tempRepo -Path $externalRoot
+            $added.added | Should -BeTrue
+            $added.path | Should -Be ([IO.Path]::GetFullPath($externalRoot))
+
+            $roots = @(& $getScript -RepoRoot $tempRepo)
+            @($roots | Where-Object { $_.path -eq [IO.Path]::GetFullPath($externalRoot) }).Count | Should -Be 1
+
+            $removed = & $removeScript -RepoRoot $tempRepo -Path $externalRoot
+            $removed.removed | Should -BeTrue
+            $rootsAfter = @(& $getScript -RepoRoot $tempRepo)
+            @($rootsAfter | Where-Object { $_.path -eq [IO.Path]::GetFullPath($externalRoot) }).Count | Should -Be 0
+        }
+        finally {
+            Remove-Item -Path $tempRepo -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'StableAMD model command scripts' {
     It 'validates safetensors through the existing structural validator' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/Validate-Model.ps1'
@@ -151,6 +221,12 @@ Describe 'StableAMD model command scripts' {
         $script | Should -Match 'Find-StableAmdCheckpoints'
         $script | Should -Match 'ModelsRegistryPath'
         $script | Should -Match 'Write-StableAmdModelRegistry'
+    }
+
+    It 'starts ComfyUI with every configured model root as an external checkpoint path' {
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
+        $script | Should -Match 'config\.models\.roots'
+        $script | Should -Match 'checkpoints: \\.?'
     }
 
     It 'installs local or Hugging Face models with resume validation and source metadata' {
