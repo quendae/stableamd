@@ -43,4 +43,17 @@ Describe 'TheRock SDXL generation gate' {
         $script | Should -Match "-eq 'error'"
         $script | Should -Match 'ComfyUI reported an SDXL execution error'
     }
+
+    It 'provides an explicit verified checkpoint repair command' {
+        $repairPath = Join-Path $PSScriptRoot '../scripts/Repair-SdxlCheckpoint.ps1'
+        Test-Path $repairPath | Should -BeTrue
+
+        $repair = Get-Content $repairPath -Raw
+        $repair | Should -Match '31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b'
+        $repair | Should -Match 'curl\.exe'
+        $repair | Should -Match '\.partial'
+        $repair | Should -Match 'Get-FileHash'
+        $repair | Should -Match 'SHA256'
+        $repair | Should -Match 'Move-Item'
+    }
 }
