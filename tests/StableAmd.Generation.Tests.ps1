@@ -158,6 +158,18 @@ Describe 'StableAMD txt2img command' {
         $script | Should -Match 'HistoryPath'
     }
 
+    It 'subscribes to ComfyUI websocket progress and emits diagnostic sampler progress with ETA' {
+        $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Invoke-Txt2Img.ps1') -Raw
+
+        $script | Should -Match 'ClientWebSocket'
+        $script | Should -Match 'ws\?clientId='
+        $script | Should -Match 'STABLEAMD_PROGRESS'
+        $script | Should -Match 'Write-Progress'
+        $script | Should -Match "eventType -eq 'progress'"
+        $script | Should -Match 'etaSeconds'
+        $script | Should -Match 'secondsPerStep'
+    }
+
     It 'does not accept arbitrary ComfyUI workflow JSON from the normal product command' {
         $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Invoke-Txt2Img.ps1') -Raw
         $script | Should -Not -Match 'WorkflowJson|RawWorkflow|CustomWorkflow'
