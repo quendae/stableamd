@@ -1,4 +1,3 @@
-import json
 import sys
 import unittest
 from pathlib import Path
@@ -8,28 +7,7 @@ BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from model_support import load_model_support_catalog, resolve_model_support
-from stableamd_server import StableAmdApi
-
-
-class SupportBridge:
-    def __init__(self):
-        self.calls = []
-
-    def model_support(self):
-        self.calls.append(("model_support", None))
-        return {
-            "catalogVersion": "0.3",
-            "modes": ["txt2img", "img2img", "inpaint", "controlnet", "lora"],
-            "models": [
-                {
-                    "id": "mdl_sdxl",
-                    "family": "sdxl",
-                    "provider": "sdxl-checkpoint",
-                    "capabilities": {"txt2img": "supported", "img2img": "planned"},
-                }
-            ],
-        }
+from model_support import load_model_support_catalog, resolve_model_support, summarize_model_support
 
 
 class StableAmdV03SupportTests(unittest.TestCase):
@@ -67,14 +45,21 @@ class StableAmdV03SupportTests(unittest.TestCase):
         flux = resolve_model_support(catalog, {"id": "flux", "family": "flux", "name": "flux1-dev.safetensors"})
         self.assertEqual(flux["capabilities"]["txt2img"], "planned")
 
-    def test_product_api_exposes_model_support_without_running_generation(self):
-        bridge = SupportBridge()
-        api = StableAmdApi(bridge)
+    def test_support_summary_is_product_ready_without_running_generation(self):
+        catalog = load_model_support_catalog(REPO_ROOT)
+        summary = summarize_model_support(
+            catalog,
+            [
+                {"id": "mdl_sdxl", "family": "sdxl", "name": "sd_xl_base_1.0.safetensors"},
+                {"id": "mdl_flux", "family": "flux", "name": "flux1-dev.safetensors"},
+            ],
+        )
 
-        status, payload = api.dispatch("GET", "/api/model-support")
-        self.assertEqual(status, 200)
-        self.assertEqual(payload["models"][0]["provider"], "sdxl-checkpoint")
-        self.assertEqual(bridge.calls, [("model_support", None)])
+        self.assertEqual(summary["catalogVersion"], "0.3")
+        self.assertIn("inpaint", summary["modes"])
+        self.assertEqual(summary["models"][0]["provider"], "sdxl-checkpoint")
+        self.assertEqual(summary["models"][0]["capabilities"]["txt2img"], "supported")
+        self.assertEqual(summary["models"][1]["capabilities"]["txt2img"], "planned")
 
 
 if __name__ == "__main__":
