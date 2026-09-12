@@ -95,7 +95,14 @@ function Get-StableAmdManagedProcesses {
     )
 
     $repoPattern = [regex]::Escape($RepoRoot.TrimEnd('\'))
-    $matches = @()
+
+    # Do NOT name this variable $matches. PowerShell variable names are
+    # case-insensitive and the -match/-notmatch operators overwrite the
+    # automatic $Matches hashtable. That collision previously caused the final
+    # sweep to return a regex hashtable as if it were a process, producing the
+    # misleading "no valid process identity" / "PID ." diagnostics.
+    $managedProcesses = @()
+
     foreach ($entry in @($Snapshot)) {
         $processId = Get-SnapshotProcessId -Entry $entry
         if ($null -eq $processId) { continue }
@@ -114,7 +121,7 @@ function Get-StableAmdManagedProcesses {
         if ($null -eq $role) { continue }
 
         $nameProperty = $entry.PSObject.Properties['Name']
-        $matches += [pscustomobject]@{
+        $managedProcesses += [pscustomobject]@{
             ProcessId = [int]$processId
             ParentProcessId = [int](Get-SnapshotParentProcessId -Entry $entry)
             Role = $role
@@ -123,10 +130,7 @@ function Get-StableAmdManagedProcesses {
         }
     }
 
-    # Return individual process records, never the collection object itself.
-    # A Generic.List wrapped in @() can be observed as one object by callers,
-    # which previously produced an empty "PID ." diagnostic and prevented kill.
-    return $matches
+    return $managedProcesses
 }
 
 function Invoke-TaskKillTree {
@@ -169,9 +173,13 @@ function Wait-ProcessesGone {
 function Format-StableAmdProcessDiagnostics {
     param([object[]]$Processes)
 
-    $rows = @($Processes | Where-Object { $null -ne $_ -and [int]$_.ProcessId -gt 0 })
+    $rows = @($Processes | Where-Object {
+        $null -ne $_ -and $null -ne (Get-SnapshotProcessId -Entry $_)
+    })
     if ($rows.Count -eq 0) {
-        return 'StableAMD teardown is incomplete, but no valid process identity was available. State was preserved for diagnostics.'
+        $types = @($Processes | Where-Object { $null -ne $_ } | ForEach-Object { $_.GetType().FullName } | Select-Object -Unique)
+        $typeText = if ($types.Count -gt 0) { ' Returned object type(s): ' + ($types -join ', ') + '.' } else { '' }
+        return "StableAMD teardown is incomplete, but no valid process identity was available.$typeText State was preserved for diagnostics."
     }
 
     $lines = @(
@@ -180,9 +188,18 @@ function Format-StableAmdProcessDiagnostics {
         '-------- -------- ------------ ------------------------------'
     )
     foreach ($entry in $rows) {
-        $lines += ('{0,-8} {1,-8} {2,-12} {3}' -f [int]$entry.ProcessId, [int]$entry.ParentProcessId, [string]$entry.Role, [string]$entry.Name)
-        if (-not [string]::IsNullOrWhiteSpace([string]$entry.CommandLine)) {
-            $lines += ('         CommandLine: {0}' -f [string]$entry.CommandLine)
+        $pidValue = Get-SnapshotProcessId -Entry $entry
+        $ppidValue = Get-SnapshotParentProcessId -Entry $entry
+        $roleProperty = $entry.PSObject.Properties['Role']
+        $nameProperty = $entry.PSObject.Properties['Name']
+        $commandLineProperty = $entry.PSObject.Properties['CommandLine']
+        $roleValue = if ($null -ne $roleProperty) { [string]$roleProperty.Value } else { 'unknown' }
+        $nameValue = if ($null -ne $nameProperty) { [string]$nameProperty.Value } else { '' }
+        $commandLineValue = if ($null -ne $commandLineProperty) { [string]$commandLineProperty.Value } else { '' }
+
+        $lines += ('{0,-8} {1,-8} {2,-12} {3}' -f [int]$pidValue, [int]$ppidValue, $roleValue, $nameValue)
+        if (-not [string]::IsNullOrWhiteSpace($commandLineValue)) {
+            $lines += ('         CommandLine: {0}' -f $commandLineValue)
         }
     }
     $lines += 'State was preserved for diagnostics.'
@@ -227,7 +244,8 @@ if ($remainingRequested.Count -gt 0) {
 $postSnapshot = Get-ProcessSnapshot
 $postManaged = @(Get-StableAmdManagedProcesses -Snapshot $postSnapshot -BackendOnlySearch:$BackendOnly)
 foreach ($entry in $postManaged) {
-    Invoke-TaskKillTree -ProcessId ([int]$entry.ProcessId)
+    $processId = Get-SnapshotProcessId -Entry $entry
+    if ($null -ne $processId) { Invoke-TaskKillTree -ProcessId $processId }
 }
 if ($postManaged.Count -gt 0) { Start-Sleep -Milliseconds 700 }
 
