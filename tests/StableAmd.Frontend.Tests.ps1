@@ -3,7 +3,9 @@ Describe 'StableAMD local web UI' {
         $frontendRoot = Join-Path $PSScriptRoot '../app/frontend'
         $indexPath = Join-Path $frontendRoot 'index.html'
         $appPath = Join-Path $frontendRoot 'app.js'
+        $progressScriptPath = Join-Path $frontendRoot 'app-progress.js'
         $stylesPath = Join-Path $frontendRoot 'styles.css'
+        $progressStylesPath = Join-Path $frontendRoot 'progress.css'
     }
 
     It 'ships the Generate Models Gallery Settings and Diagnostics surfaces' {
@@ -60,6 +62,23 @@ Describe 'StableAMD local web UI' {
         $script | Should -Match 'backendAction\("start"\)'
         $script | Should -Match 'backendAction\("stop"\)'
         $script | Should -Not -Match 'object_info|/prompt|8190'
+    }
+
+    It 'shows an estimated progress bar and ETA based on recent matching generations' {
+        Test-Path $progressScriptPath | Should -BeTrue
+        Test-Path $progressStylesPath | Should -BeTrue
+        $html = Get-Content $indexPath -Raw
+        $progress = Get-Content $progressScriptPath -Raw
+        $styles = Get-Content $progressStylesPath -Raw
+
+        $html | Should -Match '/progress\.css'
+        $html | Should -Match '/app-progress\.js'
+        $progress | Should -Match 'generationSeconds'
+        $progress | Should -Match 'ETA ~'
+        $progress | Should -Match '/api/history\?limit=20'
+        $progress | Should -Match '/api/generate'
+        $styles | Should -Match 'generation-progress'
+        $styles | Should -Match 'is-indeterminate'
     }
 
     It 'has a responsive layout and visible keyboard focus treatment' {
