@@ -102,8 +102,14 @@ function New-StableAmdBundleEntry {
 
     $normalizedAssets = [ordered]@{}
     foreach ($role in @($Assets.Keys | Sort-Object)) {
-        $paths = @($Assets[$role]) | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-        if ($paths.Count -gt 0) {
+        # Keep this as a real array. Windows PowerShell/strict mode unwraps a
+        # one-item pipeline result into a scalar, which made `.Count` invalid.
+        $paths = @(
+            @($Assets[$role]) |
+                ForEach-Object { [string]$_ } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+        if (@($paths).Count -gt 0) {
             $normalizedAssets[[string]$role] = @($paths | ForEach-Object { [IO.Path]::GetFullPath($_) })
         }
     }
@@ -135,8 +141,12 @@ function Test-StableAmdBundleEntry {
     foreach ($role in @($RequiredRoles)) {
         $roleProperty = if ($null -ne $assets) { $assets.PSObject.Properties[$role] } else { $null }
         $paths = if ($null -ne $roleProperty -and $null -ne $roleProperty.Value) { @($roleProperty.Value) } else { @() }
-        $paths = @($paths | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-        if ($paths.Count -eq 0) {
+        $paths = @(
+            $paths |
+                ForEach-Object { [string]$_ } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+        if (@($paths).Count -eq 0) {
             $missingRoles += $role
             continue
         }
