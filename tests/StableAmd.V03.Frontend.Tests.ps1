@@ -35,6 +35,18 @@ Describe 'StableAMD v0.3 frontend contract' {
         $js | Should -Match 'restoreLoraSettings'
     }
 
+    It 'exposes SDXL img2img mode with local image upload and denoise strength' {
+        $js = Get-Content -LiteralPath $frontendPath -Raw
+
+        $js | Should -Match 'generation-mode'
+        $js | Should -Match 'input-image'
+        $js | Should -Match 'img2img-denoise'
+        $js | Should -Match 'img2img'
+        $js | Should -Match 'readAsDataURL'
+        $js | Should -Match 'dataBase64'
+        $js | Should -Match 'capabilities.*img2img|img2img.*capabilities'
+    }
+
     It 'manages bundle asset folders for diffusion models text encoders and VAE files' {
         Test-Path $frontendV03Path | Should -BeTrue
         $js = Get-Content -LiteralPath $frontendV03Path -Raw
