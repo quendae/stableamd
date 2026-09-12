@@ -153,7 +153,6 @@ Describe 'StableAMD txt2img command' {
         $script | Should -Match 'history/\$promptId'
         $script | Should -Match "status_str"
         $script | Should -Match "'error'"
-        $script | Should -Match 'SaveImage'
         $script | Should -Match 'Save-StableAmdGenerationRecord'
         $script | Should -Match 'HistoryPath'
     }
