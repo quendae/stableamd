@@ -14,8 +14,10 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import urlopen
 
+from model_support import load_model_support_catalog, summarize_model_support
+
 SERVICE_NAME = "StableAMD"
-API_VERSION = 2
+API_VERSION = 3
 MAX_REQUEST_BYTES = 1024 * 1024
 SUPPORTED_OUTPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -246,6 +248,14 @@ class PowerShellBridge:
             raise StableAmdBridgeError("Generation profile catalog must contain a profiles array.")
         return payload
 
+    def model_support(self) -> dict[str, Any]:
+        try:
+            catalog = load_model_support_catalog(self.repo_root)
+            models = [model for model in self.models() if isinstance(model, dict)]
+            return summarize_model_support(catalog, models)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise StableAmdBridgeError(f"Model support catalog is invalid: {exc}") from exc
+
     def _backend_base_url(self) -> str:
         status = self.status()
         if not isinstance(status, dict) or not bool(status.get("Healthy", status.get("healthy", False))):
@@ -309,6 +319,8 @@ class PowerShellBridge:
         for source, target in mapping.items():
             if source in request:
                 parameters.append((target, request[source]))
+        if "loraStack" in request:
+            parameters.append(("LoraStackJson", json.dumps(request["loraStack"], ensure_ascii=False, separators=(",", ":"))))
         return self._run_script("Invoke-Txt2Img.ps1", parameters)
 
     def start_backend(self) -> Any:
@@ -357,11 +369,13 @@ class StableAmdApi:
         "loraName",
         "loraModelStrength",
         "loraClipStrength",
+        "loraStack",
         "startBackendIfNeeded",
     }
     _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
     _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
     _root_fields = {"path"}
+    _lora_stack_fields = {"name", "modelStrength", "clipStrength", "enabled"}
 
     def __init__(self, bridge: Any):
         self.bridge = bridge
@@ -424,6 +438,39 @@ class StableAmdApi:
         request["source"] = source
         return request
 
+    @staticmethod
+    def _validate_numeric_strength(value: Any, field: str) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} must be numeric.")
+        if value < -100 or value > 100:
+            raise ValueError(f"{field} must be between -100 and 100.")
+
+    def _validate_lora_stack(self, request: dict[str, Any]) -> None:
+        if "loraStack" not in request:
+            return
+        stack = request["loraStack"]
+        if not isinstance(stack, list):
+            raise ValueError("loraStack must be an array.")
+        if len(stack) > 8:
+            raise ValueError("loraStack may contain at most 8 entries.")
+        if stack and isinstance(request.get("loraName"), str) and request["loraName"].strip():
+            raise ValueError("Use loraStack or legacy loraName, not both.")
+
+        for index, entry in enumerate(stack, start=1):
+            if not isinstance(entry, dict):
+                raise ValueError(f"loraStack entry {index} must be an object.")
+            unsupported = sorted(set(entry) - self._lora_stack_fields)
+            if unsupported:
+                raise ValueError(f"Unsupported loraStack entry field(s) at {index}: " + ", ".join(unsupported))
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"loraStack entry {index} name must be a non-empty string.")
+            if "enabled" in entry and not isinstance(entry["enabled"], bool):
+                raise ValueError(f"loraStack entry {index} enabled must be boolean.")
+            for field in ("modelStrength", "clipStrength"):
+                if field in entry:
+                    self._validate_numeric_strength(entry[field], f"loraStack entry {index} {field}")
+
     def _validate_generation(self, request: dict[str, Any]) -> dict[str, Any]:
         unsupported = sorted(set(request) - self._generation_fields)
         if unsupported:
@@ -435,11 +482,8 @@ class StableAmdApi:
             raise ValueError("loraName must be a string.")
         for field in ("loraModelStrength", "loraClipStrength"):
             if field in request:
-                value = request[field]
-                if isinstance(value, bool) or not isinstance(value, (int, float)):
-                    raise ValueError(f"{field} must be numeric.")
-                if value < -100 or value > 100:
-                    raise ValueError(f"{field} must be between -100 and 100.")
+                self._validate_numeric_strength(request[field], field)
+        self._validate_lora_stack(request)
         return request
 
     def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
@@ -457,6 +501,8 @@ class StableAmdApi:
                 return 200, self.bridge.generation_options()
             if method == "GET" and path == "/api/generation-profiles":
                 return 200, self.bridge.generation_profiles()
+            if method == "GET" and path == "/api/model-support":
+                return 200, self.bridge.model_support()
             if method == "GET" and path == "/api/models":
                 return 200, self.bridge.models()
             if method == "POST" and path == "/api/models/scan":
@@ -521,7 +567,7 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
     resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
 
     class StableAmdRequestHandler(BaseHTTPRequestHandler):
-        server_version = "StableAMD/0.2"
+        server_version = "StableAMD/0.3"
 
         def _send_json(self, status: int, payload: Any) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -646,7 +692,7 @@ def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
 
 def main() -> int:
     default_repo_root = Path(__file__).resolve().parents[2]
-    parser = argparse.ArgumentParser(description="StableAMD v0.2 loopback application API and web UI")
+    parser = argparse.ArgumentParser(description="StableAMD v0.3 loopback application API and web UI")
     parser.add_argument("--repo-root", default=str(default_repo_root))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8188)
