@@ -50,9 +50,10 @@ Describe 'StableAMD v0.3 bundle asset roots' {
         $start | Should -Match 'bundleAssets\.diffusionModels\.roots'
         $start | Should -Match 'bundleAssets\.textEncoders\.roots'
         $start | Should -Match 'bundleAssets\.vae\.roots'
-        $start | Should -Match 'diffusion_models:\s+\.'
-        $start | Should -Match 'text_encoders:\s+\.'
-        $start | Should -Match 'vae:\s+\.'
+        $start | Should -Match "FolderType\s+'diffusion_models'"
+        $start | Should -Match "FolderType\s+'text_encoders'"
+        $start | Should -Match "FolderType\s+'vae'"
+        $start | Should -Match '\$yaml\.Add\("\s+\$\{FolderType\}: \."\)'
     }
 
     It 'adds lists and removes external roots while protecting managed roots' {
