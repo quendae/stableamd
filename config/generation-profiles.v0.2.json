@@ -65,6 +65,17 @@
       ]
     },
     {
+      "id": "z-image-turbo",
+      "label": "Z-Image Turbo",
+      "family": "z-image-turbo",
+      "workflowSupport": "supported",
+      "match": { "namePatterns": ["z[_ .-]?image[_ .-]?turbo"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1.0, "sampler": "res_multistep", "scheduler": "simple" },
+      "combinations": [
+        { "id": "official-8-step", "label": "Official 8-step", "sampler": "res_multistep", "scheduler": "simple", "steps": 8, "cfg": 1.0 }
+      ]
+    },
+    {
       "id": "sd3-medium",
       "label": "Stable Diffusion 3 Medium",
       "family": "sd3",
