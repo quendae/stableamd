@@ -1,4 +1,6 @@
 (() => {
+  pageMeta.settings = ["Settings", "StableAMD v0.2 runtime and generation defaults."];
+
   function fillSelect(select, values, preferred, emptyLabel = null) {
     const available = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
     const previous = select.value;
@@ -9,6 +11,8 @@
       empty.value = "";
       empty.textContent = emptyLabel;
       select.append(empty);
+    } else if (!available.length && preferred) {
+      available.push(String(preferred));
     }
 
     for (const value of available) {
@@ -66,6 +70,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     document.querySelector("#lora-select")?.addEventListener("change", syncLoraStrengthState);
+    document.querySelector("#refresh-button")?.addEventListener("click", () => { void refreshGenerationOptions(); });
     document.querySelector("#gallery-grid")?.addEventListener("click", (event) => {
       const button = event.target.closest("[data-history-index]");
       if (button) restoreLoraSettings(Number(button.dataset.historyIndex));
