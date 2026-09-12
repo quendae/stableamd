@@ -32,4 +32,16 @@ Describe 'StableAMD v0.3 frontend contract' {
         $js | Should -Match 'loraName", "LoraName"'
         $js | Should -Match 'restoreLoraSettings'
     }
+
+    It 'manages bundle asset folders for diffusion models text encoders and VAE files' {
+        $js = Get-Content -LiteralPath $frontendPath -Raw
+
+        $js | Should -Match '/api/bundle-roots'
+        $js | Should -Match 'Bundle asset folders'
+        $js | Should -Match 'diffusion_model'
+        $js | Should -Match 'text_encoder'
+        $js | Should -Match 'vae'
+        $js | Should -Match 'Browse folder'
+        $js | Should -Match 'restartBackendForBundleFolders'
+    }
 }
