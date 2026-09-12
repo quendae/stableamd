@@ -1,6 +1,8 @@
-$repoRoot = Split-Path -Parent $PSScriptRoot
-
 Describe 'StableAMD v0.3 Z-Image Turbo provider' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    }
+
     It 'declares Z-Image Turbo txt2img as supported bundle model' {
         $catalog = Get-Content -Path (Join-Path $repoRoot 'config/model-support.v0.3.json') -Raw | ConvertFrom-Json
         $family = $catalog.families.'z-image-turbo'
