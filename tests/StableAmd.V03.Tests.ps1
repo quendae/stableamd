@@ -1,12 +1,12 @@
 Describe 'StableAMD v0.3 workflow provider foundation' {
     BeforeAll {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-        $modelsModulePath = Join-Path $repoRoot 'scripts/StableAmd.Models.psm1'
+        $familiesModulePath = Join-Path $repoRoot 'scripts/StableAmd.ModelFamilies.psm1'
         $workflowsModulePath = Join-Path $repoRoot 'scripts/StableAmd.Workflows.psm1'
     }
 
     It 'recognizes current Stable Diffusion, FLUX and Krea-family checkpoint names conservatively' {
-        Import-Module $modelsModulePath -Force
+        Import-Module $familiesModulePath -Force
 
         Get-StableAmdModelFamily -Name 'v1-5-pruned.safetensors' | Should -Be 'sd15'
         Get-StableAmdModelFamily -Name 'stable-diffusion-2-1.safetensors' | Should -Be 'sd21'
