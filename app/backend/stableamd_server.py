@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import mimetypes
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -18,8 +21,14 @@ from model_support import load_model_support_catalog, summarize_model_support
 
 SERVICE_NAME = "StableAMD"
 API_VERSION = 3
-MAX_REQUEST_BYTES = 1024 * 1024
+MAX_REQUEST_BYTES = 32 * 1024 * 1024
+MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
 SUPPORTED_OUTPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+INPUT_IMAGE_MIME_SUFFIXES = {
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/webp": {".webp"},
+}
 BUNDLE_ASSET_ROLES = ("diffusion_model", "text_encoder", "vae")
 
 
@@ -49,6 +58,55 @@ def resolve_output_image(repo_root: Path, requested_path: str) -> Path:
     if not candidate.is_file():
         raise ValueError("Generated image file was not found.")
     return candidate
+
+
+def _decode_input_image(image: Any) -> tuple[str, bytes]:
+    if not isinstance(image, dict):
+        raise ValueError("img2img inputImage must be an object.")
+    allowed = {"name", "mimeType", "dataBase64"}
+    unsupported = sorted(set(image) - allowed)
+    if unsupported:
+        raise ValueError("Unsupported inputImage field(s): " + ", ".join(unsupported))
+
+    name = image.get("name")
+    mime_type = image.get("mimeType")
+    encoded = image.get("dataBase64")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("img2img inputImage name must be a non-empty string.")
+    if Path(name).name != name or name in {".", ".."}:
+        raise ValueError("img2img inputImage name must be a file name, not a path.")
+    if not isinstance(mime_type, str) or mime_type not in INPUT_IMAGE_MIME_SUFFIXES:
+        raise ValueError("img2img supports PNG, JPEG, or WebP input images.")
+    suffix = Path(name).suffix.lower()
+    if suffix not in INPUT_IMAGE_MIME_SUFFIXES[mime_type]:
+        raise ValueError("img2img inputImage extension does not match its MIME type.")
+    if not isinstance(encoded, str) or not encoded:
+        raise ValueError("img2img inputImage dataBase64 must be a non-empty base64 string.")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("img2img inputImage dataBase64 is invalid.") from exc
+    if not payload:
+        raise ValueError("img2img inputImage is empty.")
+    if len(payload) > MAX_INPUT_IMAGE_BYTES:
+        raise ValueError("img2img inputImage exceeds the 20 MiB limit.")
+
+    if mime_type == "image/png" and not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("img2img PNG input has an invalid file signature.")
+    if mime_type == "image/jpeg" and not payload.startswith(b"\xff\xd8\xff"):
+        raise ValueError("img2img JPEG input has an invalid file signature.")
+    if mime_type == "image/webp" and not (len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"):
+        raise ValueError("img2img WebP input has an invalid file signature.")
+    return suffix, payload
+
+
+def stage_input_image(repo_root: Path, image: Any) -> Path:
+    suffix, payload = _decode_input_image(image)
+    input_root = (Path(repo_root).resolve() / ".runtime" / "stableamd" / "input").resolve()
+    input_root.mkdir(parents=True, exist_ok=True)
+    destination = input_root / f"StableAMD_{uuid.uuid4().hex}{suffix}"
+    destination.write_bytes(payload)
+    return destination.resolve()
 
 
 def _powershell_literal(value: str) -> str:
@@ -346,7 +404,27 @@ class PowerShellBridge:
                 parameters.append((target, request[source]))
         if "loraStack" in request:
             parameters.append(("LoraStackJson", json.dumps(request["loraStack"], ensure_ascii=False, separators=(",", ":"))))
-        return self._run_script("Invoke-Txt2Img.ps1", parameters)
+
+        mode = request.get("mode", "txt2img")
+        staged_input: Path | None = None
+        if mode == "img2img":
+            staged_input = stage_input_image(self.repo_root, request["inputImage"])
+            parameters.extend(
+                [
+                    ("Mode", "img2img"),
+                    ("InputImagePath", str(staged_input)),
+                    ("Denoise", request.get("denoise", 0.55)),
+                ]
+            )
+        try:
+            return self._run_script("Invoke-Txt2Img.ps1", parameters)
+        except Exception:
+            if staged_input is not None:
+                try:
+                    staged_input.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
     def start_backend(self) -> Any:
         return self._run_script("Start-StableAMD.ps1")
@@ -384,6 +462,9 @@ class StableAmdApi:
         "prompt",
         "negativePrompt",
         "modelId",
+        "mode",
+        "inputImage",
+        "denoise",
         "width",
         "height",
         "steps",
@@ -527,6 +608,21 @@ class StableAmdApi:
         prompt = request.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Generation prompt must be a non-empty string.")
+
+        mode = request.get("mode", "txt2img")
+        if not isinstance(mode, str) or mode not in {"txt2img", "img2img"}:
+            raise ValueError("Generation mode must be 'txt2img' or 'img2img'.")
+        if mode == "img2img":
+            if "inputImage" not in request:
+                raise ValueError("img2img requires inputImage.")
+            _decode_input_image(request["inputImage"])
+            if "denoise" in request:
+                denoise = request["denoise"]
+                if isinstance(denoise, bool) or not isinstance(denoise, (int, float)) or denoise < 0 or denoise > 1:
+                    raise ValueError("denoise must be numeric between 0 and 1.")
+        elif "inputImage" in request or "denoise" in request:
+            raise ValueError("inputImage and denoise are valid only for img2img generation.")
+
         if "loraName" in request and request["loraName"] is not None and not isinstance(request["loraName"], str):
             raise ValueError("loraName must be a string.")
         for field in ("loraModelStrength", "loraClipStrength"):
