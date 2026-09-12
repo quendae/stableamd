@@ -1,6 +1,9 @@
 Set-StrictMode -Version 2.0
 
-Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1') -Force
+# Generation is a shared dependency. Do not use -Force here: callers such as
+# Invoke-Txt2Img.ps1 also import it directly for helper commands, and a forced
+# nested reload can remove those exported commands from the caller session.
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1')
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Img2Img.psm1') -Force
 
 function Get-StableAmdLoraValue {
