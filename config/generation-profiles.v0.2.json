@@ -28,16 +28,15 @@
       ]
     },
     {
-      "id": "sdxl-base",
-      "label": "Stable Diffusion XL 1.0",
-      "family": "sdxl",
-      "workflowSupport": "supported",
-      "match": { "namePatterns": ["sd[_-]?xl", "sdxl", "xl[_ .-]?base"] },
-      "defaults": { "width": 1024, "height": 1024, "steps": 25, "cfg": 6.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
+      "id": "sd-turbo",
+      "label": "Stable Diffusion Turbo",
+      "family": "sd-turbo",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["stable[_ .-]?diffusion[_ .-]?turbo", "(^|[_ .-])sd[_ .-]?turbo"] },
+      "defaults": { "width": 512, "height": 512, "steps": 4, "cfg": 1.0, "sampler": "euler_ancestral", "scheduler": "normal" },
       "combinations": [
-        { "id": "stableamd-proven", "label": "StableAMD proven", "sampler": "euler", "scheduler": "normal", "steps": 20, "cfg": 7.0 },
-        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "karras", "steps": 25, "cfg": 6.0 },
-        { "id": "quality", "label": "Quality", "sampler": "dpmpp_2m_sde", "scheduler": "karras", "steps": 30, "cfg": 5.5 }
+        { "id": "turbo-4", "label": "Turbo 4-step", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 4, "cfg": 1.0 },
+        { "id": "turbo-2", "label": "Turbo 2-step", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 2, "cfg": 1.0 }
       ]
     },
     {
@@ -50,6 +49,19 @@
       "combinations": [
         { "id": "turbo-4", "label": "Turbo 4-step", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 4, "cfg": 1.0 },
         { "id": "turbo-2", "label": "Turbo 2-step", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 2, "cfg": 1.0 }
+      ]
+    },
+    {
+      "id": "sdxl-base",
+      "label": "Stable Diffusion XL 1.0",
+      "family": "sdxl",
+      "workflowSupport": "supported",
+      "match": { "namePatterns": ["sd[_-]?xl", "sdxl", "xl[_ .-]?base"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 25, "cfg": 6.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
+      "combinations": [
+        { "id": "stableamd-proven", "label": "StableAMD proven", "sampler": "euler", "scheduler": "normal", "steps": 20, "cfg": 7.0 },
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "karras", "steps": 25, "cfg": 6.0 },
+        { "id": "quality", "label": "Quality", "sampler": "dpmpp_2m_sde", "scheduler": "karras", "steps": 30, "cfg": 5.5 }
       ]
     },
     {
@@ -75,17 +87,6 @@
       ]
     },
     {
-      "id": "sd35-large",
-      "label": "Stable Diffusion 3.5 Large",
-      "family": "sd35-large",
-      "workflowSupport": "planned",
-      "match": { "namePatterns": ["sd3[._-]?5[_ .-]?large(?![_ .-]?turbo)", "stable[_ .-]?diffusion[_ .-]?3[._-]?5[_ .-]?large(?![_ .-]?turbo)"] },
-      "defaults": { "width": 1024, "height": 1024, "steps": 28, "cfg": 4.5, "sampler": "dpmpp_2m", "scheduler": "sgm_uniform" },
-      "combinations": [
-        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "sgm_uniform", "steps": 28, "cfg": 4.5 }
-      ]
-    },
-    {
       "id": "sd35-large-turbo",
       "label": "Stable Diffusion 3.5 Large Turbo",
       "family": "sd35-large-turbo",
@@ -94,6 +95,17 @@
       "defaults": { "width": 1024, "height": 1024, "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "sgm_uniform" },
       "combinations": [
         { "id": "turbo-4", "label": "Turbo 4-step", "sampler": "euler", "scheduler": "sgm_uniform", "steps": 4, "cfg": 1.0 }
+      ]
+    },
+    {
+      "id": "sd35-large",
+      "label": "Stable Diffusion 3.5 Large",
+      "family": "sd35-large",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd3[._-]?5[_ .-]?large(?![_ .-]?turbo)", "stable[_ .-]?diffusion[_ .-]?3[._-]?5[_ .-]?large(?![_ .-]?turbo)"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 28, "cfg": 4.5, "sampler": "dpmpp_2m", "scheduler": "sgm_uniform" },
+      "combinations": [
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "sgm_uniform", "steps": 28, "cfg": 4.5 }
       ]
     },
     {
