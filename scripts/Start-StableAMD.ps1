@@ -50,34 +50,22 @@ foreach ($required in @($paths.TheRockPython, $comfyMain, $comfyApiInput, $paths
 function Test-ExistingStableAmdBackend {
     param([psobject]$State)
 
-    if ($null -eq $State -or $null -eq $State.pid) {
-        return $null
-    }
-
+    if ($null -eq $State -or $null -eq $State.pid) { return $null }
     $statePid = [int]$State.pid
     $process = Get-Process -Id $statePid -ErrorAction SilentlyContinue
-    if ($null -eq $process) {
-        return $null
-    }
+    if ($null -eq $process) { return $null }
 
     $url = [string]$State.url
-    if ([string]::IsNullOrWhiteSpace($url)) {
-        return $null
-    }
+    if ([string]::IsNullOrWhiteSpace($url)) { return $null }
     if (-not $url.EndsWith('/')) { $url += '/' }
 
     try {
         $stats = Invoke-RestMethod -Uri "${url}system_stats" -Method Get -TimeoutSec 3
         if ($null -ne $stats) {
-            return [pscustomobject]@{
-                Process = $process
-                Stats = $stats
-                Url = $url
-            }
+            return [pscustomobject]@{ Process = $process; Stats = $stats; Url = $url }
         }
     }
     catch { }
-
     return $null
 }
 
@@ -111,50 +99,58 @@ if ($null -ne $existingState) {
     }
 }
 
-$modelRoots = @()
-$seenRoots = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-foreach ($rawRoot in @($config.models.roots)) {
-    $raw = [string]$rawRoot
-    if ([string]::IsNullOrWhiteSpace($raw)) { continue }
-    $resolved = Resolve-StableAmdPath -Path $raw -RepoRoot $RepoRoot
-    if (-not (Test-Path $resolved -PathType Container)) { continue }
-    if ($seenRoots.Add($resolved)) { $modelRoots += $resolved }
-}
-if ($seenRoots.Add($paths.CheckpointsRoot)) {
-    $modelRoots = @($paths.CheckpointsRoot) + @($modelRoots)
+function Get-StableAmdExistingRoots {
+    param(
+        [AllowEmptyCollection()][object[]]$RawRoots,
+        [string]$ManagedRoot
+    )
+
+    $result = @()
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    if (-not [string]::IsNullOrWhiteSpace($ManagedRoot) -and $seen.Add($ManagedRoot)) {
+        $result += $ManagedRoot
+    }
+    foreach ($rawRoot in @($RawRoots)) {
+        $raw = [string]$rawRoot
+        if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+        $resolved = Resolve-StableAmdPath -Path $raw -RepoRoot $RepoRoot
+        if (-not (Test-Path $resolved -PathType Container)) { continue }
+        if ($seen.Add($resolved)) { $result += $resolved }
+    }
+    return @($result)
 }
 
-$loraRoots = @()
-$seenLoraRoots = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
-foreach ($rawRoot in @($config.loras.roots)) {
-    $raw = [string]$rawRoot
-    if ([string]::IsNullOrWhiteSpace($raw)) { continue }
-    $resolved = Resolve-StableAmdPath -Path $raw -RepoRoot $RepoRoot
-    if (-not (Test-Path $resolved -PathType Container)) { continue }
-    if ($seenLoraRoots.Add($resolved)) { $loraRoots += $resolved }
-}
-if ($seenLoraRoots.Add($paths.LorasRoot)) {
-    $loraRoots = @($paths.LorasRoot) + @($loraRoots)
-}
+$modelRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.models.roots) -ManagedRoot $paths.CheckpointsRoot)
+$loraRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.loras.roots) -ManagedRoot $paths.LorasRoot)
+$diffusionModelRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.diffusionModels.roots) -ManagedRoot $paths.DiffusionModelsRoot)
+$textEncoderRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.textEncoders.roots) -ManagedRoot $paths.TextEncodersRoot)
+$vaeRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.vae.roots) -ManagedRoot $paths.VaeRoot)
 
 $modelConfigPath = Join-Path $paths.GeneratedConfigRoot 'extra_model_paths.yaml'
 $yaml = New-Object System.Collections.Generic.List[string]
-$rootIndex = 0
-foreach ($modelRoot in $modelRoots) {
-    $yamlRoot = $modelRoot.Replace('\', '/')
-    $yaml.Add("stableamd_checkpoint_root_$rootIndex`:")
-    $yaml.Add("    base_path: `"$yamlRoot`"")
-    $yaml.Add('    checkpoints: .')
-    $rootIndex++
+
+function Add-StableAmdExtraModelRoot {
+    param(
+        [string]$Prefix,
+        [string]$FolderType,
+        [string[]]$Roots
+    )
+
+    $index = 0
+    foreach ($root in @($Roots)) {
+        $yamlRoot = $root.Replace('\', '/')
+        $yaml.Add("stableamd_${Prefix}_root_$index`:")
+        $yaml.Add("    base_path: `"$yamlRoot`"")
+        $yaml.Add("    ${FolderType}: .")
+        $index++
+    }
 }
-$loraIndex = 0
-foreach ($loraRoot in $loraRoots) {
-    $yamlRoot = $loraRoot.Replace('\', '/')
-    $yaml.Add("stableamd_lora_root_$loraIndex`:")
-    $yaml.Add("    base_path: `"$yamlRoot`"")
-    $yaml.Add('    loras: .')
-    $loraIndex++
-}
+
+Add-StableAmdExtraModelRoot -Prefix 'checkpoint' -FolderType 'checkpoints' -Roots $modelRoots
+Add-StableAmdExtraModelRoot -Prefix 'lora' -FolderType 'loras' -Roots $loraRoots
+Add-StableAmdExtraModelRoot -Prefix 'diffusion_model' -FolderType 'diffusion_models' -Roots $diffusionModelRoots
+Add-StableAmdExtraModelRoot -Prefix 'text_encoder' -FolderType 'text_encoders' -Roots $textEncoderRoots
+Add-StableAmdExtraModelRoot -Prefix 'vae' -FolderType 'vae' -Roots $vaeRoots
 $yaml | Set-Content -Path $modelConfigPath -Encoding UTF8
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -181,12 +177,8 @@ try {
         -PassThru
 }
 finally {
-    if ($hadOverride) {
-        $env:HSA_OVERRIDE_GFX_VERSION = $oldOverride
-    }
-    else {
-        Remove-Item Env:HSA_OVERRIDE_GFX_VERSION -ErrorAction SilentlyContinue
-    }
+    if ($hadOverride) { $env:HSA_OVERRIDE_GFX_VERSION = $oldOverride }
+    else { Remove-Item Env:HSA_OVERRIDE_GFX_VERSION -ErrorAction SilentlyContinue }
 }
 
 $deadline = (Get-Date).AddSeconds($resolvedTimeout)
@@ -218,9 +210,7 @@ if ($null -eq $stats) {
 
 $devices = @($stats.devices)
 $device = $devices | Where-Object { [string]$_.name -match '(?i)AMD|Radeon' } | Select-Object -First 1
-if ($null -eq $device) {
-    $device = $devices | Select-Object -First 1
-}
+if ($null -eq $device) { $device = $devices | Select-Object -First 1 }
 if ($null -eq $device) {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
     throw 'ComfyUI is reachable but /system_stats reported no compute device.'
