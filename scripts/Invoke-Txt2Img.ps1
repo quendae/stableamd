@@ -6,6 +6,9 @@ param(
     [string]$NegativePrompt = 'low quality, blurry, distorted, artifacts, watermark, text',
     [string]$ModelId = '',
     [string]$ModelPath = '',
+    [ValidateSet('txt2img', 'img2img')][string]$Mode = 'txt2img',
+    [string]$InputImagePath = '',
+    [double]$Denoise = 0.55,
     [int]$Width = 0,
     [int]$Height = 0,
     [int]$Steps = 0,
@@ -153,6 +156,32 @@ $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 $config = Read-StableAmdConfig -RepoRoot $RepoRoot
 Initialize-StableAmdRuntimeDirectories -Paths $paths
 
+$normalizedMode = $Mode.Trim().ToLowerInvariant()
+$resolvedInputImagePath = ''
+$inputImageName = ''
+if ($normalizedMode -eq 'img2img') {
+    if ([string]::IsNullOrWhiteSpace($InputImagePath)) {
+        throw 'SDXL img2img requires an input image path.'
+    }
+    if ([double]::IsNaN($Denoise) -or [double]::IsInfinity($Denoise) -or $Denoise -lt 0 -or $Denoise -gt 1) {
+        throw 'Denoise must be between 0 and 1.'
+    }
+
+    $inputRootFull = [IO.Path]::GetFullPath($paths.InputRoot)
+    $inputRootPrefix = $inputRootFull.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
+    $resolvedInputImagePath = [IO.Path]::GetFullPath($InputImagePath)
+    if (-not $resolvedInputImagePath.StartsWith($inputRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "SDXL img2img input image must be inside the StableAMD managed input directory '$inputRootFull'."
+    }
+    if (-not (Test-Path $resolvedInputImagePath -PathType Leaf)) {
+        throw "SDXL img2img input image was not found: '$resolvedInputImagePath'."
+    }
+    $inputImageName = [IO.Path]::GetFileName($resolvedInputImagePath)
+}
+elif (-not [string]::IsNullOrWhiteSpace($InputImagePath)) {
+    throw 'InputImagePath is valid only when Mode is img2img.'
+}
+
 $statusScript = Join-Path $PSScriptRoot 'Get-StableAMDStatus.ps1'
 $startScript = Join-Path $PSScriptRoot 'Start-StableAMD.ps1'
 $listModelsScript = Join-Path $PSScriptRoot 'List-Models.ps1'
@@ -217,7 +246,7 @@ if (-not (Test-Path $selectedModelPath -PathType Leaf)) {
     throw "Selected model no longer exists: '$selectedModelPath'."
 }
 if ([string]$model.family -ne 'sdxl') {
-    throw "StableAMD txt2img currently supports SDXL models only. Selected model family: '$($model.family)'."
+    throw "StableAMD generation currently supports SDXL models only. Selected model family: '$($model.family)'."
 }
 
 $resolvedWidth = if ($Width -gt 0) { $Width } else { [int]$config.generation.defaultWidth }
@@ -232,7 +261,7 @@ $baseUrl = [string]$status.Url
 if ([string]::IsNullOrWhiteSpace($baseUrl)) { throw 'Managed backend status did not include a URL.' }
 if (-not $baseUrl.EndsWith('/')) { $baseUrl += '/' }
 
-Write-StableAmdProgressEvent -Stage 'preparing' -Message "Preparing $([IO.Path]::GetFileName($selectedModelPath))..."
+Write-StableAmdProgressEvent -Stage 'preparing' -Message "Preparing $normalizedMode with $([IO.Path]::GetFileName($selectedModelPath))..."
 $objectInfoUrl = "${baseUrl}object_info/CheckpointLoaderSimple"
 $loaderInfo = Invoke-RestMethod -Uri $objectInfoUrl -Method Get -TimeoutSec 30
 $checkpointNode = $loaderInfo.PSObject.Properties['CheckpointLoaderSimple']
@@ -285,26 +314,33 @@ if ($requestedLoraStack.Count -gt 0) {
 }
 
 $generationToken = [guid]::NewGuid().ToString('N')
-$filenamePrefix = "StableAMD_SDXL_$generationToken"
+$modeToken = if ($normalizedMode -eq 'img2img') { 'IMG2IMG' } else { 'TXT2IMG' }
+$filenamePrefix = "StableAMD_SDXL_${modeToken}_$generationToken"
 
-$workflow = New-StableAmdWorkflow `
-    -Family ([string]$model.family) `
-    -Mode 'txt2img' `
-    -CheckpointName $checkpointName `
-    -Prompt $Prompt `
-    -NegativePrompt $NegativePrompt `
-    -Width $resolvedWidth `
-    -Height $resolvedHeight `
-    -Steps $resolvedSteps `
-    -Cfg $resolvedCfg `
-    -Seed $resolvedSeed `
-    -SamplerName $resolvedSampler `
-    -Scheduler $resolvedScheduler `
-    -FilenamePrefix $filenamePrefix `
-    -LoraStack $resolvedLoraStack
+$workflowParameters = @{
+    Family = [string]$model.family
+    Mode = $normalizedMode
+    CheckpointName = $checkpointName
+    Prompt = $Prompt
+    NegativePrompt = $NegativePrompt
+    Width = $resolvedWidth
+    Height = $resolvedHeight
+    Steps = $resolvedSteps
+    Cfg = $resolvedCfg
+    Seed = $resolvedSeed
+    SamplerName = $resolvedSampler
+    Scheduler = $resolvedScheduler
+    FilenamePrefix = $filenamePrefix
+    LoraStack = $resolvedLoraStack
+}
+if ($normalizedMode -eq 'img2img') {
+    $workflowParameters.InputImageName = $inputImageName
+    $workflowParameters.Denoise = $Denoise
+}
+$workflow = New-StableAmdWorkflow @workflowParameters
 
-# StableAMD owns the graph shape. The v0.3 provider dispatcher now chains an
-# ordered LoRA stack while preserving the legacy single-LoRA contract.
+# StableAMD owns the graph shape. The v0.3 provider dispatcher supports SDXL
+# txt2img and img2img while preserving ordered and legacy LoRA contracts.
 $clientId = [guid]::NewGuid().ToString('N')
 $payload = [ordered]@{
     prompt = $workflow
@@ -336,10 +372,14 @@ $nodeStages = @{
     '4' = @('loading-model', 'Loading checkpoint into GPU memory...')
     '6' = @('encoding', 'Encoding prompt...')
     '7' = @('encoding', 'Encoding negative prompt...')
-    '5' = @('latent', 'Preparing latent image...')
+    '5' = if ($normalizedMode -eq 'img2img') { @('input', 'Loading input image...') } else { @('latent', 'Preparing latent image...') }
     '3' = @('sampling', 'Starting sampler...')
     '8' = @('decoding', 'Decoding image with VAE...')
     '9' = @('saving', 'Saving generated image...')
+}
+if ($normalizedMode -eq 'img2img') {
+    $nodeStages['18'] = @('input', 'Resizing input image...')
+    $nodeStages['19'] = @('latent', 'Encoding input image to latent space...')
 }
 for ($index = 0; $index -lt $resolvedLoraStack.Count; $index++) {
     $entry = $resolvedLoraStack[$index]
@@ -492,17 +532,22 @@ $enabledLoras = @($resolvedLoraStack | Where-Object { [bool]$_.enabled })
 $legacyLoraNameMetadata = if ($enabledLoras.Count -eq 1) { [string]$enabledLoras[0].name } else { '' }
 $loraModelMetadata = if ($enabledLoras.Count -eq 1) { [double]$enabledLoras[0].modelStrength } else { $null }
 $loraClipMetadata = if ($enabledLoras.Count -eq 1) { [double]$enabledLoras[0].clipStrength } else { $null }
+$historyInputImagePath = if ($normalizedMode -eq 'img2img') { $resolvedInputImagePath } else { '' }
+$historyDenoise = if ($normalizedMode -eq 'img2img') { $Denoise } else { $null }
 
 $historyRecord = [pscustomobject]@{
     schemaVersion = 3
     createdAtUtc = $createdAtUtc
     promptId = $promptId
+    mode = $normalizedMode
     prompt = $Prompt
     negativePrompt = $NegativePrompt
     modelId = [string]$model.id
     modelName = [string]$model.name
     modelPath = $selectedModelPath
     checkpointName = $checkpointName
+    inputImagePath = $historyInputImagePath
+    denoise = $historyDenoise
     width = $resolvedWidth
     height = $resolvedHeight
     steps = $resolvedSteps
@@ -524,12 +569,15 @@ Write-StableAmdProgressEvent -Stage 'completed' -Message "Generation complete in
 
 return [pscustomobject]@{
     PromptId = $promptId
+    Mode = $normalizedMode
     Prompt = $Prompt
     NegativePrompt = $NegativePrompt
     ModelId = [string]$model.id
     ModelName = [string]$model.name
     ModelPath = $selectedModelPath
     CheckpointName = $checkpointName
+    InputImagePath = $historyInputImagePath
+    Denoise = $historyDenoise
     Width = $resolvedWidth
     Height = $resolvedHeight
     Steps = $resolvedSteps
