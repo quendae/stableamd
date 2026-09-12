@@ -77,6 +77,15 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         }
     }
 
+    It 'ships a command that scans configured bundle roots and persists logical models' {
+        $script = Get-Content -Path (Join-Path $repoRoot 'scripts/List-BundleModels.ps1') -Raw
+        $script | Should -Match 'Get-StableAmdBundleAssetRootRecords'
+        $script | Should -Match 'Find-StableAmdTemplateBundles'
+        $script | Should -Match 'Test-StableAmdBundleEntry'
+        $script | Should -Match 'Write-StableAmdBundleRegistry'
+        $script | Should -Match 'BundlesRegistryPath'
+    }
+
     It 'routes Z-Image Turbo through the workflow dispatcher' {
         Import-Module (Join-Path $repoRoot 'scripts/StableAmd.Workflows.psm1') -Force
 
