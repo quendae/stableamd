@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Family,
     [Parameter(Mandatory = $true)][ValidateSet('txt2img', 'img2img', 'inpaint', 'controlnet')][string]$Mode,
-    [Parameter(Mandatory = $true)][string]$CheckpointName,
+    [string]$CheckpointName = '',
     [Parameter(Mandatory = $true)][string]$Prompt,
     [string]$NegativePrompt = 'low quality, blurry, distorted, artifacts, watermark, text',
     [int]$Width = 1024,
@@ -15,6 +15,9 @@ param(
     [string]$FilenamePrefix = 'StableAMD',
     [string]$InputImageName = '',
     [double]$Denoise = 0.55,
+    [string]$DiffusionModelName = '',
+    [string]$TextEncoderName = '',
+    [string]$VaeName = '',
     [string]$LoraStackJson = '',
     [string]$RepoRoot = ''
 )
@@ -43,6 +46,9 @@ $params = @{
     SamplerName = $SamplerName
     Scheduler = $Scheduler
     FilenamePrefix = $FilenamePrefix
+    DiffusionModelName = $DiffusionModelName
+    TextEncoderName = $TextEncoderName
+    VaeName = $VaeName
     LoraStack = $loraStack
 }
 if ($Mode -in @('img2img', 'inpaint')) {
