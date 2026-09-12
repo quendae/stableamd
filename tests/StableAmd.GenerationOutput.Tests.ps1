@@ -75,12 +75,13 @@ Describe 'StableAMD generated image resolution' {
     }
 }
 
-Describe 'StableAMD txt2img output correlation' {
-    It 'uses a per-generation filename prefix and the output resolver' {
+Describe 'StableAMD generation output correlation' {
+    It 'uses a per-generation mode-aware filename prefix and the output resolver' {
         $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Invoke-Txt2Img.ps1') -Raw
 
         $script | Should -Match 'generationToken'
-        $script | Should -Match 'StableAMD_SDXL_\$generationToken'
+        $script | Should -Match 'modeToken'
+        $script | Should -Match 'StableAMD_SDXL_\$\{modeToken\}_\$generationToken'
         $script | Should -Match 'Resolve-StableAmdGeneratedImagePath'
         $script | Should -Not -Match "FilenamePrefix 'StableAMD_SDXL'"
     }
