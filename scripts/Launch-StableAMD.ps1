@@ -4,7 +4,8 @@ param(
     [int]$AppPort = 8188,
     [int]$AppStartupTimeoutSeconds = 30,
     [switch]$NoBrowser,
-    [switch]$SkipRuntimeInstall
+    [switch]$SkipRuntimeInstall,
+    [switch]$Detached
 )
 
 $ErrorActionPreference = 'Stop'
@@ -76,6 +77,107 @@ function Get-StableAmdAppHealth {
     return $null
 }
 
+function New-StableAmdKillOnCloseJob {
+    # In normal desktop mode the launcher is the StableAMD supervisor. A Windows
+    # Job Object provides the hard guarantee we want: if this PowerShell host is
+    # closed or crashes, Windows terminates the assigned app/backend processes,
+    # which also releases ROCm VRAM. Detached acceptance/service runs skip this.
+    if (-not ('StableAmd.NativeJob' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+namespace StableAmd {
+    public static class NativeJob {
+        [StructLayout(LayoutKind.Sequential)]
+        struct IO_COUNTERS {
+            public UInt64 ReadOperationCount;
+            public UInt64 WriteOperationCount;
+            public UInt64 OtherOperationCount;
+            public UInt64 ReadTransferCount;
+            public UInt64 WriteTransferCount;
+            public UInt64 OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+            public Int64 PerProcessUserTimeLimit;
+            public Int64 PerJobUserTimeLimit;
+            public UInt32 LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public UInt32 ActiveProcessLimit;
+            public Int64 Affinity;
+            public UInt32 PriorityClass;
+            public UInt32 SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        const int JobObjectExtendedLimitInformation = 9;
+        const UInt32 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string lpName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetInformationJobObject(IntPtr hJob, int infoType, IntPtr lpJobObjectInfo, UInt32 cbJobObjectInfoLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll")]
+        static extern bool CloseHandle(IntPtr hObject);
+
+        public static IntPtr CreateKillOnClose() {
+            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            if (job == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            int length = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            IntPtr ptr = Marshal.AllocHGlobal(length);
+            try {
+                Marshal.StructureToPtr(info, ptr, false);
+                if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ptr, (UInt32)length))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            catch {
+                CloseHandle(job);
+                throw;
+            }
+            finally {
+                Marshal.FreeHGlobal(ptr);
+            }
+            return job;
+        }
+
+        public static void Assign(IntPtr job, int pid) {
+            using (Process process = Process.GetProcessById(pid)) {
+                if (!AssignProcessToJobObject(job, process.Handle))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+
+        public static void Close(IntPtr job) {
+            if (job != IntPtr.Zero) CloseHandle(job);
+        }
+    }
+}
+'@
+    }
+    return [StableAmd.NativeJob]::CreateKillOnClose()
+}
+
 Write-Host ''
 Write-Host 'StableAMD v0.1' -ForegroundColor Cyan
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
@@ -114,7 +216,9 @@ else {
     $stderrPath = Join-Path $paths.LogsRoot "app-$stamp.stderr.log"
 
     Write-Host "Starting StableAMD application on $appUrl ..." -ForegroundColor Cyan
-    $arguments = "-s `"$appServer`" --repo-root `"$RepoRoot`" --host 127.0.0.1 --port $resolvedAppPort"
+    # -u makes application-side PowerShell/progress forwarding immediately
+    # visible in the managed log rather than waiting for Python's file buffer.
+    $arguments = "-u -s `"$appServer`" --repo-root `"$RepoRoot`" --host 127.0.0.1 --port $resolvedAppPort"
     $appProcess = Start-Process `
         -FilePath $paths.TheRockPython `
         -ArgumentList $arguments `
@@ -170,13 +274,7 @@ else {
     Write-Host "Application stderr: $stderrPath" -ForegroundColor DarkGray
 }
 
-Write-Host "To stop StableAMD completely and release GPU memory: powershell -ExecutionPolicy Bypass -File .\scripts\Stop-StableAMD.ps1" -ForegroundColor DarkCyan
-
-if (-not $NoBrowser) {
-    Start-Process $appUrl
-}
-
-return [pscustomobject]@{
+$result = [pscustomobject]@{
     Status = 'running'
     Healthy = $true
     Reused = $Reused
@@ -188,3 +286,44 @@ return [pscustomobject]@{
     StderrLog = if ($null -ne $appProcess) { $stderrPath } elseif ($null -ne $appState) { $appState.stderrLog } else { $null }
     Backend = $backendStatus
 }
+
+if (-not $NoBrowser) {
+    Start-Process $appUrl
+}
+
+if ($Detached) {
+    Write-Host 'StableAMD is running detached. Use Stop-StableAMD.ps1 for full teardown.' -ForegroundColor DarkCyan
+    return $result
+}
+
+$supervisorJob = [IntPtr]::Zero
+try {
+    $supervisorJob = New-StableAmdKillOnCloseJob
+    [StableAmd.NativeJob]::Assign($supervisorJob, [int]$backendStatus.Pid)
+    [StableAmd.NativeJob]::Assign($supervisorJob, [int]$result.ProcessId)
+    Write-Host ''
+    Write-Host 'StableAMD supervisor is active.' -ForegroundColor Green
+    Write-Host 'This terminal now owns the StableAMD processes. Ctrl+C or closing this terminal stops StableAMD and releases VRAM.' -ForegroundColor Cyan
+    Write-Host 'Live backend/application logs follow below:' -ForegroundColor DarkCyan
+    Write-Host ''
+
+    & (Join-Path $PSScriptRoot 'Watch-StableAMD.ps1') -RepoRoot $RepoRoot -Tail 20
+}
+finally {
+    # Closing the job handle first guarantees process termination even if the
+    # normal script-level cleanup path is interrupted. Stop-StableAMD then
+    # verifies the repo-scoped process state and removes runtime state files.
+    if ($supervisorJob -ne [IntPtr]::Zero) {
+        [StableAmd.NativeJob]::Close($supervisorJob)
+        $supervisorJob = [IntPtr]::Zero
+        Start-Sleep -Milliseconds 300
+    }
+    try {
+        & (Join-Path $PSScriptRoot 'Stop-StableAMD.ps1') -RepoRoot $RepoRoot | Out-Null
+    }
+    catch {
+        Write-Warning "StableAMD supervisor cleanup reported: $($_.Exception.Message)"
+    }
+}
+
+return $result
