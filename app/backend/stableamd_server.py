@@ -20,6 +20,7 @@ SERVICE_NAME = "StableAMD"
 API_VERSION = 3
 MAX_REQUEST_BYTES = 1024 * 1024
 SUPPORTED_OUTPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+BUNDLE_ASSET_ROLES = ("diffusion_model", "text_encoder", "vae")
 
 
 class StableAmdBridgeError(RuntimeError):
@@ -172,6 +173,16 @@ class PowerShellBridge:
         result = self._run_script("Browse-LoraRoot.ps1")
         return result or {"cancelled": True, "path": None}
 
+    def bundle_roots(self) -> dict[str, list[Any]]:
+        return {
+            role: self._normalize_list_payload(self._run_script("Get-BundleAssetRoots.ps1", [("Role", role)]))
+            for role in BUNDLE_ASSET_ROLES
+        }
+
+    def browse_bundle_root(self, role: str) -> Any:
+        result = self._run_script("Browse-BundleAssetRoot.ps1", [("Role", role)])
+        return result or {"cancelled": True, "role": role, "path": None}
+
     def _backend_restart_required(self) -> bool:
         status = self.status()
         return isinstance(status, dict) and bool(status.get("Healthy", status.get("healthy", False)))
@@ -205,6 +216,20 @@ class PowerShellBridge:
         if isinstance(result, dict):
             return {**result, "restartRequired": restart_required}
         return {"removed": False, "path": path, "restartRequired": False}
+
+    def add_bundle_root(self, role: str, path: str) -> Any:
+        result = self._run_script("Add-BundleAssetRoot.ps1", [("Role", role), ("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("added") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"added": False, "role": role, "path": path, "restartRequired": False}
+
+    def remove_bundle_root(self, role: str, path: str) -> Any:
+        result = self._run_script("Remove-BundleAssetRoot.ps1", [("Role", role), ("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("removed") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"removed": False, "role": role, "path": path, "restartRequired": False}
 
     def install_model(self, request: dict[str, Any]) -> Any:
         source = str(request["source"]).lower()
@@ -375,6 +400,8 @@ class StableAmdApi:
     _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
     _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
     _root_fields = {"path"}
+    _bundle_root_fields = {"role", "path"}
+    _bundle_browse_fields = {"role"}
     _lora_stack_fields = {"name", "modelStrength", "clipStrength", "enabled"}
 
     def __init__(self, bridge: Any):
@@ -407,6 +434,28 @@ class StableAmdApi:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{label} folder path must be a non-empty string.")
         return value.strip()
+
+    @staticmethod
+    def _validate_bundle_role(value: Any) -> str:
+        if not isinstance(value, str) or value not in BUNDLE_ASSET_ROLES:
+            raise ValueError("Bundle asset role must be one of: diffusion_model, text_encoder, vae.")
+        return value
+
+    def _validate_bundle_browse(self, request: dict[str, Any]) -> str:
+        unsupported = sorted(set(request) - self._bundle_browse_fields)
+        if unsupported:
+            raise ValueError("Unsupported bundle folder field(s): " + ", ".join(unsupported))
+        return self._validate_bundle_role(request.get("role"))
+
+    def _validate_bundle_root(self, request: dict[str, Any]) -> tuple[str, str]:
+        unsupported = sorted(set(request) - self._bundle_root_fields)
+        if unsupported:
+            raise ValueError("Unsupported bundle folder field(s): " + ", ".join(unsupported))
+        role = self._validate_bundle_role(request.get("role"))
+        path = request.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("Bundle asset folder path must be a non-empty string.")
+        return role, path.strip()
 
     def _validate_model_install(self, request: dict[str, Any]) -> dict[str, Any]:
         source = self._required_text(request, "source").lower()
@@ -530,6 +579,17 @@ class StableAmdApi:
             if method == "POST" and path == "/api/lora-roots/remove":
                 root = self._validate_root(self._decode_json(body), "LoRA")
                 return 200, self.bridge.remove_lora_root(root)
+            if method == "GET" and path == "/api/bundle-roots":
+                return 200, self.bridge.bundle_roots()
+            if method == "POST" and path == "/api/bundle-roots/browse":
+                role = self._validate_bundle_browse(self._decode_json(body))
+                return 200, self.bridge.browse_bundle_root(role)
+            if method == "POST" and path == "/api/bundle-roots":
+                role, root = self._validate_bundle_root(self._decode_json(body))
+                return 200, self.bridge.add_bundle_root(role, root)
+            if method == "POST" and path == "/api/bundle-roots/remove":
+                role, root = self._validate_bundle_root(self._decode_json(body))
+                return 200, self.bridge.remove_bundle_root(role, root)
             if method == "POST" and path == "/api/models/install":
                 request = self._validate_model_install(self._decode_json(body))
                 return 200, self.bridge.install_model(request)
@@ -600,7 +660,7 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
             try:
                 image_path = resolve_output_image(resolved_repo_root, requested)
             except ValueError as exc:
-                self._send_json(404, {"error": str(exc)})
+                self._send_json(404, {"error": str(exc)}
                 return True
 
             content_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
