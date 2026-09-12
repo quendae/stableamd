@@ -86,8 +86,22 @@
                   <textarea id="negative-prompt" name="negativePrompt" rows="3">low quality, blurry, distorted, artifacts, watermark, text</textarea>
                 </label>
                 <div class="field-grid field-grid-2">
-                  <label class="field"><span>Sampler</span><input id="sampler" name="samplerName" value="euler"></label>
-                  <label class="field"><span>Scheduler</span><input id="scheduler" name="scheduler" value="normal"></label>
+                  <label class="field">
+                    <span>Sampler</span>
+                    <select id="sampler" name="samplerName"><option value="euler">euler</option></select>
+                  </label>
+                  <label class="field">
+                    <span>Scheduler</span>
+                    <select id="scheduler" name="scheduler"><option value="normal">normal</option></select>
+                  </label>
+                </div>
+                <label class="field">
+                  <span>LoRA <small>optional · one per generation in v0.2</small></span>
+                  <select id="lora-select" name="loraName"><option value="">None</option></select>
+                </label>
+                <div class="field-grid field-grid-2">
+                  <label class="field"><span>LoRA model strength</span><input id="lora-model-strength" type="number" min="-4" max="4" step="0.05" value="1" disabled></label>
+                  <label class="field"><span>LoRA CLIP strength</span><input id="lora-clip-strength" type="number" min="-4" max="4" step="0.05" value="1" disabled></label>
                 </div>
               </div>
             </details>
@@ -201,8 +215,12 @@
             <code>127.0.0.1</code>
           </div>
           <div class="settings-row">
-            <div><strong>Generation preset</strong><p>Default StableAMD v0.1 SDXL profile.</p></div>
+            <div><strong>Generation preset</strong><p>Default StableAMD v0.2 SDXL profile.</p></div>
             <span>1024 × 1024 · 20 steps · CFG 7</span>
+          </div>
+          <div class="settings-row">
+            <div><strong>Generation controls</strong><p>Sampler, scheduler and optional LoRA come from the managed ComfyUI backend.</p></div>
+            <span>Dynamic</span>
           </div>
           <div class="settings-row">
             <div><strong>Backend policy</strong><p>ComfyUI stays internal to the product flow.</p></div>
@@ -229,5 +247,6 @@
 
   <script src="/app.js" defer></script>
   <script src="/app-progress.js" defer></script>
+  <script src="/app-v02.js" defer></script>
 </body>
 </html>
