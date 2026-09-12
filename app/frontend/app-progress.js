@@ -26,7 +26,8 @@
       Number(getValue(record, "height", "Height")) === Number(payload.height) &&
       Number(getValue(record, "steps", "Steps")) === Number(payload.steps) &&
       String(getValue(record, "sampler", "Sampler") || "") === String(payload.samplerName || "") &&
-      String(getValue(record, "scheduler", "Scheduler") || "") === String(payload.scheduler || "")
+      String(getValue(record, "scheduler", "Scheduler") || "") === String(payload.scheduler || "") &&
+      String(getValue(record, "loraName", "LoraName") || "") === String(payload.loraName || "")
     );
 
     const similar = usable.filter(({ record }) =>
@@ -126,6 +127,13 @@
     };
     const seed = readNumber("#seed");
     if (seed !== undefined) payload.seed = seed;
+
+    const loraName = qs("#lora-select")?.value?.trim() || "";
+    if (loraName) {
+      payload.loraName = loraName;
+      payload.loraModelStrength = readNumber("#lora-model-strength", 1);
+      payload.loraClipStrength = readNumber("#lora-clip-strength", 1);
+    }
 
     button.disabled = true;
     button.textContent = "Generating…";
