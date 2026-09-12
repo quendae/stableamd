@@ -6,6 +6,30 @@ from typing import Any
 
 CAPABILITY_MODES = ("txt2img", "img2img", "inpaint", "controlnet", "lora")
 VALID_CAPABILITY_STATES = {"supported", "planned", "unsupported"}
+DEFAULT_LORA_POLICY = {
+    "orderedStack": False,
+    "maxStack": 0,
+    "perEntryModelStrength": False,
+    "perEntryClipStrength": False,
+}
+
+
+def _normalize_lora_policy(value: Any) -> dict[str, Any]:
+    if value is None:
+        return dict(DEFAULT_LORA_POLICY)
+    if not isinstance(value, dict):
+        raise ValueError("loraPolicy must be an object when present.")
+
+    max_stack = value.get("maxStack", 0)
+    if isinstance(max_stack, bool) or not isinstance(max_stack, int) or max_stack < 0 or max_stack > 32:
+        raise ValueError("loraPolicy.maxStack must be an integer between 0 and 32.")
+
+    return {
+        "orderedStack": bool(value.get("orderedStack", False)),
+        "maxStack": max_stack,
+        "perEntryModelStrength": bool(value.get("perEntryModelStrength", False)),
+        "perEntryClipStrength": bool(value.get("perEntryClipStrength", False)),
+    }
 
 
 def load_model_support_catalog(repo_root: Path) -> dict[str, Any]:
@@ -31,6 +55,7 @@ def load_model_support_catalog(repo_root: Path) -> dict[str, Any]:
             state = capabilities.get(mode, "unsupported")
             if state not in VALID_CAPABILITY_STATES:
                 raise ValueError(f"Model family '{family_id}' has invalid capability state '{state}' for '{mode}'.")
+        _normalize_lora_policy(family.get("loraPolicy"))
 
     return payload
 
@@ -48,6 +73,7 @@ def resolve_model_support(catalog: dict[str, Any], model: dict[str, Any]) -> dic
             "provider": "unsupported",
             "assetMode": "unknown",
             "requiredAssetRoles": [],
+            "loraPolicy": dict(DEFAULT_LORA_POLICY),
             "capabilities": {mode: "unsupported" for mode in CAPABILITY_MODES},
         }
 
@@ -63,6 +89,7 @@ def resolve_model_support(catalog: dict[str, Any], model: dict[str, Any]) -> dic
         "provider": family.get("provider") or "unsupported",
         "assetMode": family.get("assetMode") or "unknown",
         "requiredAssetRoles": list(family.get("requiredAssetRoles") or []),
+        "loraPolicy": _normalize_lora_policy(family.get("loraPolicy")),
         "capabilities": capabilities,
     }
 
