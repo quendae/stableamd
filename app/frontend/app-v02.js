@@ -64,12 +64,117 @@
     return hint;
   }
 
+  function ensureGenerationModeUi() {
+    if (document.querySelector("#generation-mode")) return document.querySelector("#generation-mode");
+    const profile = ensureProfileControl();
+    const anchor = profile?.closest(".field") || document.querySelector("#model-select")?.closest(".field");
+    if (!anchor) return null;
+
+    const panel = document.createElement("div");
+    panel.id = "generation-mode-panel";
+    panel.className = "model-root-card";
+    panel.innerHTML = `
+      <div class="field-grid field-grid-2">
+        <label class="field">
+          <span>Generation mode <small>uses the selected model capability</small></span>
+          <select id="generation-mode" name="generationMode">
+            <option value="txt2img">Text to image</option>
+            <option value="img2img">Image to image</option>
+          </select>
+        </label>
+        <div id="img2img-controls" hidden>
+          <label class="field">
+            <span>Input image <small>PNG, JPEG or WebP · max 20 MiB</small></span>
+            <input id="input-image" type="file" accept="image/png,image/jpeg,image/webp">
+          </label>
+          <label class="field">
+            <span>Denoise strength <small>0 keeps the source, 1 changes it strongly</small></span>
+            <input id="img2img-denoise" type="number" min="0" max="1" step="0.05" value="0.55">
+          </label>
+          <p id="img2img-source-hint" class="history-model">The image is staged only in StableAMD's managed local input folder.</p>
+        </div>
+      </div>`;
+    anchor.after(panel);
+
+    const select = panel.querySelector("#generation-mode");
+    select.addEventListener("change", syncGenerationModeUi);
+    panel.querySelector("#input-image").addEventListener("change", syncGenerationModeUi);
+    syncGenerationModeUi();
+    return select;
+  }
+
+  function syncGenerationModeUi() {
+    const select = document.querySelector("#generation-mode");
+    const controls = document.querySelector("#img2img-controls");
+    if (!select || !controls) return;
+
+    const support = supportForCurrentModel();
+    const supported = support?.capabilities?.img2img === "supported";
+    const imgOption = Array.from(select.options).find((option) => option.value === "img2img");
+    if (imgOption) {
+      imgOption.disabled = !supported;
+      imgOption.textContent = supported ? "Image to image" : "Image to image · unavailable for this model";
+    }
+    if (select.value === "img2img" && !supported) select.value = "txt2img";
+
+    const active = select.value === "img2img";
+    controls.hidden = !active;
+    const input = document.querySelector("#input-image");
+    const denoise = document.querySelector("#img2img-denoise");
+    if (input) input.required = active;
+    if (denoise) denoise.disabled = !active;
+
+    const hint = document.querySelector("#img2img-source-hint");
+    if (hint && active) {
+      const file = input?.files?.[0];
+      hint.textContent = file
+        ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · staged locally when generation starts.`
+        : "Choose a source image. Gallery reuse can restore denoise/settings, but browsers require selecting the source file again.";
+    }
+  }
+
+  function readInputImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error("Choose an input image for img2img."));
+        return;
+      }
+      if (![/^image\/png$/i, /^image\/jpeg$/i, /^image\/webp$/i].some((pattern) => pattern.test(file.type || ""))) {
+        reject(new Error("Img2img accepts PNG, JPEG, or WebP images."));
+        return;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        reject(new Error("Img2img input image must be 20 MiB or smaller."));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the img2img input image."));
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        if (comma < 0) {
+          reject(new Error("Could not encode the img2img input image."));
+          return;
+        }
+        const dataBase64 = result.slice(comma + 1);
+        if (!dataBase64) {
+          reject(new Error("The img2img input image is empty."));
+          return;
+        }
+        resolve({ name: file.name, mimeType: file.type, dataBase64 });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   function renderModelSupportHint() {
     const hint = ensureModelSupportHint();
     if (!hint) return;
     const support = supportForCurrentModel();
     if (!support) {
       hint.textContent = "Model capabilities will appear after model discovery.";
+      syncGenerationModeUi();
       return;
     }
     const caps = support.capabilities || {};
@@ -84,6 +189,7 @@
     if (caps.lora === "supported") parts.push(maxStack > 1 ? `LoRA stack up to ${maxStack}` : "LoRA supported");
     hint.textContent = `${family} · ${parts.join(" · ")}`;
     syncLoraStackAvailability();
+    syncGenerationModeUi();
   }
 
   function syncLegacyLoraStrengthState() {
@@ -356,12 +462,33 @@
       let payload = {};
       try { payload = options.body ? JSON.parse(options.body) : {}; }
       catch { payload = {}; }
+
       const loraStack = collectLoraStack();
       delete payload.loraName;
       delete payload.loraModelStrength;
       delete payload.loraClipStrength;
       if (loraStack.length) payload.loraStack = loraStack;
       else delete payload.loraStack;
+
+      const generationMode = document.querySelector("#generation-mode")?.value || "txt2img";
+      if (generationMode === "img2img") {
+        const support = supportForCurrentModel();
+        if (support?.capabilities?.img2img !== "supported") {
+          throw new Error("Img2img is not supported for the selected model.");
+        }
+        const denoise = Number(document.querySelector("#img2img-denoise")?.value ?? 0.55);
+        if (!Number.isFinite(denoise) || denoise < 0 || denoise > 1) {
+          throw new Error("Denoise strength must be between 0 and 1.");
+        }
+        const file = document.querySelector("#input-image")?.files?.[0];
+        payload.mode = "img2img";
+        payload.denoise = denoise;
+        payload.inputImage = await readInputImage(file);
+      } else {
+        delete payload.mode;
+        delete payload.denoise;
+        delete payload.inputImage;
+      }
       return baseApi(path, { ...options, body: JSON.stringify(payload) });
     }
     return baseApi(path, options);
@@ -385,6 +512,7 @@
       populateProfileControl(false);
       renderModelSupportHint();
       syncLoraStackAvailability();
+      syncGenerationModeUi();
     } catch (error) {
       syncLegacyLoraStrengthState();
       showToast(`Generation options unavailable: ${error.message}`, "error");
@@ -414,6 +542,19 @@
     document.querySelector("#lora-model-strength").value = legacyModelStrength ?? 1;
     document.querySelector("#lora-clip-strength").value = legacyClipStrength ?? 1;
     syncLegacyLoraStrengthState();
+
+    ensureGenerationModeUi();
+    const mode = String(getValue(record, "mode", "Mode") || "txt2img").toLowerCase();
+    const generationMode = document.querySelector("#generation-mode");
+    const denoise = getValue(record, "denoise", "Denoise");
+    if (generationMode) generationMode.value = mode === "img2img" ? "img2img" : "txt2img";
+    if (denoise !== null && denoise !== undefined && document.querySelector("#img2img-denoise")) {
+      document.querySelector("#img2img-denoise").value = denoise;
+    }
+    const input = document.querySelector("#input-image");
+    if (input) input.value = "";
+    syncGenerationModeUi();
+
     if (document.querySelector("#generation-profile")) document.querySelector("#generation-profile").value = "";
   }
 
@@ -570,6 +711,7 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     ensureProfileControl();
+    ensureGenerationModeUi();
     ensureModelSupportHint();
     ensureLoraStackUi();
     ensureLoraRootUi();
@@ -577,6 +719,7 @@
       populateProfileControl(true);
       renderModelSupportHint();
       syncLoraStackAvailability();
+      syncGenerationModeUi();
     });
     document.querySelector("#refresh-button")?.addEventListener("click", () => { void refreshGenerationOptions(); });
     document.querySelector('[data-page="models"]')?.addEventListener("click", () => void refreshLoraRoots());
@@ -589,6 +732,7 @@
     if (modelSelect) new MutationObserver(() => {
       populateProfileControl(false);
       renderModelSupportHint();
+      syncGenerationModeUi();
     }).observe(modelSelect, { childList: true });
 
     void Promise.all([refreshGenerationOptions(), refreshLoraRoots()]);
