@@ -42,7 +42,7 @@
       },
       "capabilities": {
         "txt2img": "supported",
-        "img2img": "planned",
+        "img2img": "supported",
         "inpaint": "planned",
         "controlnet": "planned",
         "lora": "supported"
