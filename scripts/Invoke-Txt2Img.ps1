@@ -178,7 +178,7 @@ if ($normalizedMode -eq 'img2img') {
     }
     $inputImageName = [IO.Path]::GetFileName($resolvedInputImagePath)
 }
-elif (-not [string]::IsNullOrWhiteSpace($InputImagePath)) {
+elseif (-not [string]::IsNullOrWhiteSpace($InputImagePath)) {
     throw 'InputImagePath is valid only when Mode is img2img.'
 }
 
