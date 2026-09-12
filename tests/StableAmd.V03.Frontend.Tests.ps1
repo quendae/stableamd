@@ -2,6 +2,8 @@ Describe 'StableAMD v0.3 frontend contract' {
     BeforeAll {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         $frontendPath = Join-Path $repoRoot 'app/frontend/app-v02.js'
+        $frontendV03Path = Join-Path $repoRoot 'app/frontend/app-v03.js'
+        $indexPath = Join-Path $repoRoot 'app/frontend/index.html'
     }
 
     It 'loads model support metadata and exposes capability state for the selected model' {
@@ -34,7 +36,9 @@ Describe 'StableAMD v0.3 frontend contract' {
     }
 
     It 'manages bundle asset folders for diffusion models text encoders and VAE files' {
-        $js = Get-Content -LiteralPath $frontendPath -Raw
+        Test-Path $frontendV03Path | Should -BeTrue
+        $js = Get-Content -LiteralPath $frontendV03Path -Raw
+        $index = Get-Content -LiteralPath $indexPath -Raw
 
         $js | Should -Match '/api/bundle-roots'
         $js | Should -Match 'Bundle asset folders'
@@ -43,5 +47,6 @@ Describe 'StableAMD v0.3 frontend contract' {
         $js | Should -Match 'vae'
         $js | Should -Match 'Browse folder'
         $js | Should -Match 'restartBackendForBundleFolders'
+        $index | Should -Match 'app-v03\.js'
     }
 }
