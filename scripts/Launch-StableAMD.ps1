@@ -35,7 +35,9 @@ Import-Module $runtimeModule -Force
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 Initialize-StableAmdRuntimeDirectories -Paths $paths
 
-$appServer = Join-Path $RepoRoot 'app/backend/stableamd_server.py'
+# The v0.3 extension imports and reuses the proven stableamd_server.py loopback
+# implementation, adding capability-specific request handling such as inpaint.
+$appServer = Join-Path $RepoRoot 'app/backend/stableamd_v03_server.py'
 if (-not (Test-Path $appServer -PathType Leaf)) {
     throw "StableAMD application server is missing: '$appServer'."
 }
@@ -179,7 +181,7 @@ namespace StableAmd {
 }
 
 Write-Host ''
-Write-Host 'StableAMD v0.1' -ForegroundColor Cyan
+Write-Host 'StableAMD v0.3' -ForegroundColor Cyan
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
 $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot
 if ($null -eq $backendStatus -or -not [bool]$backendStatus.Healthy) {
