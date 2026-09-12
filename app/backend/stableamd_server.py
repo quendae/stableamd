@@ -686,10 +686,10 @@ class StableAmdApi:
                 role = self._validate_bundle_browse(self._decode_json(body))
                 return 200, self.bridge.browse_bundle_root(role)
             if method == "POST" and path == "/api/bundle-roots":
-                role, root = self._validate_bundle_root(self._decode_json(body), "Bundle")
+                role, root = self._validate_bundle_root(self._decode_json(body))
                 return 200, self.bridge.add_bundle_root(role, root)
             if method == "POST" and path == "/api/bundle-roots/remove":
-                role, root = self._validate_bundle_root(self._decode_json(body), "Bundle")
+                role, root = self._validate_bundle_root(self._decode_json(body))
                 return 200, self.bridge.remove_bundle_root(role, root)
             if method == "POST" and path == "/api/models/install":
                 request = self._validate_model_install(self._decode_json(body))
