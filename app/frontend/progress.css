@@ -1,0 +1,57 @@
+.generation-progress {
+  width: min(100%, 460px);
+  margin-top: 18px;
+  text-align: left;
+}
+
+.generation-progress-track {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #0e1115;
+}
+
+.generation-progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.generation-progress.is-indeterminate .generation-progress-fill {
+  width: 32%;
+  animation: stableamd-progress-indeterminate 1.25s ease-in-out infinite;
+}
+
+.generation-progress-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.generation-progress-copy strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+@keyframes stableamd-progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  50% { transform: translateX(105%); }
+  100% { transform: translateX(320%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generation-progress.is-indeterminate .generation-progress-fill {
+    animation: none;
+    transform: none;
+  }
+}

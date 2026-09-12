@@ -1,4 +1,5 @@
 .runtime/
 diagnostics/
+dist/
 *.log
 *.tmp
