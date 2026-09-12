@@ -119,13 +119,19 @@ Describe 'StableAMD one-click launcher' {
         $stop | Should -Match 'State was preserved for diagnostics'
     }
 
-    It 'ships a live diagnostics watcher for backend and application logs' {
+    It 'streams backend and application logs concurrently including CR progress updates' {
         Test-Path $watchPath | Should -BeTrue
         $watch = Get-Content $watchPath -Raw
 
-        $watch | Should -Match 'Get-Content.*-Wait'
-        $watch | Should -Match 'stdoutLog'
-        $watch | Should -Match 'stderrLog'
+        $watch | Should -Match 'backend stdout'
+        $watch | Should -Match 'backend stderr'
+        $watch | Should -Match 'app stdout'
+        $watch | Should -Match 'app stderr'
+        $watch | Should -Match 'FileShare\]::ReadWrite'
+        $watch | Should -Match 'Seek\('
+        $watch | Should -Match '\[regex\]::Split'
+        $watch | Should -Match 'Start-Sleep\s+-Milliseconds\s+\$PollMilliseconds'
+        $watch | Should -Not -Match 'Get-Content\s+-Path\s+@\(\$logs\).*?-Wait'
         $watch | Should -Match 'Ctrl\+C'
     }
 }
