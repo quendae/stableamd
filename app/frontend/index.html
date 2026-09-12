@@ -44,7 +44,7 @@
       <header class="topbar">
         <div>
           <h1 id="page-title">Generate</h1>
-          <p id="page-subtitle">Create an SDXL image on your Radeon GPU.</p>
+          <p id="page-subtitle">Create an image locally on your Radeon GPU.</p>
         </div>
         <button class="button button-quiet" id="refresh-button" type="button">Refresh</button>
       </header>
@@ -96,7 +96,7 @@
                   </label>
                 </div>
                 <label class="field">
-                  <span>LoRA <small>optional · one per generation in v0.2</small></span>
+                  <span>LoRA <small>legacy single-LoRA control; v0.3 upgrades this to a stack</small></span>
                   <select id="lora-select" name="loraName"><option value="">None</option></select>
                 </label>
                 <div class="field-grid field-grid-2">
@@ -145,7 +145,7 @@
         <div class="section-toolbar model-list-heading">
           <div>
             <h2>Detected checkpoints</h2>
-            <p>Recursive scan of every configured model folder.</p>
+            <p>Recursive scan of every configured checkpoint folder. Bundle-model asset folders are managed separately.</p>
           </div>
         </div>
         <div class="model-list" id="model-list"></div>
@@ -215,11 +215,11 @@
             <code>127.0.0.1</code>
           </div>
           <div class="settings-row">
-            <div><strong>Generation preset</strong><p>Default StableAMD v0.2 SDXL profile.</p></div>
-            <span>1024 × 1024 · 20 steps · CFG 7</span>
+            <div><strong>Generation profiles</strong><p>Model-aware recommendations are stored in a versioned StableAMD catalog.</p></div>
+            <span>Model aware</span>
           </div>
           <div class="settings-row">
-            <div><strong>Generation controls</strong><p>Sampler, scheduler and optional LoRA come from the managed ComfyUI backend.</p></div>
+            <div><strong>Generation controls</strong><p>Sampler, scheduler, model capabilities and LoRA stack come from the managed product layer.</p></div>
             <span>Dynamic</span>
           </div>
           <div class="settings-row">
@@ -248,5 +248,6 @@
   <script src="/app.js" defer></script>
   <script src="/app-progress.js" defer></script>
   <script src="/app-v02.js" defer></script>
+  <script src="/app-v03.js" defer></script>
 </body>
 </html>
