@@ -6,6 +6,7 @@ Set-StrictMode -Version 2.0
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1')
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Img2Img.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Inpaint.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.ZImageTurbo.psm1') -Force
 
 function Get-StableAmdLoraValue {
     [CmdletBinding()]
@@ -103,8 +104,7 @@ function New-StableAmdWorkflow {
         [ValidateSet('txt2img', 'img2img', 'inpaint', 'controlnet')]
         [string]$Mode,
 
-        [Parameter(Mandatory = $true)]
-        [string]$CheckpointName,
+        [string]$CheckpointName = '',
 
         [Parameter(Mandatory = $true)]
         [string]$Prompt,
@@ -120,6 +120,9 @@ function New-StableAmdWorkflow {
         [string]$FilenamePrefix = 'StableAMD',
         [string]$InputImageName = '',
         [double]$Denoise = 0.55,
+        [string]$DiffusionModelName = '',
+        [string]$TextEncoderName = '',
+        [string]$VaeName = '',
         [AllowEmptyCollection()]
         [object[]]$LoraStack = @(),
         [string]$LoraName = '',
@@ -131,6 +134,9 @@ function New-StableAmdWorkflow {
     $normalizedMode = $Mode.Trim().ToLowerInvariant()
 
     if ($normalizedFamily -eq 'sdxl' -and $normalizedMode -in @('txt2img', 'img2img', 'inpaint')) {
+        if ([string]::IsNullOrWhiteSpace($CheckpointName)) {
+            throw 'CheckpointName is required for the SDXL checkpoint provider.'
+        }
         if (@($LoraStack).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
             throw 'Specify LoraStack or the legacy single LoraName fields, not both.'
         }
@@ -172,6 +178,32 @@ function New-StableAmdWorkflow {
         }
 
         return Add-StableAmdLoraStackToWorkflow -Workflow $workflow -LoraStack $resolvedStack
+    }
+
+    if ($normalizedFamily -eq 'z-image-turbo' -and $normalizedMode -eq 'txt2img') {
+        if (@($LoraStack).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($LoraName)) {
+            throw 'LoRA execution is not implemented for Z-Image Turbo yet.'
+        }
+
+        $zSteps = if ($PSBoundParameters.ContainsKey('Steps')) { $Steps } else { 8 }
+        $zCfg = if ($PSBoundParameters.ContainsKey('Cfg')) { $Cfg } else { 1.0 }
+        $zSampler = if ($PSBoundParameters.ContainsKey('SamplerName')) { $SamplerName } else { 'res_multistep' }
+        $zScheduler = if ($PSBoundParameters.ContainsKey('Scheduler')) { $Scheduler } else { 'simple' }
+        $zPrefix = if ($PSBoundParameters.ContainsKey('FilenamePrefix')) { $FilenamePrefix } else { 'StableAMD_ZIMAGE_TURBO' }
+
+        return New-StableAmdZImageTurboWorkflow `
+            -DiffusionModelName $DiffusionModelName `
+            -TextEncoderName $TextEncoderName `
+            -VaeName $VaeName `
+            -Prompt $Prompt `
+            -Width $Width `
+            -Height $Height `
+            -Steps $zSteps `
+            -Cfg $zCfg `
+            -Seed $Seed `
+            -SamplerName $zSampler `
+            -Scheduler $zScheduler `
+            -FilenamePrefix $zPrefix
     }
 
     throw "StableAMD workflow provider is not implemented for family '$normalizedFamily' and mode '$normalizedMode'."
