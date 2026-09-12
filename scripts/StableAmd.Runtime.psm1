@@ -63,6 +63,7 @@ function Get-StableAmdRuntimePaths {
         StableAmdRoot = $stableAmdRoot
         ConfigPath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'config.json'))
         BackendStatePath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'backend-state.json'))
+        AppStatePath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'app-state.json'))
         ModelsRegistryPath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models.json'))
         ModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models'))
         CheckpointsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/checkpoints'))
