@@ -1,13 +1,17 @@
 (() => {
-  pageMeta.settings = ["Settings", "StableAMD v0.2 runtime and generation defaults."];
+  pageMeta.settings = ["Settings", "StableAMD v0.3 runtime, model capabilities and generation defaults."];
 
   const v02State = {
     generationOptions: { samplers: [], schedulers: [], loras: [] },
     profileCatalog: { profiles: [] },
+    modelSupport: { models: [] },
     loraRoots: [],
   };
 
+  const baseApi = api;
+
   function fillSelect(select, values, preferred, emptyLabel = null) {
+    if (!select) return;
     const available = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
     const previous = select.value;
     select.replaceChildren();
@@ -34,7 +38,55 @@
     if (target !== undefined) select.value = String(target);
   }
 
-  function syncLoraStrengthState() {
+  function supportForCurrentModel() {
+    const modelId = document.querySelector("#model-select")?.value || "";
+    const entries = Array.isArray(v02State.modelSupport?.models) ? v02State.modelSupport.models : [];
+    return entries.find((entry) => String(entry?.id || "") === String(modelId)) || null;
+  }
+
+  function maxLoraStack() {
+    const support = supportForCurrentModel();
+    const value = Number(support?.loraPolicy?.maxStack ?? 0);
+    if (Number.isInteger(value) && value > 0) return Math.min(8, value);
+    return support?.capabilities?.lora === "supported" ? 1 : 0;
+  }
+
+  function ensureModelSupportHint() {
+    let hint = document.querySelector("#model-support-hint");
+    if (hint) return hint;
+    const modelField = document.querySelector("#model-select")?.closest(".field");
+    if (!modelField) return null;
+    hint = document.createElement("p");
+    hint.id = "model-support-hint";
+    hint.className = "history-model";
+    hint.setAttribute("aria-live", "polite");
+    modelField.append(hint);
+    return hint;
+  }
+
+  function renderModelSupportHint() {
+    const hint = ensureModelSupportHint();
+    if (!hint) return;
+    const support = supportForCurrentModel();
+    if (!support) {
+      hint.textContent = "Model capabilities will appear after model discovery.";
+      return;
+    }
+    const caps = support.capabilities || {};
+    const family = support.label || support.family || "Unknown model";
+    const parts = [
+      `txt2img ${caps.txt2img || "unsupported"}`,
+      `img2img ${caps.img2img || "unsupported"}`,
+      `inpaint ${caps.inpaint || "unsupported"}`,
+      `ControlNet ${caps.controlnet || "unsupported"}`,
+    ];
+    const maxStack = Number(support?.loraPolicy?.maxStack || 0);
+    if (caps.lora === "supported") parts.push(maxStack > 1 ? `LoRA stack up to ${maxStack}` : "LoRA supported");
+    hint.textContent = `${family} · ${parts.join(" · ")}`;
+    syncLoraStackAvailability();
+  }
+
+  function syncLegacyLoraStrengthState() {
     const enabled = Boolean(document.querySelector("#lora-select")?.value);
     for (const id of ["#lora-model-strength", "#lora-clip-strength"]) {
       const input = document.querySelector(id);
@@ -138,21 +190,203 @@
     setIfOptionExists("#scheduler", combination.scheduler || defaults.scheduler);
   }
 
+  function loraChoices() {
+    return Array.isArray(v02State.generationOptions?.loras) ? v02State.generationOptions.loras.map(String).filter(Boolean) : [];
+  }
+
+  function populateLoraRowSelect(select, preferred = "") {
+    if (!select) return;
+    const previous = preferred || select.value;
+    select.replaceChildren();
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "Choose LoRA…";
+    select.append(empty);
+    for (const value of loraChoices()) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    }
+    if (previous && Array.from(select.options).some((option) => option.value === String(previous))) select.value = String(previous);
+  }
+
+  function ensureLoraStackUi() {
+    let panel = document.querySelector("#lora-stack-panel");
+    if (panel) return panel;
+
+    const legacySelect = document.querySelector("#lora-select");
+    const legacyField = legacySelect?.closest(".field");
+    const legacyStrengthGrid = document.querySelector("#lora-model-strength")?.closest(".field-grid");
+    if (!legacyField || !legacyStrengthGrid) return null;
+
+    legacyField.hidden = true;
+    legacyStrengthGrid.hidden = true;
+
+    panel = document.createElement("div");
+    panel.id = "lora-stack-panel";
+    panel.className = "model-root-card";
+    panel.innerHTML = `
+      <div class="section-toolbar">
+        <div>
+          <strong>LoRA stack</strong>
+          <p>LoRAs are applied from top to bottom. Each entry has independent model and CLIP strength.</p>
+        </div>
+        <button class="button button-secondary" id="lora-stack-add" type="button">Add LoRA</button>
+      </div>
+      <div id="lora-stack-list"></div>
+      <p id="lora-stack-limit" class="history-model"></p>`;
+    legacyStrengthGrid.after(panel);
+    panel.querySelector("#lora-stack-add").addEventListener("click", () => addLoraStackRow());
+    panel.querySelector("#lora-stack-list").addEventListener("click", handleLoraStackAction);
+    panel.querySelector("#lora-stack-list").addEventListener("change", (event) => {
+      if (event.target.matches('[data-lora-name], [data-lora-enabled]')) syncLoraStackRow(event.target.closest("[data-lora-stack-row]"));
+    });
+    syncLoraStackAvailability();
+    return panel;
+  }
+
+  function makeLoraStackRow(entry = {}) {
+    const row = document.createElement("div");
+    row.className = "model-root-row";
+    row.dataset.loraStackRow = "";
+    row.innerHTML = `
+      <div class="model-root-main">
+        <label class="checkbox-field"><input type="checkbox" data-lora-enabled checked> <span>Enabled</span></label>
+        <label class="field"><span>LoRA</span><select data-lora-name></select></label>
+        <div class="field-grid field-grid-2">
+          <label class="field"><span>Model strength</span><input data-lora-model-strength type="number" min="-4" max="4" step="0.05" value="1"></label>
+          <label class="field"><span>CLIP strength</span><input data-lora-clip-strength type="number" min="-4" max="4" step="0.05" value="1"></label>
+        </div>
+      </div>
+      <div class="model-root-actions">
+        <button class="button button-quiet" type="button" data-lora-action="up" aria-label="Move LoRA up">↑</button>
+        <button class="button button-quiet" type="button" data-lora-action="down" aria-label="Move LoRA down">↓</button>
+        <button class="button button-quiet" type="button" data-lora-action="remove">Remove</button>
+      </div>`;
+
+    populateLoraRowSelect(row.querySelector("[data-lora-name]"), String(entry?.name || ""));
+    row.querySelector("[data-lora-enabled]").checked = entry?.enabled !== false;
+    row.querySelector("[data-lora-model-strength]").value = entry?.modelStrength ?? 1;
+    row.querySelector("[data-lora-clip-strength]").value = entry?.clipStrength ?? 1;
+    syncLoraStackRow(row);
+    return row;
+  }
+
+  function loraStackRows() {
+    return Array.from(document.querySelectorAll("[data-lora-stack-row]"));
+  }
+
+  function addLoraStackRow(entry = {}) {
+    const panel = ensureLoraStackUi();
+    if (!panel) return;
+    const max = maxLoraStack();
+    const rows = loraStackRows();
+    if (max <= 0) {
+      showToast("The selected model does not currently support LoRA in StableAMD.", "error");
+      return;
+    }
+    if (rows.length >= max) {
+      showToast(`This model supports at most ${max} LoRA${max === 1 ? "" : "s"} in the current StableAMD profile.`, "error");
+      return;
+    }
+    panel.querySelector("#lora-stack-list").append(makeLoraStackRow(entry));
+    syncLoraStackAvailability();
+  }
+
+  function syncLoraStackRow(row) {
+    if (!row) return;
+    const enabled = row.querySelector("[data-lora-enabled]")?.checked !== false;
+    const hasName = Boolean(row.querySelector("[data-lora-name]")?.value);
+    for (const input of row.querySelectorAll("[data-lora-model-strength], [data-lora-clip-strength]")) input.disabled = !enabled || !hasName;
+  }
+
+  function syncLoraStackAvailability() {
+    const panel = document.querySelector("#lora-stack-panel");
+    if (!panel) return;
+    const max = maxLoraStack();
+    const count = loraStackRows().length;
+    const button = panel.querySelector("#lora-stack-add");
+    if (button) button.disabled = max <= 0 || count >= max;
+    const limit = panel.querySelector("#lora-stack-limit");
+    if (limit) limit.textContent = max > 0 ? `${count}/${max} LoRA slots used` : "LoRA is not enabled for this model family yet.";
+    for (const row of loraStackRows()) syncLoraStackRow(row);
+  }
+
+  function handleLoraStackAction(event) {
+    const button = event.target.closest("[data-lora-action]");
+    const row = button?.closest("[data-lora-stack-row]");
+    if (!button || !row) return;
+    const action = button.dataset.loraAction;
+    if (action === "remove") row.remove();
+    if (action === "up" && row.previousElementSibling) row.parentElement.insertBefore(row, row.previousElementSibling);
+    if (action === "down" && row.nextElementSibling) row.parentElement.insertBefore(row.nextElementSibling, row);
+    syncLoraStackAvailability();
+  }
+
+  function collectLoraStack() {
+    const stack = [];
+    for (const row of loraStackRows()) {
+      const name = row.querySelector("[data-lora-name]")?.value || "";
+      if (!name) continue;
+      const modelStrength = Number(row.querySelector("[data-lora-model-strength]")?.value ?? 1);
+      const clipStrength = Number(row.querySelector("[data-lora-clip-strength]")?.value ?? 1);
+      stack.push({
+        name,
+        modelStrength: Number.isFinite(modelStrength) ? modelStrength : 1,
+        clipStrength: Number.isFinite(clipStrength) ? clipStrength : 1,
+        enabled: row.querySelector("[data-lora-enabled]")?.checked !== false,
+      });
+    }
+    return stack;
+  }
+
+  function renderLoraStack(entries) {
+    ensureLoraStackUi();
+    const list = document.querySelector("#lora-stack-list");
+    if (!list) return;
+    list.replaceChildren();
+    const stack = Array.isArray(entries) ? entries : [];
+    for (const entry of stack.slice(0, Math.max(0, maxLoraStack()))) list.append(makeLoraStackRow(entry));
+    syncLoraStackAvailability();
+  }
+
+  api = async function v03Api(path, options = {}) {
+    if (path === "/api/generate" && String(options?.method || "GET").toUpperCase() === "POST") {
+      let payload = {};
+      try { payload = options.body ? JSON.parse(options.body) : {}; }
+      catch { payload = {}; }
+      const loraStack = collectLoraStack();
+      delete payload.loraName;
+      delete payload.loraModelStrength;
+      delete payload.loraClipStrength;
+      if (loraStack.length) payload.loraStack = loraStack;
+      else delete payload.loraStack;
+      return baseApi(path, { ...options, body: JSON.stringify(payload) });
+    }
+    return baseApi(path, options);
+  };
+
   async function refreshGenerationOptions() {
     try {
-      const [options, catalog] = await Promise.all([
+      const [options, catalog, modelSupport] = await Promise.all([
         api("/api/generation-options"),
         api("/api/generation-profiles"),
+        api("/api/model-support"),
       ]);
       v02State.generationOptions = options || { samplers: [], schedulers: [], loras: [] };
       v02State.profileCatalog = catalog || { profiles: [] };
+      v02State.modelSupport = modelSupport || { models: [] };
       fillSelect(document.querySelector("#sampler"), options?.samplers, "euler");
       fillSelect(document.querySelector("#scheduler"), options?.schedulers, "normal");
       fillSelect(document.querySelector("#lora-select"), options?.loras, "", "None");
-      syncLoraStrengthState();
+      syncLegacyLoraStrengthState();
+      for (const select of document.querySelectorAll("[data-lora-name]")) populateLoraRowSelect(select, select.value);
       populateProfileControl(false);
+      renderModelSupportHint();
+      syncLoraStackAvailability();
     } catch (error) {
-      syncLoraStrengthState();
+      syncLegacyLoraStrengthState();
       showToast(`Generation options unavailable: ${error.message}`, "error");
     }
   }
@@ -161,19 +395,25 @@
     const record = state.history[index];
     if (!record) return;
 
-    const loraName = String(getValue(record, "loraName", "LoraName") || "");
-    const select = document.querySelector("#lora-select");
-    if (select && Array.from(select.options).some((option) => option.value === loraName)) {
-      select.value = loraName;
-    } else if (select) {
-      select.value = "";
+    const historyStack = getValue(record, "loraStack", "LoraStack");
+    if (Array.isArray(historyStack)) {
+      renderLoraStack(historyStack);
+    } else {
+      const loraName = String(getValue(record, "loraName", "LoraName") || "");
+      const modelStrength = getValue(record, "loraModelStrength", "LoraModelStrength");
+      const clipStrength = getValue(record, "loraClipStrength", "LoraClipStrength");
+      renderLoraStack(loraName ? [{ name: loraName, modelStrength: modelStrength ?? 1, clipStrength: clipStrength ?? 1, enabled: true }] : []);
     }
 
-    const modelStrength = getValue(record, "loraModelStrength", "LoraModelStrength");
-    const clipStrength = getValue(record, "loraClipStrength", "LoraClipStrength");
-    document.querySelector("#lora-model-strength").value = modelStrength ?? 1;
-    document.querySelector("#lora-clip-strength").value = clipStrength ?? 1;
-    syncLoraStrengthState();
+    const legacyName = String(getValue(record, "loraName", "LoraName") || "");
+    const legacySelect = document.querySelector("#lora-select");
+    if (legacySelect && Array.from(legacySelect.options).some((option) => option.value === legacyName)) legacySelect.value = legacyName;
+    else if (legacySelect) legacySelect.value = "";
+    const legacyModelStrength = getValue(record, "loraModelStrength", "LoraModelStrength");
+    const legacyClipStrength = getValue(record, "loraClipStrength", "LoraClipStrength");
+    document.querySelector("#lora-model-strength").value = legacyModelStrength ?? 1;
+    document.querySelector("#lora-clip-strength").value = legacyClipStrength ?? 1;
+    syncLegacyLoraStrengthState();
     if (document.querySelector("#generation-profile")) document.querySelector("#generation-profile").value = "";
   }
 
@@ -330,9 +570,14 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     ensureProfileControl();
+    ensureModelSupportHint();
+    ensureLoraStackUi();
     ensureLoraRootUi();
-    document.querySelector("#lora-select")?.addEventListener("change", syncLoraStrengthState);
-    document.querySelector("#model-select")?.addEventListener("change", () => populateProfileControl(true));
+    document.querySelector("#model-select")?.addEventListener("change", () => {
+      populateProfileControl(true);
+      renderModelSupportHint();
+      syncLoraStackAvailability();
+    });
     document.querySelector("#refresh-button")?.addEventListener("click", () => { void refreshGenerationOptions(); });
     document.querySelector('[data-page="models"]')?.addEventListener("click", () => void refreshLoraRoots());
     document.querySelector("#gallery-grid")?.addEventListener("click", (event) => {
@@ -341,7 +586,10 @@
     });
 
     const modelSelect = document.querySelector("#model-select");
-    if (modelSelect) new MutationObserver(() => populateProfileControl(false)).observe(modelSelect, { childList: true });
+    if (modelSelect) new MutationObserver(() => {
+      populateProfileControl(false);
+      renderModelSupportHint();
+    }).observe(modelSelect, { childList: true });
 
     void Promise.all([refreshGenerationOptions(), refreshLoraRoots()]);
   });
