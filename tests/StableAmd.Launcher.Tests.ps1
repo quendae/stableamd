@@ -7,6 +7,7 @@ Describe 'StableAMD one-click launcher' {
         $stopPath = Join-Path $repoRoot 'scripts/Stop-StableAMD.ps1'
         $watchPath = Join-Path $repoRoot 'scripts/Watch-StableAMD.ps1'
         $runtimeModulePath = Join-Path $repoRoot 'scripts/StableAmd.Runtime.psm1'
+        $acceptancePath = Join-Path $repoRoot 'scripts/Test-StableAMDPackage.ps1'
     }
 
     It 'ships a double-clickable Windows entry point' {
@@ -50,30 +51,48 @@ Describe 'StableAMD one-click launcher' {
         $launcher | Should -Match 'AppStatePath'
         $launcher | Should -Match "role = 'application-server'"
         $launcher | Should -Match 'WindowStyle\s+Hidden'
+        $launcher | Should -Match '"-u -s'
         $start | Should -Match "role = 'compute-backend'"
         $start | Should -Match 'WindowStyle\s+Hidden'
+        $start | Should -Match '"-u -s'
+    }
+
+    It 'keeps interactive desktop launches attached to a kill-on-close supervisor' {
+        $launcher = Get-Content $launcherPath -Raw
+        $acceptance = Get-Content $acceptancePath -Raw
+
+        $launcher | Should -Match '\[switch\]\$Detached'
+        $launcher | Should -Match 'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
+        $launcher | Should -Match 'AssignProcessToJobObject'
+        $launcher | Should -Match 'Watch-StableAMD\.ps1'
+        $launcher | Should -Match 'Ctrl\+C.*releases VRAM'
+        $acceptance | Should -Match 'Launch-StableAMD\.ps1'
+        $acceptance | Should -Match '-Detached'
     }
 
     It 'captures application stdout and stderr under the managed log directory' {
-        $script = Get-Content $launcherPath -Raw
+        $launcher = Get-Content $launcherPath -Raw
+        $watch = Get-Content $watchPath -Raw
 
-        $script | Should -Match 'LogsRoot'
-        $script | Should -Match 'RedirectStandardOutput'
-        $script | Should -Match 'RedirectStandardError'
-        $script | Should -Match 'Get-Content.+-Tail'
+        $launcher | Should -Match 'LogsRoot'
+        $launcher | Should -Match 'RedirectStandardOutput'
+        $launcher | Should -Match 'RedirectStandardError'
+        $watch | Should -Match 'Get-Content.*-Tail'
     }
 
-    It 'can stop the full StableAMD process tree while backend restarts stay backend-only' {
+    It 'hard-kills the full StableAMD process tree and verifies no repo-scoped orphan remains' {
         Test-Path $stopPath | Should -BeTrue
         $stop = Get-Content $stopPath -Raw
         $start = Get-Content $startPath -Raw
 
         $stop | Should -Match 'AppStatePath'
         $stop | Should -Match 'Get-CimInstance\s+Win32_Process'
-        $stop | Should -Match 'stableamd_server\\?\.py|stableamd_server\.py'
-        $stop | Should -Match 'run_comfy_isolated\\?\.py|run_comfy_isolated\.py'
-        $stop | Should -Match 'StoppedBackendPids'
-        $stop | Should -Match 'StoppedAppPids'
+        $stop | Should -Match 'stableamd_server'
+        $stop | Should -Match 'run_comfy_isolated'
+        $stop | Should -Match 'taskkill\.exe'
+        $stop | Should -Match '/T /F'
+        $stop | Should -Match 'RemainingManagedProcesses'
+        $stop | Should -Match 'teardown is incomplete'
         $start | Should -Match 'Stop-StableAMD\.ps1.*-BackendOnly'
     }
 
