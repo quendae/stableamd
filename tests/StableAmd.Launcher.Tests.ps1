@@ -96,15 +96,16 @@ Describe 'StableAMD one-click launcher' {
         $start | Should -Match 'Stop-StableAMD\.ps1.*-BackendOnly'
     }
 
-    It 'normalizes orphan process identities and never wraps the match collection as one fake process' {
+    It 'normalizes orphan process identities without colliding with PowerShell automatic Matches' {
         $stop = Get-Content $stopPath -Raw
 
         $stop | Should -Match 'Get-SnapshotProcessId'
         $stop | Should -Match "'ProcessId', 'Id'"
         $stop | Should -Match 'Get-SnapshotParentProcessId'
-        $stop | Should -Match '\$matches\s*=\s*@\(\)'
+        $stop | Should -Match '\$managedProcesses\s*=\s*@\(\)'
+        $stop | Should -Match 'return\s+\$managedProcesses'
+        $stop | Should -Not -Match '(?im)^\s*\$matches\s*='
         $stop | Should -Not -Match 'New-Object\s+System\.Collections\.Generic\.List\[object\]'
-        $stop | Should -Match 'return\s+\$matches'
     }
 
     It 'reports useful leftover process diagnostics instead of an empty PID' {
@@ -114,6 +115,7 @@ Describe 'StableAMD one-click launcher' {
         $stop | Should -Match 'PID\s+PPID\s+Role\s+Name'
         $stop | Should -Match 'CommandLine:'
         $stop | Should -Match 'ParentProcessId'
+        $stop | Should -Match 'Returned object type\(s\)'
         $stop | Should -Match 'State was preserved for diagnostics'
     }
 
