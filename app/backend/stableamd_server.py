@@ -10,10 +10,12 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.request import urlopen
 
 SERVICE_NAME = "StableAMD"
-API_VERSION = 1
+API_VERSION = 2
 MAX_REQUEST_BYTES = 1024 * 1024
 SUPPORTED_OUTPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -28,7 +30,7 @@ def validate_loopback_host(host: str) -> str:
         return "127.0.0.1"
     if normalized == "::1":
         return "::1"
-    raise ValueError("StableAMD v0.1 may bind only to a loopback host.")
+    raise ValueError("StableAMD may bind only to a loopback host.")
 
 
 def resolve_output_image(repo_root: Path, requested_path: str) -> Path:
@@ -142,6 +144,12 @@ class PowerShellBridge:
                 return nested if isinstance(nested, list) else [nested]
         return result if isinstance(result, list) else [result]
 
+    @staticmethod
+    def _normalize_list_payload(result: Any) -> list[Any]:
+        if result is None:
+            return []
+        return result if isinstance(result, list) else [result]
+
     def models(self) -> Any:
         return self._normalize_model_payload(self._run_script("List-Models.ps1"))
 
@@ -149,18 +157,22 @@ class PowerShellBridge:
         return self.models()
 
     def model_roots(self) -> Any:
-        result = self._run_script("Get-ModelRoots.ps1")
-        if result is None:
-            return []
-        return result if isinstance(result, list) else [result]
+        return self._normalize_list_payload(self._run_script("Get-ModelRoots.ps1"))
 
     def browse_model_root(self) -> Any:
         result = self._run_script("Browse-ModelRoot.ps1")
         return result or {"cancelled": True, "path": None}
 
+    def lora_roots(self) -> Any:
+        return self._normalize_list_payload(self._run_script("Get-LoraRoots.ps1"))
+
+    def browse_lora_root(self) -> Any:
+        result = self._run_script("Browse-LoraRoot.ps1")
+        return result or {"cancelled": True, "path": None}
+
     def _backend_restart_required(self) -> bool:
         status = self.status()
-        return isinstance(status, dict) and bool(status.get("Healthy"))
+        return isinstance(status, dict) and bool(status.get("Healthy", status.get("healthy", False)))
 
     def add_model_root(self, path: str) -> Any:
         result = self._run_script("Add-ModelRoot.ps1", [("Path", path)]) or {}
@@ -177,6 +189,20 @@ class PowerShellBridge:
         if isinstance(result, dict):
             return {**result, "restartRequired": restart_required, "models": models}
         return {"removed": False, "path": path, "restartRequired": False, "models": models}
+
+    def add_lora_root(self, path: str) -> Any:
+        result = self._run_script("Add-LoraRoot.ps1", [("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("added") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"added": False, "path": path, "restartRequired": False}
+
+    def remove_lora_root(self, path: str) -> Any:
+        result = self._run_script("Remove-LoraRoot.ps1", [("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("removed") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"removed": False, "path": path, "restartRequired": False}
 
     def install_model(self, request: dict[str, Any]) -> Any:
         source = str(request["source"]).lower()
@@ -208,6 +234,61 @@ class PowerShellBridge:
             return []
         return result if isinstance(result, list) else [result]
 
+    def generation_profiles(self) -> dict[str, Any]:
+        path = self.repo_root / "config" / "generation-profiles.v0.2.json"
+        if not path.is_file():
+            raise StableAmdBridgeError(f"Generation profile catalog is missing: {path}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StableAmdBridgeError(f"Generation profile catalog is invalid: {exc}") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("profiles"), list):
+            raise StableAmdBridgeError("Generation profile catalog must contain a profiles array.")
+        return payload
+
+    def _backend_base_url(self) -> str:
+        status = self.status()
+        if not isinstance(status, dict) or not bool(status.get("Healthy", status.get("healthy", False))):
+            raise StableAmdBridgeError("StableAMD compute backend is not healthy.")
+        raw_url = str(status.get("Url", status.get("url", ""))).strip()
+        parsed = urlsplit(raw_url)
+        if parsed.scheme != "http" or (parsed.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+            raise StableAmdBridgeError("StableAMD backend state did not contain a safe loopback URL.")
+        return raw_url.rstrip("/") + "/"
+
+    def _comfy_json(self, relative_path: str) -> Any:
+        url = self._backend_base_url() + relative_path.lstrip("/")
+        try:
+            with urlopen(url, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (OSError, URLError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StableAmdBridgeError(f"Could not read ComfyUI generation metadata: {exc}") from exc
+
+    @staticmethod
+    def _comfy_choice_list(payload: Any, node_name: str, input_name: str) -> list[str]:
+        if not isinstance(payload, dict):
+            return []
+        node = payload.get(node_name)
+        if not isinstance(node, dict):
+            return []
+        required = node.get("input", {}).get("required", {})
+        spec = required.get(input_name)
+        if not isinstance(spec, list) or not spec:
+            return []
+        choices = spec[0]
+        if not isinstance(choices, list):
+            return []
+        return [str(value) for value in choices if str(value).strip()]
+
+    def generation_options(self) -> dict[str, list[str]]:
+        ksampler = self._comfy_json("object_info/KSampler")
+        lora_loader = self._comfy_json("object_info/LoraLoader")
+        return {
+            "samplers": self._comfy_choice_list(ksampler, "KSampler", "sampler_name"),
+            "schedulers": self._comfy_choice_list(ksampler, "KSampler", "scheduler"),
+            "loras": self._comfy_choice_list(lora_loader, "LoraLoader", "lora_name"),
+        }
+
     def generate(self, request: dict[str, Any]) -> Any:
         parameters: list[tuple[str, Any]] = [("Prompt", request["prompt"])]
         mapping = {
@@ -220,6 +301,9 @@ class PowerShellBridge:
             "seed": "Seed",
             "samplerName": "SamplerName",
             "scheduler": "Scheduler",
+            "loraName": "LoraName",
+            "loraModelStrength": "LoraModelStrength",
+            "loraClipStrength": "LoraClipStrength",
             "startBackendIfNeeded": "StartBackendIfNeeded",
         }
         for source, target in mapping.items():
@@ -270,11 +354,14 @@ class StableAmdApi:
         "seed",
         "samplerName",
         "scheduler",
+        "loraName",
+        "loraModelStrength",
+        "loraClipStrength",
         "startBackendIfNeeded",
     }
     _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
     _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
-    _model_root_fields = {"path"}
+    _root_fields = {"path"}
 
     def __init__(self, bridge: Any):
         self.bridge = bridge
@@ -298,13 +385,13 @@ class StableAmdApi:
             raise ValueError(f"Model install field '{field}' must be a non-empty string.")
         return value.strip()
 
-    def _validate_model_root(self, request: dict[str, Any]) -> str:
-        unsupported = sorted(set(request) - self._model_root_fields)
+    def _validate_root(self, request: dict[str, Any], label: str) -> str:
+        unsupported = sorted(set(request) - self._root_fields)
         if unsupported:
-            raise ValueError("Unsupported model folder field(s): " + ", ".join(unsupported))
+            raise ValueError(f"Unsupported {label} folder field(s): " + ", ".join(unsupported))
         value = request.get("path")
         if not isinstance(value, str) or not value.strip():
-            raise ValueError("Model folder path must be a non-empty string.")
+            raise ValueError(f"{label} folder path must be a non-empty string.")
         return value.strip()
 
     def _validate_model_install(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -337,6 +424,24 @@ class StableAmdApi:
         request["source"] = source
         return request
 
+    def _validate_generation(self, request: dict[str, Any]) -> dict[str, Any]:
+        unsupported = sorted(set(request) - self._generation_fields)
+        if unsupported:
+            raise ValueError("Unsupported generation field(s): " + ", ".join(unsupported))
+        prompt = request.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("Generation prompt must be a non-empty string.")
+        if "loraName" in request and request["loraName"] is not None and not isinstance(request["loraName"], str):
+            raise ValueError("loraName must be a string.")
+        for field in ("loraModelStrength", "loraClipStrength"):
+            if field in request:
+                value = request[field]
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"{field} must be numeric.")
+                if value < -100 or value > 100:
+                    raise ValueError(f"{field} must be between -100 and 100.")
+        return request
+
     def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
         method = (method or "").upper()
         parsed = urlsplit(target)
@@ -348,6 +453,10 @@ class StableAmdApi:
                 return 200, {"service": SERVICE_NAME, "apiVersion": API_VERSION, "status": "ok"}
             if method == "GET" and path == "/api/status":
                 return 200, self.bridge.status()
+            if method == "GET" and path == "/api/generation-options":
+                return 200, self.bridge.generation_options()
+            if method == "GET" and path == "/api/generation-profiles":
+                return 200, self.bridge.generation_profiles()
             if method == "GET" and path == "/api/models":
                 return 200, self.bridge.models()
             if method == "POST" and path == "/api/models/scan":
@@ -359,11 +468,22 @@ class StableAmdApi:
                 self._decode_json(body)
                 return 200, self.bridge.browse_model_root()
             if method == "POST" and path == "/api/model-roots":
-                root = self._validate_model_root(self._decode_json(body))
+                root = self._validate_root(self._decode_json(body), "Model")
                 return 200, self.bridge.add_model_root(root)
             if method == "POST" and path == "/api/model-roots/remove":
-                root = self._validate_model_root(self._decode_json(body))
+                root = self._validate_root(self._decode_json(body), "Model")
                 return 200, self.bridge.remove_model_root(root)
+            if method == "GET" and path == "/api/lora-roots":
+                return 200, self.bridge.lora_roots()
+            if method == "POST" and path == "/api/lora-roots/browse":
+                self._decode_json(body)
+                return 200, self.bridge.browse_lora_root()
+            if method == "POST" and path == "/api/lora-roots":
+                root = self._validate_root(self._decode_json(body), "LoRA")
+                return 200, self.bridge.add_lora_root(root)
+            if method == "POST" and path == "/api/lora-roots/remove":
+                root = self._validate_root(self._decode_json(body), "LoRA")
+                return 200, self.bridge.remove_lora_root(root)
             if method == "POST" and path == "/api/models/install":
                 request = self._validate_model_install(self._decode_json(body))
                 return 200, self.bridge.install_model(request)
@@ -388,13 +508,7 @@ class StableAmdApi:
                 self._decode_json(body)
                 return 200, self.bridge.stop_backend()
             if method == "POST" and path == "/api/generate":
-                request = self._decode_json(body)
-                unsupported = sorted(set(request) - self._generation_fields)
-                if unsupported:
-                    return 400, {"error": "Unsupported generation field(s): " + ", ".join(unsupported)}
-                prompt = request.get("prompt")
-                if not isinstance(prompt, str) or not prompt.strip():
-                    return 400, {"error": "Generation prompt must be a non-empty string."}
+                request = self._validate_generation(self._decode_json(body))
                 return 200, self.bridge.generate(request)
         except ValueError as exc:
             return 400, {"error": str(exc)}
@@ -407,7 +521,7 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
     resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
 
     class StableAmdRequestHandler(BaseHTTPRequestHandler):
-        server_version = "StableAMD/0.1"
+        server_version = "StableAMD/0.2"
 
         def _send_json(self, status: int, payload: Any) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -532,7 +646,7 @@ def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
 
 def main() -> int:
     default_repo_root = Path(__file__).resolve().parents[2]
-    parser = argparse.ArgumentParser(description="StableAMD v0.1 loopback application API and web UI")
+    parser = argparse.ArgumentParser(description="StableAMD v0.2 loopback application API and web UI")
     parser.add_argument("--repo-root", default=str(default_repo_root))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8188)

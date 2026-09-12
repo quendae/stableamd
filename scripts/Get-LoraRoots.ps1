@@ -1,0 +1,8 @@
+[CmdletBinding()]
+param([string]$RepoRoot = '')
+
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
+$RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.ModelRoots.psm1') -Force
+return @(Get-StableAmdLoraRootRecords -RepoRoot $RepoRoot)

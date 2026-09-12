@@ -13,6 +13,9 @@ param(
     [long]$Seed = -1,
     [string]$SamplerName = '',
     [string]$Scheduler = '',
+    [string]$LoraName = '',
+    [double]$LoraModelStrength = 1.0,
+    [double]$LoraClipStrength = 1.0,
     [int]$GenerationTimeoutSeconds = 900,
     [string]$RepoRoot = '',
     [switch]$StartBackendIfNeeded
@@ -156,7 +159,7 @@ if (-not (Test-Path $selectedModelPath -PathType Leaf)) {
     throw "Selected model no longer exists: '$selectedModelPath'."
 }
 if ([string]$model.family -ne 'sdxl') {
-    throw "StableAMD v0.1 txt2img currently supports SDXL models only. Selected model family: '$($model.family)'."
+    throw "StableAMD txt2img currently supports SDXL models only. Selected model family: '$($model.family)'."
 }
 
 $resolvedWidth = if ($Width -gt 0) { $Width } else { [int]$config.generation.defaultWidth }
@@ -184,28 +187,46 @@ if ([string]::IsNullOrWhiteSpace([string]$checkpointName)) {
     throw "ComfyUI does not expose the selected model '$selectedModelPath'. Restart StableAMD after changing model roots."
 }
 
-# A unique SaveImage prefix gives StableAMD a second reliable correlation key
-# when ComfyUI reports prompt success but omits output-node UI metadata from
-# /history. It also guarantees that the fallback can never select an older
-# image from another generation.
+$resolvedLoraName = ''
+if (-not [string]::IsNullOrWhiteSpace($LoraName)) {
+    $loraInfo = Invoke-RestMethod -Uri "${baseUrl}object_info/LoraLoader" -Method Get -TimeoutSec 30
+    $loraNode = $loraInfo.PSObject.Properties['LoraLoader']
+    if ($null -eq $loraNode) {
+        throw 'ComfyUI object_info did not return LoraLoader metadata.'
+    }
+    $loraChoices = @($loraNode.Value.input.required.lora_name[0])
+    $matches = @($loraChoices | Where-Object { [string]$_ -ieq $LoraName })
+    if ($matches.Count -ne 1) {
+        throw "ComfyUI does not expose LoRA '$LoraName'. Restart StableAMD after changing LoRA roots."
+    }
+    $resolvedLoraName = [string]$matches[0]
+}
+
 $generationToken = [guid]::NewGuid().ToString('N')
 $filenamePrefix = "StableAMD_SDXL_$generationToken"
 
-$workflow = New-StableAmdSdxlWorkflow `
-    -CheckpointName $checkpointName `
-    -Prompt $Prompt `
-    -NegativePrompt $NegativePrompt `
-    -Width $resolvedWidth `
-    -Height $resolvedHeight `
-    -Steps $resolvedSteps `
-    -Cfg $resolvedCfg `
-    -Seed $resolvedSeed `
-    -SamplerName $resolvedSampler `
-    -Scheduler $resolvedScheduler `
-    -FilenamePrefix $filenamePrefix
+$workflowParameters = @{
+    CheckpointName = $checkpointName
+    Prompt = $Prompt
+    NegativePrompt = $NegativePrompt
+    Width = $resolvedWidth
+    Height = $resolvedHeight
+    Steps = $resolvedSteps
+    Cfg = $resolvedCfg
+    Seed = $resolvedSeed
+    SamplerName = $resolvedSampler
+    Scheduler = $resolvedScheduler
+    FilenamePrefix = $filenamePrefix
+}
+if (-not [string]::IsNullOrWhiteSpace($resolvedLoraName)) {
+    $workflowParameters.LoraName = $resolvedLoraName
+    $workflowParameters.LoraModelStrength = $LoraModelStrength
+    $workflowParameters.LoraClipStrength = $LoraClipStrength
+}
+$workflow = New-StableAmdSdxlWorkflow @workflowParameters
 
-# The normal product flow always builds this fixed SDXL graph internally:
-# CheckpointLoaderSimple -> CLIPTextEncode -> KSampler -> VAEDecode -> SaveImage.
+# StableAMD owns the graph shape. v0.2 optionally inserts LoraLoader between
+# CheckpointLoaderSimple and the CLIP/KSampler consumers.
 $clientId = [guid]::NewGuid().ToString('N')
 $payload = [ordered]@{
     prompt = $workflow
@@ -235,6 +256,7 @@ Write-StableAmdProgressEvent -Stage 'queued' -Message "Queued as $promptId" -Pro
 
 $nodeStages = @{
     '4' = @('loading-model', 'Loading checkpoint into GPU memory...')
+    '10' = @('loading-lora', 'Applying LoRA...')
     '6' = @('encoding', 'Encoding prompt...')
     '7' = @('encoding', 'Encoding negative prompt...')
     '5' = @('latent', 'Preparing latent image...')
@@ -383,9 +405,11 @@ if ([string]::IsNullOrWhiteSpace([string]$imagePath)) {
 
 $generationSeconds = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
 $createdAtUtc = [DateTime]::UtcNow.ToString('o')
+$loraModelMetadata = if ([string]::IsNullOrWhiteSpace($resolvedLoraName)) { $null } else { $LoraModelStrength }
+$loraClipMetadata = if ([string]::IsNullOrWhiteSpace($resolvedLoraName)) { $null } else { $LoraClipStrength }
 
 $historyRecord = [pscustomobject]@{
-    schemaVersion = 1
+    schemaVersion = 2
     createdAtUtc = $createdAtUtc
     promptId = $promptId
     prompt = $Prompt
@@ -401,6 +425,9 @@ $historyRecord = [pscustomobject]@{
     seed = $resolvedSeed
     sampler = $resolvedSampler
     scheduler = $resolvedScheduler
+    loraName = $resolvedLoraName
+    loraModelStrength = $loraModelMetadata
+    loraClipStrength = $loraClipMetadata
     generationSeconds = $generationSeconds
     imagePath = $imagePath
     backendUrl = $baseUrl
@@ -424,6 +451,9 @@ return [pscustomobject]@{
     Seed = $resolvedSeed
     Sampler = $resolvedSampler
     Scheduler = $resolvedScheduler
+    LoraName = $resolvedLoraName
+    LoraModelStrength = $loraModelMetadata
+    LoraClipStrength = $loraClipMetadata
     GenerationSeconds = $generationSeconds
     ImagePath = $imagePath
     HistoryPath = $historyPath

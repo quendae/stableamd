@@ -15,53 +15,109 @@ $PollMilliseconds = [Math]::Max(50, $PollMilliseconds)
 
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
-$backend = Read-StableAmdBackendState -Path $paths.BackendStatePath
-$app = Read-StableAmdBackendState -Path $paths.AppStatePath
 
 Write-Host ''
 Write-Host 'StableAMD live diagnostics' -ForegroundColor Cyan
-if ($null -ne $backend) {
-    Write-Host "Compute backend PID: $($backend.pid)" -ForegroundColor Green
-    Write-Host "Compute backend URL: $($backend.url)" -ForegroundColor DarkGray
-}
-else {
-    Write-Host 'Compute backend state: not running / not tracked' -ForegroundColor Yellow
-}
-if ($null -ne $app) {
-    Write-Host "Application PID: $($app.pid)" -ForegroundColor Green
-    Write-Host "Application URL: $($app.url)" -ForegroundColor DarkGray
-}
-else {
-    Write-Host 'Application state: not running / not tracked' -ForegroundColor Yellow
-}
 
-$logEntries = @()
+$script:logEntries = @()
+$script:lastBackendPid = $null
+$script:lastAppPid = $null
+
 function Add-StableAmdLogEntry {
     param(
         [psobject]$State,
         [string]$PropertyName,
-        [string]$Label
+        [string]$Label,
+        [switch]$Announce
     )
 
-    if ($null -eq $State) { return }
+    if ($null -eq $State) { return $false }
     $property = $State.PSObject.Properties[$PropertyName]
-    if ($null -eq $property) { return }
+    if ($null -eq $property) { return $false }
     $path = [string]$property.Value
-    if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path $path -PathType Leaf)) { return }
-    if (@($script:logEntries | Where-Object { $_.Path -eq $path }).Count -gt 0) { return }
+    if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path $path -PathType Leaf)) { return $false }
+    if (@($script:logEntries | Where-Object { $_.Path -eq $path }).Count -gt 0) { return $false }
 
-    $script:logEntries += [pscustomobject]@{
+    $entry = [pscustomobject]@{
         Path = $path
         Label = $Label
         Position = [long]0
         Pending = ''
     }
+
+    # A newly discovered file may already contain backend startup output. Show a
+    # compact tail once, then continue from EOF so a refresh does not dump an
+    # entire historical log into the supervisor terminal.
+    $tailLines = @(Get-Content -LiteralPath $path -Tail ([Math]::Max(0, $Tail)) -ErrorAction SilentlyContinue)
+    if ($Announce) {
+        Write-Host ("[watcher] New log source: [{0}] {1}" -f $Label, $path) -ForegroundColor DarkCyan
+    }
+    foreach ($line in $tailLines) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+            Write-Host ("[{0}] {1}" -f $Label, $line)
+        }
+    }
+    try {
+        $entry.Position = [long](Get-Item -LiteralPath $path -ErrorAction Stop).Length
+    }
+    catch {
+        $entry.Position = 0
+    }
+
+    $script:logEntries += $entry
+    return $true
 }
 
-Add-StableAmdLogEntry -State $backend -PropertyName 'stdoutLog' -Label 'backend stdout'
-Add-StableAmdLogEntry -State $backend -PropertyName 'stderrLog' -Label 'backend stderr'
-Add-StableAmdLogEntry -State $app -PropertyName 'stdoutLog' -Label 'app stdout'
-Add-StableAmdLogEntry -State $app -PropertyName 'stderrLog' -Label 'app stderr'
+function Sync-StableAmdTrackedLogs {
+    param([switch]$Initial)
+
+    $backend = Read-StableAmdBackendState -Path $paths.BackendStatePath
+    $app = Read-StableAmdBackendState -Path $paths.AppStatePath
+
+    if ($null -ne $backend) {
+        $backendPid = [int]$backend.pid
+        if ($null -eq $script:lastBackendPid) {
+            $script:lastBackendPid = $backendPid
+            if ($Initial) {
+                Write-Host "Compute backend PID: $backendPid" -ForegroundColor Green
+                Write-Host "Compute backend URL: $($backend.url)" -ForegroundColor DarkGray
+            }
+        }
+        elseif ($script:lastBackendPid -ne $backendPid) {
+            Write-Host ("[watcher] Backend restarted / refreshed: PID {0} -> {1}" -f $script:lastBackendPid, $backendPid) -ForegroundColor Yellow
+            $script:lastBackendPid = $backendPid
+        }
+
+        Add-StableAmdLogEntry -State $backend -PropertyName 'stdoutLog' -Label 'backend stdout' -Announce:(-not $Initial) | Out-Null
+        Add-StableAmdLogEntry -State $backend -PropertyName 'stderrLog' -Label 'backend stderr' -Announce:(-not $Initial) | Out-Null
+    }
+    elseif ($Initial) {
+        Write-Host 'Compute backend state: not running / not tracked' -ForegroundColor Yellow
+    }
+
+    if ($null -ne $app) {
+        $appPid = [int]$app.pid
+        if ($null -eq $script:lastAppPid) {
+            $script:lastAppPid = $appPid
+            if ($Initial) {
+                Write-Host "Application PID: $appPid" -ForegroundColor Green
+                Write-Host "Application URL: $($app.url)" -ForegroundColor DarkGray
+            }
+        }
+        elseif ($script:lastAppPid -ne $appPid) {
+            Write-Host ("[watcher] Application restarted: PID {0} -> {1}" -f $script:lastAppPid, $appPid) -ForegroundColor Yellow
+            $script:lastAppPid = $appPid
+        }
+
+        Add-StableAmdLogEntry -State $app -PropertyName 'stdoutLog' -Label 'app stdout' -Announce:(-not $Initial) | Out-Null
+        Add-StableAmdLogEntry -State $app -PropertyName 'stderrLog' -Label 'app stderr' -Announce:(-not $Initial) | Out-Null
+    }
+    elseif ($Initial) {
+        Write-Host 'Application state: not running / not tracked' -ForegroundColor Yellow
+    }
+}
+
+Sync-StableAmdTrackedLogs -Initial
 
 if ($logEntries.Count -eq 0) {
     throw 'No active StableAMD log files were found. Start StableAMD first.'
@@ -74,31 +130,21 @@ foreach ($entry in $logEntries) {
 }
 Write-Host ''
 
-# Show a small initial tail from every log instead of blocking forever on the
-# first path. The old Get-Content -Path file1,file2 -Wait form waits on file1
-# and never advances to quiet/active siblings, which hid ComfyUI progress.
-foreach ($entry in $logEntries) {
-    $tailLines = @(Get-Content -LiteralPath $entry.Path -Tail ([Math]::Max(0, $Tail)) -ErrorAction SilentlyContinue)
-    foreach ($line in $tailLines) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
-            Write-Host ("[{0}] {1}" -f $entry.Label, $line)
-        }
-    }
-    try {
-        $entry.Position = [long](Get-Item -LiteralPath $entry.Path -ErrorAction Stop).Length
-    }
-    catch {
-        $entry.Position = 0
-    }
-}
-
 $utf8 = New-Object System.Text.UTF8Encoding($false, $false)
 
-# Poll each active file by byte offset. This follows stdout and stderr from both
-# managed processes at the same time and treats carriage returns as progress
-# updates, so tqdm/ComfyUI sampler output becomes visible step-by-step.
+# Poll all known files by byte offset. On every pass also reread the runtime
+# state files so an in-app backend refresh can switch to a new PID and new log
+# files without leaving the launcher attached to stale logs.
 while ($true) {
-    foreach ($entry in $logEntries) {
+    try {
+        Sync-StableAmdTrackedLogs
+    }
+    catch {
+        # State files are briefly absent/replaced during restart. Keep the
+        # supervisor alive and retry on the next poll.
+    }
+
+    foreach ($entry in @($logEntries)) {
         try {
             $info = Get-Item -LiteralPath $entry.Path -ErrorAction Stop
             $length = [long]$info.Length
@@ -130,7 +176,7 @@ while ($true) {
 
                     # ComfyUI/tqdm refreshes one terminal line with CR while
                     # ordinary Python logs use LF/CRLF. Treat all three as an
-                    # event boundary so every sampling update can be inspected.
+                    # event boundary so every sampling update is visible.
                     $parts = @([regex]::Split([string]$entry.Pending, "`r`n|`n|`r"))
                     $hasTerminator = ([string]$entry.Pending -match "(`r`n|`n|`r)$")
                     $emitCount = if ($hasTerminator) { $parts.Count } else { [Math]::Max(0, $parts.Count - 1) }
@@ -155,8 +201,8 @@ while ($true) {
             }
         }
         catch {
-            # A log can briefly disappear during a backend restart. The next
-            # poll will pick it up again without terminating the supervisor.
+            # Old logs can disappear after a backend restart. Their absence is
+            # harmless because Sync-StableAmdTrackedLogs follows the new state.
         }
     }
 

@@ -134,4 +134,14 @@ Describe 'StableAMD one-click launcher' {
         $watch | Should -Not -Match 'Get-Content\s+-Path\s+@\(\$logs\).*?-Wait'
         $watch | Should -Match 'Ctrl\+C'
     }
+
+    It 'discovers replacement backend log files after an in-app backend refresh' {
+        $watch = Get-Content $watchPath -Raw
+
+        $watch | Should -Match 'Sync-StableAmdTrackedLogs'
+        $watch | Should -Match 'Read-StableAmdBackendState\s+-Path\s+\$paths\.BackendStatePath'
+        $watch | Should -Match 'Read-StableAmdBackendState\s+-Path\s+\$paths\.AppStatePath'
+        $watch | Should -Match 'Backend restarted / refreshed'
+        $watch | Should -Match 'New log source'
+    }
 }

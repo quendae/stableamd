@@ -19,5 +19,11 @@
       ".runtime/stableamd/models/checkpoints",
       ".runtime/SwarmUI/Models/Stable-Diffusion"
     ]
+  },
+  "loras": {
+    "roots": [
+      ".runtime/stableamd/models/loras",
+      ".runtime/SwarmUI/Models/Lora"
+    ]
   }
 }

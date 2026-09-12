@@ -26,6 +26,12 @@ function New-StableAmdDefaultConfig {
                 '.runtime/SwarmUI/Models/Stable-Diffusion'
             )
         }
+        loras = [pscustomobject]@{
+            roots = @(
+                '.runtime/stableamd/models/loras',
+                '.runtime/SwarmUI/Models/Lora'
+            )
+        }
     }
 }
 
@@ -67,6 +73,7 @@ function Get-StableAmdRuntimePaths {
         ModelsRegistryPath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models.json'))
         ModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models'))
         CheckpointsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/checkpoints'))
+        LorasRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/loras'))
         OutputRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'output'))
         HistoryRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'history'))
         LogsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'logs'))
@@ -90,6 +97,7 @@ function Initialize-StableAmdRuntimeDirectories {
         $Paths.StableAmdRoot,
         $Paths.ModelsRoot,
         $Paths.CheckpointsRoot,
+        $Paths.LorasRoot,
         $Paths.OutputRoot,
         $Paths.HistoryRoot,
         $Paths.LogsRoot,
@@ -97,6 +105,28 @@ function Initialize-StableAmdRuntimeDirectories {
     )) {
         New-Item -ItemType Directory -Path $path -Force | Out-Null
     }
+}
+
+function Add-StableAmdMissingConfigDefaults {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [psobject]$Config
+    )
+
+    if ($null -eq $Config.PSObject.Properties['loras'] -or $null -eq $Config.loras) {
+        $Config | Add-Member -MemberType NoteProperty -Name loras -Value ([pscustomobject]@{
+            roots = @(
+                '.runtime/stableamd/models/loras',
+                '.runtime/SwarmUI/Models/Lora'
+            )
+        }) -Force
+    }
+    elseif ($null -eq $Config.loras.PSObject.Properties['roots'] -or $null -eq $Config.loras.roots) {
+        $Config.loras | Add-Member -MemberType NoteProperty -Name roots -Value @('.runtime/stableamd/models/loras') -Force
+    }
+
+    return $Config
 }
 
 function Read-StableAmdConfig {
@@ -111,15 +141,18 @@ function Read-StableAmdConfig {
     $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
     $configPath = if ([string]::IsNullOrWhiteSpace($Path)) { $paths.ConfigPath } else { Resolve-StableAmdPath -Path $Path -RepoRoot $RepoRoot }
 
+    $config = $null
     if (Test-Path $configPath) {
-        return Get-Content -Path $configPath -Raw | ConvertFrom-Json
+        $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+    }
+    elseif (Test-Path $paths.DefaultConfigPath) {
+        $config = Get-Content -Path $paths.DefaultConfigPath -Raw | ConvertFrom-Json
+    }
+    else {
+        $config = New-StableAmdDefaultConfig
     }
 
-    if (Test-Path $paths.DefaultConfigPath) {
-        return Get-Content -Path $paths.DefaultConfigPath -Raw | ConvertFrom-Json
-    }
-
-    return New-StableAmdDefaultConfig
+    return Add-StableAmdMissingConfigDefaults -Config $config
 }
 
 function Write-StableAmdConfig {

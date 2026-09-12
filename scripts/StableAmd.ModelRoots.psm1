@@ -2,40 +2,43 @@ Set-StrictMode -Version 2.0
 
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
 
-function Get-StableAmdModelsConfig {
+function Get-StableAmdRootConfig {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][psobject]$Config
+        [Parameter(Mandatory = $true)][psobject]$Config,
+        [Parameter(Mandatory = $true)][ValidateSet('models', 'loras')][string]$Kind
     )
 
-    $modelsProperty = $Config.PSObject.Properties['models']
-    if ($null -eq $modelsProperty -or $null -eq $modelsProperty.Value) {
-        $models = [pscustomobject]@{ roots = @() }
-        $Config | Add-Member -MemberType NoteProperty -Name models -Value $models -Force
-        return $models
+    $property = $Config.PSObject.Properties[$Kind]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        $value = [pscustomobject]@{ roots = @() }
+        $Config | Add-Member -MemberType NoteProperty -Name $Kind -Value $value -Force
+        return $value
     }
 
-    $models = $modelsProperty.Value
-    $rootsProperty = $models.PSObject.Properties['roots']
+    $value = $property.Value
+    $rootsProperty = $value.PSObject.Properties['roots']
     if ($null -eq $rootsProperty -or $null -eq $rootsProperty.Value) {
-        $models | Add-Member -MemberType NoteProperty -Name roots -Value @() -Force
+        $value | Add-Member -MemberType NoteProperty -Name roots -Value @() -Force
     }
-    return $models
+    return $value
 }
 
-function Get-StableAmdResolvedModelRoots {
+function Get-StableAmdResolvedRoots {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
-        [Parameter(Mandatory = $true)][psobject]$Config
+        [Parameter(Mandatory = $true)][psobject]$Config,
+        [Parameter(Mandatory = $true)][ValidateSet('models', 'loras')][string]$Kind
     )
 
     $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
-    $models = Get-StableAmdModelsConfig -Config $Config
+    $configSection = Get-StableAmdRootConfig -Config $Config -Kind $Kind
+    $managedRoot = if ($Kind -eq 'models') { $paths.CheckpointsRoot } else { $paths.LorasRoot }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     $result = @()
 
-    foreach ($rawRoot in @($models.roots)) {
+    foreach ($rawRoot in @($configSection.roots)) {
         $raw = [string]$rawRoot
         if ([string]::IsNullOrWhiteSpace($raw)) { continue }
         $resolved = Resolve-StableAmdPath -Path $raw -RepoRoot $RepoRoot
@@ -44,7 +47,8 @@ function Get-StableAmdResolvedModelRoots {
             raw = $raw
             path = $resolved
             exists = [bool](Test-Path $resolved -PathType Container)
-            managed = $resolved.Equals($paths.CheckpointsRoot, [StringComparison]::OrdinalIgnoreCase)
+            managed = $resolved.Equals($managedRoot, [StringComparison]::OrdinalIgnoreCase)
+            kind = $Kind
         }
     }
 
@@ -53,69 +57,81 @@ function Get-StableAmdResolvedModelRoots {
 
 function Get-StableAmdModelRootRecords {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$RepoRoot
-    )
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
 
     $repo = [IO.Path]::GetFullPath($RepoRoot)
     $config = Read-StableAmdConfig -RepoRoot $repo
-    return @(Get-StableAmdResolvedModelRoots -RepoRoot $repo -Config $config)
+    return @(Get-StableAmdResolvedRoots -RepoRoot $repo -Config $config -Kind 'models')
 }
 
-function Add-StableAmdModelRoot {
+function Get-StableAmdLoraRootRecords {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $repo = [IO.Path]::GetFullPath($RepoRoot)
+    $config = Read-StableAmdConfig -RepoRoot $repo
+    return @(Get-StableAmdResolvedRoots -RepoRoot $repo -Config $config -Kind 'loras')
+}
+
+function Add-StableAmdRoot {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
-        [Parameter(Mandatory = $true)][string]$Path
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][ValidateSet('models', 'loras')][string]$Kind
     )
 
     $repo = [IO.Path]::GetFullPath($RepoRoot)
+    $label = if ($Kind -eq 'models') { 'Model' } else { 'LoRA' }
     if ([string]::IsNullOrWhiteSpace($Path)) {
-        throw 'Model folder path cannot be empty.'
+        throw "$label folder path cannot be empty."
     }
     $resolved = Resolve-StableAmdPath -Path $Path -RepoRoot $repo
     if (-not (Test-Path $resolved -PathType Container)) {
-        throw "Model folder was not found: '$resolved'."
+        throw "$label folder was not found: '$resolved'."
     }
 
     $runtimePaths = Get-StableAmdRuntimePaths -RepoRoot $repo
     Initialize-StableAmdRuntimeDirectories -Paths $runtimePaths
     $config = Read-StableAmdConfig -RepoRoot $repo
-    $models = Get-StableAmdModelsConfig -Config $config
-    $existing = @(Get-StableAmdResolvedModelRoots -RepoRoot $repo -Config $config)
+    $section = Get-StableAmdRootConfig -Config $config -Kind $Kind
+    $existing = @(Get-StableAmdResolvedRoots -RepoRoot $repo -Config $config -Kind $Kind)
     if (@($existing | Where-Object { $_.path.Equals($resolved, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
-        return [pscustomobject]@{ added = $false; path = $resolved; reason = 'already-configured' }
+        return [pscustomobject]@{ added = $false; path = $resolved; reason = 'already-configured'; kind = $Kind }
     }
 
-    $roots = @($models.roots)
+    $roots = @($section.roots)
     $roots += $resolved
-    $models.roots = @($roots)
+    $section.roots = @($roots)
     Write-StableAmdConfig -Path $runtimePaths.ConfigPath -Config $config
-    return [pscustomobject]@{ added = $true; path = $resolved; reason = 'added' }
+    return [pscustomobject]@{ added = $true; path = $resolved; reason = 'added'; kind = $Kind }
 }
 
-function Remove-StableAmdModelRoot {
+function Remove-StableAmdRoot {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
-        [Parameter(Mandatory = $true)][string]$Path
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][ValidateSet('models', 'loras')][string]$Kind
     )
 
     $repo = [IO.Path]::GetFullPath($RepoRoot)
+    $label = if ($Kind -eq 'models') { 'Model' } else { 'LoRA' }
     if ([string]::IsNullOrWhiteSpace($Path)) {
-        throw 'Model folder path cannot be empty.'
+        throw "$label folder path cannot be empty."
     }
     $resolved = Resolve-StableAmdPath -Path $Path -RepoRoot $repo
     $runtimePaths = Get-StableAmdRuntimePaths -RepoRoot $repo
-    if ($resolved.Equals($runtimePaths.CheckpointsRoot, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'The StableAMD managed checkpoint folder cannot be removed.'
+    $managedRoot = if ($Kind -eq 'models') { $runtimePaths.CheckpointsRoot } else { $runtimePaths.LorasRoot }
+    if ($resolved.Equals($managedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "The StableAMD managed $($label.ToLowerInvariant()) folder cannot be removed."
     }
 
     $config = Read-StableAmdConfig -RepoRoot $repo
-    $models = Get-StableAmdModelsConfig -Config $config
+    $section = Get-StableAmdRootConfig -Config $config -Kind $Kind
     $kept = @()
     $removed = $false
-    foreach ($rawRoot in @($models.roots)) {
+    foreach ($rawRoot in @($section.roots)) {
         $raw = [string]$rawRoot
         if ([string]::IsNullOrWhiteSpace($raw)) { continue }
         $candidate = Resolve-StableAmdPath -Path $raw -RepoRoot $repo
@@ -127,11 +143,35 @@ function Remove-StableAmdModelRoot {
     }
 
     if ($removed) {
-        $models.roots = @($kept)
+        $section.roots = @($kept)
         Initialize-StableAmdRuntimeDirectories -Paths $runtimePaths
         Write-StableAmdConfig -Path $runtimePaths.ConfigPath -Config $config
     }
-    return [pscustomobject]@{ removed = $removed; path = $resolved; reason = if ($removed) { 'removed' } else { 'not-configured' } }
+    return [pscustomobject]@{ removed = $removed; path = $resolved; reason = if ($removed) { 'removed' } else { 'not-configured' }; kind = $Kind }
 }
 
-Export-ModuleMember -Function Get-StableAmdModelRootRecords, Add-StableAmdModelRoot, Remove-StableAmdModelRoot
+function Add-StableAmdModelRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][string]$Path)
+    return Add-StableAmdRoot -RepoRoot $RepoRoot -Path $Path -Kind 'models'
+}
+
+function Remove-StableAmdModelRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][string]$Path)
+    return Remove-StableAmdRoot -RepoRoot $RepoRoot -Path $Path -Kind 'models'
+}
+
+function Add-StableAmdLoraRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][string]$Path)
+    return Add-StableAmdRoot -RepoRoot $RepoRoot -Path $Path -Kind 'loras'
+}
+
+function Remove-StableAmdLoraRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][string]$Path)
+    return Remove-StableAmdRoot -RepoRoot $RepoRoot -Path $Path -Kind 'loras'
+}
+
+Export-ModuleMember -Function Get-StableAmdModelRootRecords, Add-StableAmdModelRoot, Remove-StableAmdModelRoot, Get-StableAmdLoraRootRecords, Add-StableAmdLoraRoot, Remove-StableAmdLoraRoot
