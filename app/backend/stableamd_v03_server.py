@@ -25,6 +25,32 @@ def _value(record: dict[str, Any], *names: str, default: Any = None) -> Any:
 
 
 class PowerShellBridge(base.PowerShellBridge):
+    def models(self) -> Any:
+        checkpoints = list(super().models())
+        bundles = self._normalize_model_payload(self._run_script("List-BundleModels.ps1"))
+        merged: list[Any] = []
+        seen: set[str] = set()
+        for model in [*checkpoints, *bundles]:
+            if not isinstance(model, dict):
+                merged.append(model)
+                continue
+            model_id = str(_value(model, "id", "Id", default="")).strip()
+            key = model_id.lower() if model_id else json.dumps(model, sort_keys=True, default=str)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(model)
+        return merged
+
+    def _selected_product_model(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        model_id = str(request.get("modelId") or "").strip()
+        if not model_id:
+            return None
+        for model in self.models():
+            if isinstance(model, dict) and str(_value(model, "id", "Id", default="")) == model_id:
+                return model
+        return None
+
     def _post_comfy_json(self, relative_path: str, payload: dict[str, Any], timeout: int = 60) -> Any:
         url = self._backend_base_url() + relative_path.lstrip("/")
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -268,10 +294,218 @@ class PowerShellBridge(base.PowerShellBridge):
                 pass
             raise
 
+    @staticmethod
+    def _bundle_asset_path(model: dict[str, Any], role: str) -> Path:
+        assets = model.get("assets")
+        if not isinstance(assets, dict):
+            raise base.StableAmdBridgeError(f"Bundle model is missing its '{role}' asset map.")
+        values = assets.get(role)
+        paths = values if isinstance(values, list) else ([values] if values else [])
+        paths = [str(value).strip() for value in paths if str(value).strip()]
+        if len(paths) != 1:
+            raise base.StableAmdBridgeError(f"Z-Image Turbo requires exactly one '{role}' asset.")
+        path = Path(paths[0]).expanduser().resolve()
+        if not path.is_file():
+            raise base.StableAmdBridgeError(f"Z-Image Turbo asset no longer exists: {path}")
+        return path
+
+    def _resolve_comfy_bundle_asset(self, node_name: str, input_name: str, path: Path) -> str:
+        info = self._comfy_json(f"object_info/{node_name}")
+        choices = self._comfy_choice_list(info, node_name, input_name)
+        leaf = path.name.lower()
+        exact = [name for name in choices if Path(str(name).replace("\\", "/")).name.lower() == leaf]
+        if len(exact) != 1:
+            raise base.StableAmdBridgeError(
+                f"ComfyUI does not expose Z-Image Turbo asset '{path.name}' through {node_name}. "
+                "Restart StableAMD after changing bundle asset folders."
+            )
+        return str(exact[0])
+
+    def _resolve_zimage_output(self, prompt_id: str, history_entry: dict[str, Any]) -> Path:
+        output_root = (self.repo_root / ".runtime" / "stableamd" / "output").resolve()
+        images = history_entry.get("outputs", {}).get("9", {}).get("images", [])
+        for image in images if isinstance(images, list) else []:
+            if not isinstance(image, dict) or not image.get("filename"):
+                continue
+            candidate = (output_root / str(image.get("subfolder") or "") / str(image["filename"])).resolve()
+            if output_root in candidate.parents and candidate.is_file():
+                return candidate
+        raise base.StableAmdBridgeError(
+            f"ComfyUI completed Z-Image Turbo prompt '{prompt_id}', but StableAMD could not resolve its output image."
+        )
+
+    def _save_zimage_history(self, record: dict[str, Any]) -> Path:
+        history_root = self.repo_root / ".runtime" / "stableamd" / "history"
+        history_root.mkdir(parents=True, exist_ok=True)
+        created = datetime.now(timezone.utc)
+        prompt_id = str(record.get("promptId") or uuid.uuid4().hex)
+        destination = history_root / f"{created.strftime('%Y%m%dT%H%M%S%fZ')}_{prompt_id}.json"
+        temporary = destination.with_suffix(destination.suffix + f".tmp-{uuid.uuid4().hex}")
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        return destination.resolve()
+
+    def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
+        if request.get("loraStack") or str(request.get("loraName") or "").strip():
+            raise base.StableAmdBridgeError("LoRA execution is not implemented for Z-Image Turbo yet.")
+        if request.get("mode", "txt2img") != "txt2img":
+            raise base.StableAmdBridgeError("Z-Image Turbo currently supports txt2img only.")
+
+        if request.get("startBackendIfNeeded"):
+            try:
+                self._backend_base_url()
+            except base.StableAmdBridgeError:
+                self.start_backend()
+
+        diffusion_path = self._bundle_asset_path(model, "diffusion_model")
+        encoder_path = self._bundle_asset_path(model, "text_encoder")
+        vae_path = self._bundle_asset_path(model, "vae")
+        diffusion_name = self._resolve_comfy_bundle_asset("UNETLoader", "unet_name", diffusion_path)
+        encoder_name = self._resolve_comfy_bundle_asset("CLIPLoader", "clip_name", encoder_path)
+        vae_name = self._resolve_comfy_bundle_asset("VAELoader", "vae_name", vae_path)
+
+        seed = int(request["seed"]) if "seed" in request else secrets.randbits(63)
+        width = int(request.get("width", 1024))
+        height = int(request.get("height", 1024))
+        steps = int(request.get("steps", 8))
+        cfg = float(request.get("cfg", 1.0))
+        sampler = str(request.get("samplerName") or "res_multistep")
+        scheduler = str(request.get("scheduler") or "simple")
+        filename_prefix = f"StableAMD_ZIMAGE_TURBO_{uuid.uuid4().hex}"
+        started = time.monotonic()
+
+        workflow = self._run_script(
+            "Build-StableAmdWorkflow.ps1",
+            [
+                ("Family", "z-image-turbo"),
+                ("Mode", "txt2img"),
+                ("Prompt", request["prompt"]),
+                ("Width", width),
+                ("Height", height),
+                ("Steps", steps),
+                ("Cfg", cfg),
+                ("Seed", seed),
+                ("SamplerName", sampler),
+                ("Scheduler", scheduler),
+                ("FilenamePrefix", filename_prefix),
+                ("DiffusionModelName", diffusion_name),
+                ("TextEncoderName", encoder_name),
+                ("VaeName", vae_name),
+            ],
+        )
+        if not isinstance(workflow, dict):
+            raise base.StableAmdBridgeError("StableAMD Z-Image Turbo workflow builder did not return a workflow object.")
+
+        client_id = uuid.uuid4().hex
+        queued = self._post_comfy_json("prompt", {"prompt": workflow, "client_id": client_id})
+        prompt_id = str(queued.get("prompt_id") or "") if isinstance(queued, dict) else ""
+        if not prompt_id:
+            raise base.StableAmdBridgeError("ComfyUI /prompt did not return a prompt_id for Z-Image Turbo.")
+        node_errors = queued.get("node_errors") if isinstance(queued, dict) else None
+        if isinstance(node_errors, dict) and node_errors:
+            raise base.StableAmdBridgeError(
+                "ComfyUI rejected the StableAMD Z-Image Turbo workflow: " + json.dumps(node_errors, ensure_ascii=False)
+            )
+
+        deadline = time.monotonic() + 900
+        history_entry: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            history = self._comfy_json(f"history/{prompt_id}")
+            candidate = history.get(prompt_id) if isinstance(history, dict) else None
+            if isinstance(candidate, dict):
+                status = candidate.get("status") or {}
+                status_str = str(status.get("status_str") or "") if isinstance(status, dict) else ""
+                if status_str == "error":
+                    raise base.StableAmdBridgeError(
+                        "ComfyUI reported a Z-Image Turbo execution error: " + json.dumps(status, ensure_ascii=False)
+                    )
+                if status_str == "success" or bool(status.get("completed")):
+                    history_entry = candidate
+                    break
+            time.sleep(0.25)
+        if history_entry is None:
+            raise base.StableAmdBridgeError(f"Z-Image Turbo did not complete within 900 seconds. Prompt ID: {prompt_id}")
+
+        image_path = self._resolve_zimage_output(prompt_id, history_entry)
+        generation_seconds = round(time.monotonic() - started, 3)
+        model_id = str(_value(model, "id", "Id", default=""))
+        model_name = str(_value(model, "name", "Name", default="Z-Image Turbo"))
+        backend_url = self._backend_base_url()
+        assets = {
+            "diffusion_model": [str(diffusion_path)],
+            "text_encoder": [str(encoder_path)],
+            "vae": [str(vae_path)],
+        }
+        record = {
+            "schemaVersion": 3,
+            "createdAtUtc": datetime.now(timezone.utc).isoformat(),
+            "promptId": prompt_id,
+            "mode": "txt2img",
+            "prompt": request["prompt"],
+            "negativePrompt": "",
+            "negativeConditioning": "zeroed-positive",
+            "modelId": model_id,
+            "modelName": model_name,
+            "modelPath": str(diffusion_path),
+            "family": "z-image-turbo",
+            "provider": "z-image-turbo-bundle",
+            "assetMode": "bundle",
+            "bundleAssets": assets,
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "cfg": cfg,
+            "seed": seed,
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "loraStack": [],
+            "generationSeconds": generation_seconds,
+            "imagePath": str(image_path),
+            "backendUrl": backend_url,
+        }
+        history_path = self._save_zimage_history(record)
+        return {
+            "PromptId": prompt_id,
+            "Mode": "txt2img",
+            "Prompt": record["prompt"],
+            "NegativePrompt": "",
+            "ModelId": model_id,
+            "ModelName": model_name,
+            "ModelPath": str(diffusion_path),
+            "Family": "z-image-turbo",
+            "Provider": "z-image-turbo-bundle",
+            "AssetMode": "bundle",
+            "BundleAssets": assets,
+            "Width": width,
+            "Height": height,
+            "Steps": steps,
+            "Cfg": cfg,
+            "Seed": seed,
+            "Sampler": sampler,
+            "Scheduler": scheduler,
+            "LoraStack": [],
+            "GenerationSeconds": generation_seconds,
+            "ImagePath": str(image_path),
+            "HistoryPath": str(history_path),
+            "BackendUrl": backend_url,
+        }
+
     def generate(self, request: dict[str, Any]) -> Any:
         mode = str(request.get("mode", "txt2img")).lower()
         if mode == "inpaint":
             return self._generate_inpaint(request)
+
+        selected = self._selected_product_model(request)
+        if selected is not None:
+            family = str(_value(selected, "family", "Family", default="")).lower()
+            asset_mode = str(_value(selected, "assetMode", "AssetMode", default="checkpoint")).lower()
+            if family == "z-image-turbo" and asset_mode == "bundle":
+                return self._generate_zimage_turbo(request, selected)
+            if asset_mode == "bundle":
+                raise base.StableAmdBridgeError(
+                    f"StableAMD execution is not implemented for bundle model family '{family or 'unknown'}'."
+                )
+
         return super().generate(request)
 
 
