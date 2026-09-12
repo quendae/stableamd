@@ -9,6 +9,7 @@ Describe 'StableAMD v0.2 generation controls' {
         $frontendV02JsPath = Join-Path $repoRoot 'app/frontend/app-v02.js'
         $serverPath = Join-Path $repoRoot 'app/backend/stableamd_server.py'
         $configPath = Join-Path $repoRoot 'config/stableamd.default.json'
+        $profilesPath = Join-Path $repoRoot 'config/generation-profiles.v0.2.json'
     }
 
     It 'builds an SDXL workflow with an optional LoraLoader node' {
@@ -37,6 +38,23 @@ Describe 'StableAMD v0.2 generation controls' {
         $server | Should -Match 'loraName'
         $server | Should -Match 'loraModelStrength'
         $server | Should -Match 'loraClipStrength'
+    }
+
+    It 'ships a versioned generation profile catalog from SD 1.5 through SD 3.5' {
+        Test-Path $profilesPath | Should -BeTrue
+        $catalog = Get-Content $profilesPath -Raw | ConvertFrom-Json
+        $catalog.schemaVersion | Should -Be 1
+        @($catalog.profiles | Where-Object { $_.id -eq 'sd15-base' }).Count | Should -Be 1
+        @($catalog.profiles | Where-Object { $_.id -eq 'sdxl-base' }).Count | Should -Be 1
+        @($catalog.profiles | Where-Object { $_.id -eq 'sd35-medium' }).Count | Should -Be 1
+        @($catalog.profiles | Where-Object { $_.id -eq 'sd35-large' }).Count | Should -Be 1
+        @($catalog.profiles | Where-Object { $_.id -eq 'sd35-large-turbo' }).Count | Should -Be 1
+        foreach ($profile in @($catalog.profiles)) {
+            $profile.defaults.sampler | Should -Not -BeNullOrEmpty
+            $profile.defaults.scheduler | Should -Not -BeNullOrEmpty
+            @($profile.combinations).Count | Should -BeGreaterThan 0
+        }
+        (Get-Content $serverPath -Raw) | Should -Match '/api/generation-profiles'
     }
 
     It 'configures separate LoRA model roots for ComfyUI' {
@@ -70,7 +88,17 @@ Describe 'StableAMD v0.2 generation controls' {
         }
     }
 
-    It 'ships select controls for sampler scheduler and one LoRA with separate strengths' {
+    It 'ships product commands and API routes for external LoRA folders' {
+        foreach ($name in @('Get-LoraRoots.ps1', 'Add-LoraRoot.ps1', 'Remove-LoraRoot.ps1', 'Browse-LoraRoot.ps1')) {
+            Test-Path (Join-Path $repoRoot "scripts/$name") | Should -BeTrue
+        }
+        $server = Get-Content $serverPath -Raw
+        $server | Should -Match '/api/lora-roots'
+        $server | Should -Match 'Add-LoraRoot\.ps1'
+        $server | Should -Match 'Remove-LoraRoot\.ps1'
+    }
+
+    It 'ships select controls for sampler scheduler profile presets and one LoRA with separate strengths' {
         $html = Get-Content $frontendPath -Raw
         Test-Path $frontendV02JsPath | Should -BeTrue
         $js = Get-Content $frontendV02JsPath -Raw
@@ -82,6 +110,10 @@ Describe 'StableAMD v0.2 generation controls' {
         $html | Should -Match 'id="lora-clip-strength"'
         $html | Should -Match 'app-v02\.js'
         $js | Should -Match '/api/generation-options'
+        $js | Should -Match '/api/generation-profiles'
+        $js | Should -Match 'generation-profile'
+        $js | Should -Match '/api/lora-roots'
+        $js | Should -Match 'lora-root-form'
         $js | Should -Match 'loraName'
         $js | Should -Match 'loraModelStrength'
         $js | Should -Match 'loraClipStrength'
