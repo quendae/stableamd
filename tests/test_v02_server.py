@@ -23,6 +23,38 @@ class V02Bridge:
             "loras": ["styles\\storybook.safetensors"],
         }
 
+    def generation_profiles(self):
+        self.calls.append(("generation_profiles", None))
+        return {
+            "schemaVersion": 1,
+            "profiles": [
+                {
+                    "id": "sdxl-base",
+                    "family": "sdxl",
+                    "defaults": {"width": 1024, "height": 1024, "steps": 25, "cfg": 6.0},
+                    "combinations": [
+                        {"sampler": "dpmpp_2m", "scheduler": "karras", "steps": 25, "cfg": 6.0}
+                    ],
+                }
+            ],
+        }
+
+    def lora_roots(self):
+        self.calls.append(("lora_roots", None))
+        return [{"path": "D:\\AI\\LoRA", "exists": True, "managed": False}]
+
+    def browse_lora_root(self):
+        self.calls.append(("browse_lora_root", None))
+        return {"cancelled": False, "path": "D:\\AI\\LoRA"}
+
+    def add_lora_root(self, path):
+        self.calls.append(("add_lora_root", path))
+        return {"added": True, "path": path, "restartRequired": True}
+
+    def remove_lora_root(self, path):
+        self.calls.append(("remove_lora_root", path))
+        return {"removed": True, "path": path, "restartRequired": True}
+
     def generate(self, request):
         self.calls.append(("generate", request))
         return {"PromptId": "v02", "LoraName": request.get("loraName", "")}
@@ -40,6 +72,34 @@ class StableAmdV02ApiTests(unittest.TestCase):
         self.assertIn("karras", payload["schedulers"])
         self.assertEqual(payload["loras"], ["styles\\storybook.safetensors"])
         self.assertEqual(self.bridge.calls, [("generation_options", None)])
+
+    def test_generation_profiles_are_exposed_as_versioned_product_metadata(self):
+        status, payload = self.api.dispatch("GET", "/api/generation-profiles")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["schemaVersion"], 1)
+        self.assertEqual(payload["profiles"][0]["family"], "sdxl")
+        self.assertEqual(payload["profiles"][0]["combinations"][0]["scheduler"], "karras")
+        self.assertEqual(self.bridge.calls, [("generation_profiles", None)])
+
+    def test_lora_folder_routes_browse_add_remove_and_list(self):
+        status, payload = self.api.dispatch("GET", "/api/lora-roots")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload[0]["path"], "D:\\AI\\LoRA")
+
+        status, payload = self.api.dispatch("POST", "/api/lora-roots/browse", b"{}")
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["cancelled"])
+
+        body = json.dumps({"path": "D:\\AI\\LoRA2"}).encode("utf-8")
+        status, payload = self.api.dispatch("POST", "/api/lora-roots", body)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["added"])
+        self.assertTrue(payload["restartRequired"])
+
+        status, payload = self.api.dispatch("POST", "/api/lora-roots/remove", body)
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["removed"])
+        self.assertTrue(payload["restartRequired"])
 
     def test_generation_accepts_one_lora_with_separate_strengths(self):
         request = {
