@@ -25,5 +25,22 @@
       ".runtime/stableamd/models/loras",
       ".runtime/SwarmUI/Models/Lora"
     ]
+  },
+  "bundleAssets": {
+    "diffusionModels": {
+      "roots": [
+        ".runtime/stableamd/models/diffusion_models"
+      ]
+    },
+    "textEncoders": {
+      "roots": [
+        ".runtime/stableamd/models/text_encoders"
+      ]
+    },
+    "vae": {
+      "roots": [
+        ".runtime/stableamd/models/vae"
+      ]
+    }
   }
 }
