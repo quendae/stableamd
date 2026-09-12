@@ -24,6 +24,10 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(sdxl["capabilities"]["txt2img"], "supported")
         self.assertEqual(sdxl["capabilities"]["lora"], "supported")
         self.assertEqual(sdxl["capabilities"]["inpaint"], "planned")
+        self.assertTrue(sdxl["loraPolicy"]["orderedStack"])
+        self.assertEqual(sdxl["loraPolicy"]["maxStack"], 8)
+        self.assertTrue(sdxl["loraPolicy"]["perEntryModelStrength"])
+        self.assertTrue(sdxl["loraPolicy"]["perEntryClipStrength"])
 
         flux = catalog["families"]["flux"]
         self.assertEqual(flux["assetMode"], "bundle")
@@ -41,9 +45,11 @@ class StableAmdV03SupportTests(unittest.TestCase):
         unknown = resolve_model_support(catalog, {"id": "mystery", "family": "unknown", "name": "mystery.safetensors"})
         self.assertEqual(unknown["provider"], "unsupported")
         self.assertTrue(all(value == "unsupported" for value in unknown["capabilities"].values()))
+        self.assertEqual(unknown["loraPolicy"]["maxStack"], 0)
 
         flux = resolve_model_support(catalog, {"id": "flux", "family": "flux", "name": "flux1-dev.safetensors"})
         self.assertEqual(flux["capabilities"]["txt2img"], "planned")
+        self.assertEqual(flux["loraPolicy"]["maxStack"], 0)
 
     def test_support_summary_is_product_ready_without_running_generation(self):
         catalog = load_model_support_catalog(REPO_ROOT)
@@ -59,6 +65,7 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertIn("inpaint", summary["modes"])
         self.assertEqual(summary["models"][0]["provider"], "sdxl-checkpoint")
         self.assertEqual(summary["models"][0]["capabilities"]["txt2img"], "supported")
+        self.assertEqual(summary["models"][0]["loraPolicy"]["maxStack"], 8)
         self.assertEqual(summary["models"][1]["capabilities"]["txt2img"], "planned")
 
 
