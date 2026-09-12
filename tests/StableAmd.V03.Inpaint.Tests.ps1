@@ -1,6 +1,8 @@
-$repoRoot = Split-Path -Parent $PSScriptRoot
-
 Describe 'StableAMD v0.3 SDXL inpainting' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    }
+
     It 'declares SDXL inpainting as supported' {
         $catalog = Get-Content -Path (Join-Path $repoRoot 'config/model-support.v0.3.json') -Raw | ConvertFrom-Json
         $catalog.families.sdxl.capabilities.inpaint | Should -Be 'supported'
