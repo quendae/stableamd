@@ -62,7 +62,7 @@ Describe 'StableAMD v0.2 generation controls' {
         $config = Get-Content $configPath -Raw
 
         $config | Should -Match '"loras"'
-        $start | Should -Match 'loras:'
+        $start | Should -Match "FolderType\s+'loras'"
         $start | Should -Match 'config\.loras\.roots'
     }
 
