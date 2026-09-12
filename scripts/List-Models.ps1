@@ -13,6 +13,7 @@ $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Models.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.ModelFamilies.psm1') -Force
 
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 Initialize-StableAmdRuntimeDirectories -Paths $paths
@@ -25,6 +26,12 @@ foreach ($root in @($config.models.roots)) {
 }
 
 $discovered = @(Find-StableAmdCheckpoints -Roots $roots)
+# v0.3 keeps discovery/storage separate from family identification so newer
+# model lineages can be added without destabilizing the v0.1 registry module.
+foreach ($entry in $discovered) {
+    $entry.Family = Get-StableAmdModelFamily -Name ([string]$entry.Name)
+}
+
 if ($NoRegistryUpdate) {
     return [pscustomobject]@{
         models = [object[]]@($discovered)
