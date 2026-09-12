@@ -38,6 +38,34 @@ function Get-ProcessSnapshot {
     }
 }
 
+function Get-SnapshotProcessId {
+    param([object]$Entry)
+
+    if ($null -eq $Entry) { return $null }
+    foreach ($propertyName in @('ProcessId', 'Id')) {
+        $property = $Entry.PSObject.Properties[$propertyName]
+        if ($null -eq $property) { continue }
+        try {
+            $value = [int]$property.Value
+            if ($value -gt 0) { return $value }
+        }
+        catch { }
+    }
+    return $null
+}
+
+function Get-SnapshotParentProcessId {
+    param([object]$Entry)
+
+    if ($null -eq $Entry) { return 0 }
+    foreach ($propertyName in @('ParentProcessId', 'ParentId')) {
+        $property = $Entry.PSObject.Properties[$propertyName]
+        if ($null -eq $property) { continue }
+        try { return [int]$property.Value } catch { }
+    }
+    return 0
+}
+
 function Test-RecordedPython {
     param(
         [int]$ProcessId,
@@ -67,9 +95,13 @@ function Get-StableAmdManagedProcesses {
     )
 
     $repoPattern = [regex]::Escape($RepoRoot.TrimEnd('\'))
-    $matches = New-Object System.Collections.Generic.List[object]
+    $matches = @()
     foreach ($entry in @($Snapshot)) {
-        $commandLine = [string]$entry.CommandLine
+        $processId = Get-SnapshotProcessId -Entry $entry
+        if ($null -eq $processId) { continue }
+
+        $commandLineProperty = $entry.PSObject.Properties['CommandLine']
+        $commandLine = if ($null -ne $commandLineProperty) { [string]$commandLineProperty.Value } else { '' }
         if ([string]::IsNullOrWhiteSpace($commandLine) -or $commandLine -notmatch $repoPattern) { continue }
 
         $role = $null
@@ -81,15 +113,20 @@ function Get-StableAmdManagedProcesses {
         }
         if ($null -eq $role) { continue }
 
-        $matches.Add([pscustomobject]@{
-            ProcessId = [int]$entry.ProcessId
-            ParentProcessId = [int]$entry.ParentProcessId
+        $nameProperty = $entry.PSObject.Properties['Name']
+        $matches += [pscustomobject]@{
+            ProcessId = [int]$processId
+            ParentProcessId = [int](Get-SnapshotParentProcessId -Entry $entry)
             Role = $role
-            Name = [string]$entry.Name
+            Name = if ($null -ne $nameProperty) { [string]$nameProperty.Value } else { '' }
             CommandLine = $commandLine
-        })
+        }
     }
-    return @($matches)
+
+    # Return individual process records, never the collection object itself.
+    # A Generic.List wrapped in @() can be observed as one object by callers,
+    # which previously produced an empty "PID ." diagnostic and prevented kill.
+    return $matches
 }
 
 function Invoke-TaskKillTree {
@@ -127,6 +164,29 @@ function Wait-ProcessesGone {
     } while ((Get-Date) -lt $deadline)
 
     return @($ids | Where-Object { $null -ne (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
+}
+
+function Format-StableAmdProcessDiagnostics {
+    param([object[]]$Processes)
+
+    $rows = @($Processes | Where-Object { $null -ne $_ -and [int]$_.ProcessId -gt 0 })
+    if ($rows.Count -eq 0) {
+        return 'StableAMD teardown is incomplete, but no valid process identity was available. State was preserved for diagnostics.'
+    }
+
+    $lines = @(
+        'StableAMD teardown is incomplete; managed process(es) still running:',
+        'PID      PPID     Role         Name',
+        '-------- -------- ------------ ------------------------------'
+    )
+    foreach ($entry in $rows) {
+        $lines += ('{0,-8} {1,-8} {2,-12} {3}' -f [int]$entry.ProcessId, [int]$entry.ParentProcessId, [string]$entry.Role, [string]$entry.Name)
+        if (-not [string]::IsNullOrWhiteSpace([string]$entry.CommandLine)) {
+            $lines += ('         CommandLine: {0}' -f [string]$entry.CommandLine)
+        }
+    }
+    $lines += 'State was preserved for diagnostics.'
+    return ($lines -join [Environment]::NewLine)
 }
 
 $backendPid = Get-StatePid -State $backendState
@@ -174,8 +234,7 @@ if ($postManaged.Count -gt 0) { Start-Sleep -Milliseconds 700 }
 $finalSnapshot = Get-ProcessSnapshot
 $stillManaged = @(Get-StableAmdManagedProcesses -Snapshot $finalSnapshot -BackendOnlySearch:$BackendOnly)
 if ($stillManaged.Count -gt 0) {
-    $detail = ($stillManaged | ForEach-Object { "$($_.Role) PID $($_.ProcessId)" }) -join ', '
-    throw "StableAMD teardown is incomplete; managed process(es) still running: $detail. State was preserved for diagnostics."
+    throw (Format-StableAmdProcessDiagnostics -Processes $stillManaged)
 }
 
 # A terminated ComfyUI process cannot retain its ROCm allocation. Remove state
