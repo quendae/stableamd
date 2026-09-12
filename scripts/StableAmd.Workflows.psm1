@@ -1,6 +1,7 @@
 Set-StrictMode -Version 2.0
 
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Img2Img.psm1') -Force
 
 function Get-StableAmdLoraValue {
     [CmdletBinding()]
@@ -113,6 +114,8 @@ function New-StableAmdWorkflow {
         [string]$SamplerName = 'euler',
         [string]$Scheduler = 'normal',
         [string]$FilenamePrefix = 'StableAMD',
+        [string]$InputImageName = '',
+        [double]$Denoise = 0.55,
         [AllowEmptyCollection()]
         [object[]]$LoraStack = @(),
         [string]$LoraName = '',
@@ -123,7 +126,7 @@ function New-StableAmdWorkflow {
     $normalizedFamily = $Family.Trim().ToLowerInvariant()
     $normalizedMode = $Mode.Trim().ToLowerInvariant()
 
-    if ($normalizedFamily -eq 'sdxl' -and $normalizedMode -eq 'txt2img') {
+    if ($normalizedFamily -eq 'sdxl' -and $normalizedMode -in @('txt2img', 'img2img')) {
         if (@($LoraStack).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
             throw 'Specify LoraStack or the legacy single LoraName fields, not both.'
         }
@@ -141,7 +144,13 @@ function New-StableAmdWorkflow {
             Scheduler = $Scheduler
             FilenamePrefix = $FilenamePrefix
         }
-        $workflow = New-StableAmdSdxlWorkflow @parameters
+
+        if ($normalizedMode -eq 'img2img') {
+            $workflow = New-StableAmdSdxlImg2ImgWorkflow @parameters -InputImageName $InputImageName -Denoise $Denoise
+        }
+        else {
+            $workflow = New-StableAmdSdxlWorkflow @parameters
+        }
 
         $resolvedStack = @($LoraStack)
         if ($resolvedStack.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
