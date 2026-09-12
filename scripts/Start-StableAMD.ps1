@@ -101,13 +101,13 @@ if ($null -ne $existingState) {
     }
 
     if ($ForceRestart) {
-        & (Join-Path $PSScriptRoot 'Stop-StableAMD.ps1') -RepoRoot $RepoRoot | Out-Null
+        & (Join-Path $PSScriptRoot 'Stop-StableAMD.ps1') -RepoRoot $RepoRoot -BackendOnly | Out-Null
     }
     elseif ($null -eq (Get-Process -Id ([int]$existingState.pid) -ErrorAction SilentlyContinue)) {
         Remove-StableAmdBackendState -Path $paths.BackendStatePath
     }
     else {
-        throw "A StableAMD-managed process with PID $($existingState.pid) exists but is not healthy. Run Stop-StableAMD.ps1 or retry with -ForceRestart."
+        throw "A StableAMD-managed process with PID $($existingState.pid) exists but is not healthy. Run Stop-StableAMD.ps1 -BackendOnly or retry with -ForceRestart."
     }
 }
 
@@ -158,6 +158,7 @@ try {
         -WorkingDirectory $paths.ComfyRoot `
         -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath `
+        -WindowStyle Hidden `
         -PassThru
 }
 finally {
@@ -208,6 +209,7 @@ if ($null -eq $device) {
 
 $state = [pscustomobject]@{
     schemaVersion = 1
+    role = 'compute-backend'
     pid = $process.Id
     url = $url
     startedAtUtc = [DateTime]::UtcNow.ToString('o')
