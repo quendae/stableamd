@@ -159,7 +159,7 @@ $stderrPath = Join-Path $paths.LogsRoot "backend-$stamp.stderr.log"
 $url = "http://127.0.0.1:$resolvedPort/"
 $statsUrl = "${url}system_stats"
 
-$arguments = "-u -s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 127.0.0.1 --port $resolvedPort --extra-model-paths-config `"$modelConfigPath`" --output-directory `"$($paths.OutputRoot)`""
+$arguments = "-u -s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 127.0.0.1 --port $resolvedPort --extra-model-paths-config `"$modelConfigPath`" --input-directory `"$($paths.InputRoot)`" --output-directory `"$($paths.OutputRoot)`""
 
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
 $hadOverride = $null -ne $oldOverride
@@ -225,6 +225,7 @@ $state = [pscustomobject]@{
     pythonPath = $paths.TheRockPython
     comfyRoot = $paths.ComfyRoot
     modelConfigPath = $modelConfigPath
+    inputRoot = $paths.InputRoot
     outputRoot = $paths.OutputRoot
     stdoutLog = $stdoutPath
     stderrLog = $stderrPath
