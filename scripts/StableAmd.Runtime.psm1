@@ -89,6 +89,7 @@ function Get-StableAmdRuntimePaths {
         DiffusionModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/diffusion_models'))
         TextEncodersRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/text_encoders'))
         VaeRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/vae'))
+        InputRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'input'))
         OutputRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'output'))
         HistoryRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'history'))
         LogsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'logs'))
@@ -116,6 +117,7 @@ function Initialize-StableAmdRuntimeDirectories {
         $Paths.DiffusionModelsRoot,
         $Paths.TextEncodersRoot,
         $Paths.VaeRoot,
+        $Paths.InputRoot,
         $Paths.OutputRoot,
         $Paths.HistoryRoot,
         $Paths.LogsRoot,
