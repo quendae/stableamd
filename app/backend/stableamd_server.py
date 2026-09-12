@@ -660,7 +660,7 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
             try:
                 image_path = resolve_output_image(resolved_repo_root, requested)
             except ValueError as exc:
-                self._send_json(404, {"error": str(exc)}
+                self._send_json(404, {"error": str(exc)})
                 return True
 
             content_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
