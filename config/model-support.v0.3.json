@@ -100,6 +100,19 @@
         "lora": "planned"
       }
     },
+    "z-image-turbo": {
+      "label": "Z-Image Turbo",
+      "provider": "z-image-turbo-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "capabilities": {
+        "txt2img": "supported",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
     "flux": {
       "label": "FLUX",
       "provider": "flux-bundle",
