@@ -83,18 +83,32 @@ $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $Re
 if ($null -eq $backendStatus -or -not [bool]$backendStatus.Healthy) {
     throw 'StableAMD managed compute backend did not become healthy.'
 }
-Write-Host "Compute backend ready: $($backendStatus.Url)" -ForegroundColor Green
+Write-Host "Compute backend ready: $($backendStatus.Url) (PID $($backendStatus.Pid))" -ForegroundColor Green
+if (-not [string]::IsNullOrWhiteSpace([string]$backendStatus.StdoutLog)) {
+    Write-Host "Backend stdout: $($backendStatus.StdoutLog)" -ForegroundColor DarkGray
+}
+if (-not [string]::IsNullOrWhiteSpace([string]$backendStatus.StderrLog)) {
+    Write-Host "Backend stderr: $($backendStatus.StderrLog)" -ForegroundColor DarkGray
+}
 
 $existingHealth = Get-StableAmdAppHealth
 $Reused = $null -ne $existingHealth
 $appProcess = $null
 $stdoutPath = $null
 $stderrPath = $null
+$appState = Read-StableAmdBackendState -Path $paths.AppStatePath
 
 if ($Reused) {
-    Write-Host "StableAMD application is already reachable at $appUrl" -ForegroundColor Green
+    $knownPid = $null
+    try { if ($null -ne $appState) { $knownPid = [int]$appState.pid } } catch { $knownPid = $null }
+    $pidText = if ($null -ne $knownPid -and $knownPid -gt 0) { " (PID $knownPid)" } else { '' }
+    Write-Host "StableAMD application is already reachable at $appUrl$pidText" -ForegroundColor Green
 }
 else {
+    if ($null -ne $appState) {
+        Remove-StableAmdBackendState -Path $paths.AppStatePath
+    }
+
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $stdoutPath = Join-Path $paths.LogsRoot "app-$stamp.stdout.log"
     $stderrPath = Join-Path $paths.LogsRoot "app-$stamp.stderr.log"
@@ -107,6 +121,7 @@ else {
         -WorkingDirectory $RepoRoot `
         -RedirectStandardOutput $stdoutPath `
         -RedirectStandardError $stderrPath `
+        -WindowStyle Hidden `
         -PassThru
 
     $deadline = (Get-Date).AddSeconds($AppStartupTimeoutSeconds)
@@ -136,8 +151,26 @@ else {
         throw "StableAMD application did not become healthy at '$healthUrl' within $AppStartupTimeoutSeconds seconds."
     }
 
-    Write-Host "StableAMD application ready: $appUrl" -ForegroundColor Green
+    $appState = [pscustomobject]@{
+        schemaVersion = 1
+        role = 'application-server'
+        pid = $appProcess.Id
+        url = $appUrl
+        healthUrl = $healthUrl
+        startedAtUtc = [DateTime]::UtcNow.ToString('o')
+        pythonPath = $paths.TheRockPython
+        serverPath = $appServer
+        stdoutLog = $stdoutPath
+        stderrLog = $stderrPath
+    }
+    Write-StableAmdBackendState -Path $paths.AppStatePath -State $appState
+
+    Write-Host "StableAMD application ready: $appUrl (PID $($appProcess.Id))" -ForegroundColor Green
+    Write-Host "Application stdout: $stdoutPath" -ForegroundColor DarkGray
+    Write-Host "Application stderr: $stderrPath" -ForegroundColor DarkGray
 }
+
+Write-Host "To stop StableAMD completely and release GPU memory: powershell -ExecutionPolicy Bypass -File .\scripts\Stop-StableAMD.ps1" -ForegroundColor DarkCyan
 
 if (-not $NoBrowser) {
     Start-Process $appUrl
@@ -149,8 +182,9 @@ return [pscustomobject]@{
     Reused = $Reused
     Url = $appUrl
     HealthUrl = $healthUrl
-    ProcessId = if ($null -ne $appProcess) { $appProcess.Id } else { $null }
-    StdoutLog = $stdoutPath
-    StderrLog = $stderrPath
+    ProcessId = if ($null -ne $appProcess) { $appProcess.Id } elseif ($null -ne $appState) { $appState.pid } else { $null }
+    AppStatePath = $paths.AppStatePath
+    StdoutLog = if ($null -ne $appProcess) { $stdoutPath } elseif ($null -ne $appState) { $appState.stdoutLog } else { $null }
+    StderrLog = if ($null -ne $appProcess) { $stderrPath } elseif ($null -ne $appState) { $appState.stderrLog } else { $null }
     Backend = $backendStatus
 }
