@@ -92,7 +92,9 @@ try {
         throw 'Packaged runtime bootstrap did not return a usable Python runtime.'
     }
 
-    $launchResult = & $launcher -RepoRoot $PackageRoot -AppPort $AppPort -NoBrowser
+    # Acceptance must return control to the harness; interactive desktop starts
+    # intentionally remain attached to the supervisor terminal.
+    $launchResult = & $launcher -RepoRoot $PackageRoot -AppPort $AppPort -NoBrowser -Detached
     if ($null -eq $launchResult -or -not [bool]$launchResult.Healthy) {
         throw 'Packaged StableAMD launcher did not report a healthy application.'
     }
