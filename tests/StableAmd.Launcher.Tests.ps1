@@ -96,6 +96,27 @@ Describe 'StableAMD one-click launcher' {
         $start | Should -Match 'Stop-StableAMD\.ps1.*-BackendOnly'
     }
 
+    It 'normalizes orphan process identities and never wraps the match collection as one fake process' {
+        $stop = Get-Content $stopPath -Raw
+
+        $stop | Should -Match 'Get-SnapshotProcessId'
+        $stop | Should -Match "'ProcessId', 'Id'"
+        $stop | Should -Match 'Get-SnapshotParentProcessId'
+        $stop | Should -Match '\$matches\s*=\s*@\(\)'
+        $stop | Should -Not -Match 'New-Object\s+System\.Collections\.Generic\.List\[object\]'
+        $stop | Should -Match 'return\s+\$matches'
+    }
+
+    It 'reports useful leftover process diagnostics instead of an empty PID' {
+        $stop = Get-Content $stopPath -Raw
+
+        $stop | Should -Match 'Format-StableAmdProcessDiagnostics'
+        $stop | Should -Match 'PID\s+PPID\s+Role\s+Name'
+        $stop | Should -Match 'CommandLine:'
+        $stop | Should -Match 'ParentProcessId'
+        $stop | Should -Match 'State was preserved for diagnostics'
+    }
+
     It 'ships a live diagnostics watcher for backend and application logs' {
         Test-Path $watchPath | Should -BeTrue
         $watch = Get-Content $watchPath -Raw
