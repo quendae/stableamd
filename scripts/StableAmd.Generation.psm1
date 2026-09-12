@@ -17,79 +17,110 @@ function New-StableAmdSdxlWorkflow {
         [long]$Seed = 0,
         [string]$SamplerName = 'euler',
         [string]$Scheduler = 'normal',
-        [string]$FilenamePrefix = 'StableAMD_SDXL'
+        [string]$FilenamePrefix = 'StableAMD_SDXL',
+        [string]$LoraName = '',
+        [double]$LoraModelStrength = 1.0,
+        [double]$LoraClipStrength = 1.0
     )
 
     if ([string]::IsNullOrWhiteSpace($CheckpointName)) { throw 'CheckpointName cannot be empty.' }
     if ([string]::IsNullOrWhiteSpace($Prompt)) { throw 'Prompt cannot be empty.' }
     if ($Width -le 0 -or $Height -le 0) { throw 'Width and Height must be positive.' }
-    if (($Width % 8) -ne 0 -or ($Height % 8) -ne 0) { throw 'Width and Height must be divisible by 8 for the v0.1 SDXL workflow.' }
+    if (($Width % 8) -ne 0 -or ($Height % 8) -ne 0) { throw 'Width and Height must be divisible by 8 for the StableAMD SDXL workflow.' }
     if ($Steps -lt 1 -or $Steps -gt 1000) { throw 'Steps must be between 1 and 1000.' }
     if ($Cfg -le 0) { throw 'CFG must be greater than zero.' }
     if ($Seed -lt 0) { throw 'Seed must be zero or greater.' }
     if ([string]::IsNullOrWhiteSpace($SamplerName)) { throw 'SamplerName cannot be empty.' }
     if ([string]::IsNullOrWhiteSpace($Scheduler)) { throw 'Scheduler cannot be empty.' }
     if ([string]::IsNullOrWhiteSpace($FilenamePrefix)) { throw 'FilenamePrefix cannot be empty.' }
+    if (-not [string]::IsNullOrWhiteSpace($LoraName)) {
+        if ([double]::IsNaN($LoraModelStrength) -or [double]::IsInfinity($LoraModelStrength) -or $LoraModelStrength -lt -100 -or $LoraModelStrength -gt 100) {
+            throw 'LoRA model strength must be between -100 and 100.'
+        }
+        if ([double]::IsNaN($LoraClipStrength) -or [double]::IsInfinity($LoraClipStrength) -or $LoraClipStrength -lt -100 -or $LoraClipStrength -gt 100) {
+            throw 'LoRA CLIP strength must be between -100 and 100.'
+        }
+    }
 
-    return [ordered]@{
+    $workflow = [ordered]@{
         '4' = [ordered]@{
             class_type = 'CheckpointLoaderSimple'
             inputs = [ordered]@{
                 ckpt_name = $CheckpointName
             }
         }
-        '6' = [ordered]@{
-            class_type = 'CLIPTextEncode'
+    }
+
+    $modelRef = @('4', 0)
+    $clipRef = @('4', 1)
+    if (-not [string]::IsNullOrWhiteSpace($LoraName)) {
+        $workflow['10'] = [ordered]@{
+            class_type = 'LoraLoader'
             inputs = [ordered]@{
-                text = $Prompt
-                clip = @('4', 1)
-            }
-        }
-        '7' = [ordered]@{
-            class_type = 'CLIPTextEncode'
-            inputs = [ordered]@{
-                text = $NegativePrompt
-                clip = @('4', 1)
-            }
-        }
-        '5' = [ordered]@{
-            class_type = 'EmptyLatentImage'
-            inputs = [ordered]@{
-                width = $Width
-                height = $Height
-                batch_size = 1
-            }
-        }
-        '3' = [ordered]@{
-            class_type = 'KSampler'
-            inputs = [ordered]@{
-                seed = $Seed
-                steps = $Steps
-                cfg = $Cfg
-                sampler_name = $SamplerName
-                scheduler = $Scheduler
-                denoise = 1.0
+                lora_name = $LoraName
+                strength_model = $LoraModelStrength
+                strength_clip = $LoraClipStrength
                 model = @('4', 0)
-                positive = @('6', 0)
-                negative = @('7', 0)
-                latent_image = @('5', 0)
+                clip = @('4', 1)
             }
         }
-        '8' = [ordered]@{
-            class_type = 'VAEDecode'
-            inputs = [ordered]@{
-                samples = @('3', 0)
-                vae = @('4', 2)
-            }
-        }
-        '9' = [ordered]@{
-            class_type = 'SaveImage'
-            inputs = [ordered]@{
-                filename_prefix = $FilenamePrefix
-                images = @('8', 0)
-            }
+        $modelRef = @('10', 0)
+        $clipRef = @('10', 1)
+    }
+
+    $workflow['6'] = [ordered]@{
+        class_type = 'CLIPTextEncode'
+        inputs = [ordered]@{
+            text = $Prompt
+            clip = $clipRef
         }
     }
+    $workflow['7'] = [ordered]@{
+        class_type = 'CLIPTextEncode'
+        inputs = [ordered]@{
+            text = $NegativePrompt
+            clip = $clipRef
+        }
+    }
+    $workflow['5'] = [ordered]@{
+        class_type = 'EmptyLatentImage'
+        inputs = [ordered]@{
+            width = $Width
+            height = $Height
+            batch_size = 1
+        }
+    }
+    $workflow['3'] = [ordered]@{
+        class_type = 'KSampler'
+        inputs = [ordered]@{
+            seed = $Seed
+            steps = $Steps
+            cfg = $Cfg
+            sampler_name = $SamplerName
+            scheduler = $Scheduler
+            denoise = 1.0
+            model = $modelRef
+            positive = @('6', 0)
+            negative = @('7', 0)
+            latent_image = @('5', 0)
+        }
+    }
+    $workflow['8'] = [ordered]@{
+        class_type = 'VAEDecode'
+        inputs = [ordered]@{
+            samples = @('3', 0)
+            vae = @('4', 2)
+        }
+    }
+    $workflow['9'] = [ordered]@{
+        class_type = 'SaveImage'
+        inputs = [ordered]@{
+            filename_prefix = $FilenamePrefix
+            images = @('8', 0)
+        }
+    }
+
+    return $workflow
 }
 
 function Resolve-StableAmdComfyCheckpointName {
@@ -138,10 +169,6 @@ function Resolve-StableAmdGeneratedImagePath {
     $rootFull = [IO.Path]::GetFullPath($OutputRoot)
     $rootWithSeparator = $rootFull.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
 
-    # Prefer the canonical SaveImage metadata from ComfyUI history when it is
-    # present. Newer ComfyUI execution/history paths can report a successful
-    # prompt without preserving output-node UI metadata, so this must not be
-    # the only way StableAMD correlates the file written by SaveImage.
     if ($null -ne $HistoryEntry) {
         $outputsProperty = $HistoryEntry.PSObject.Properties['outputs']
         if ($null -ne $outputsProperty -and $null -ne $outputsProperty.Value) {
@@ -174,10 +201,6 @@ function Resolve-StableAmdGeneratedImagePath {
         }
     }
 
-    # SaveImage writes PNG files before its UI metadata is recorded. Every
-    # product generation uses a GUID-bearing prefix, so this fallback can find
-    # only the file(s) belonging to this exact request instead of guessing the
-    # newest image in the shared output directory.
     if (-not (Test-Path $rootFull -PathType Container)) { return $null }
     $pattern = $FilenamePrefix + '*.png'
     $fallback = Get-ChildItem -Path $rootFull -Filter $pattern -File -Recurse -ErrorAction SilentlyContinue |
@@ -199,8 +222,6 @@ function New-StableAmdRandomSeed {
     try { $rng.GetBytes($bytes) }
     finally { $rng.Dispose() }
 
-    # Clear the sign bit so the value fits the non-negative Int64 contract used
-    # by the Windows PowerShell API wrapper while still providing 63 random bits.
     $bytes[7] = $bytes[7] -band 0x7F
     return [BitConverter]::ToInt64($bytes, 0)
 }
@@ -288,7 +309,6 @@ function Get-StableAmdGenerationHistory {
             }
         }
         catch {
-            # A partially written or user-edited sidecar must not make Gallery unusable.
             continue
         }
     }
