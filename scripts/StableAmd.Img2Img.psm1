@@ -1,6 +1,8 @@
 Set-StrictMode -Version 2.0
 
-Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1') -Force
+# Shared dependency: avoid a forced nested reload that can hide Generation
+# exports from a caller that imported them directly.
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1')
 
 function New-StableAmdSdxlImg2ImgWorkflow {
     [CmdletBinding()]
