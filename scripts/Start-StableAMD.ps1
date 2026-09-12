@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
-    throw 'StableAMD v0.1 managed backend is Windows-only.'
+    throw 'StableAMD managed backend is Windows-only.'
 }
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -26,7 +26,7 @@ $config = Read-StableAmdConfig -RepoRoot $RepoRoot
 
 $hostAddress = [string]$config.backend.host
 if ($hostAddress -ne '127.0.0.1') {
-    throw "StableAMD v0.1 only supports loopback binding. Configured backend host '$hostAddress' is not allowed."
+    throw "StableAMD only supports loopback binding. Configured backend host '$hostAddress' is not allowed."
 }
 
 $resolvedPort = if ($Port -gt 0) { $Port } else { [int]$config.backend.port }
@@ -124,15 +124,36 @@ if ($seenRoots.Add($paths.CheckpointsRoot)) {
     $modelRoots = @($paths.CheckpointsRoot) + @($modelRoots)
 }
 
+$loraRoots = @()
+$seenLoraRoots = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+foreach ($rawRoot in @($config.loras.roots)) {
+    $raw = [string]$rawRoot
+    if ([string]::IsNullOrWhiteSpace($raw)) { continue }
+    $resolved = Resolve-StableAmdPath -Path $raw -RepoRoot $RepoRoot
+    if (-not (Test-Path $resolved -PathType Container)) { continue }
+    if ($seenLoraRoots.Add($resolved)) { $loraRoots += $resolved }
+}
+if ($seenLoraRoots.Add($paths.LorasRoot)) {
+    $loraRoots = @($paths.LorasRoot) + @($loraRoots)
+}
+
 $modelConfigPath = Join-Path $paths.GeneratedConfigRoot 'extra_model_paths.yaml'
 $yaml = New-Object System.Collections.Generic.List[string]
 $rootIndex = 0
 foreach ($modelRoot in $modelRoots) {
     $yamlRoot = $modelRoot.Replace('\', '/')
-    $yaml.Add("stableamd_root_$rootIndex`:")
+    $yaml.Add("stableamd_checkpoint_root_$rootIndex`:")
     $yaml.Add("    base_path: `"$yamlRoot`"")
     $yaml.Add('    checkpoints: .')
     $rootIndex++
+}
+$loraIndex = 0
+foreach ($loraRoot in $loraRoots) {
+    $yamlRoot = $loraRoot.Replace('\', '/')
+    $yaml.Add("stableamd_lora_root_$loraIndex`:")
+    $yaml.Add("    base_path: `"$yamlRoot`"")
+    $yaml.Add('    loras: .')
+    $loraIndex++
 }
 $yaml | Set-Content -Path $modelConfigPath -Encoding UTF8
 
@@ -142,9 +163,6 @@ $stderrPath = Join-Path $paths.LogsRoot "backend-$stamp.stderr.log"
 $url = "http://127.0.0.1:$resolvedPort/"
 $statsUrl = "${url}system_stats"
 
-# -u is important here: the backend has no visible console window, so Python
-# would otherwise block-buffer redirected stdout/stderr and live diagnostics
-# would appear empty until much later in the session.
 $arguments = "-u -s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 127.0.0.1 --port $resolvedPort --extra-model-paths-config `"$modelConfigPath`" --output-directory `"$($paths.OutputRoot)`""
 
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
