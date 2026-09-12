@@ -12,6 +12,7 @@ function New-StableAmdSdxlImg2ImgWorkflow {
         [string]$Prompt,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$InputImageName,
 
         [string]$NegativePrompt = 'low quality, blurry, distorted, artifacts, watermark, text',
