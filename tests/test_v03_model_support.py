@@ -23,8 +23,8 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(sdxl["assetMode"], "checkpoint")
         self.assertEqual(sdxl["capabilities"]["txt2img"], "supported")
         self.assertEqual(sdxl["capabilities"]["img2img"], "supported")
+        self.assertEqual(sdxl["capabilities"]["inpaint"], "supported")
         self.assertEqual(sdxl["capabilities"]["lora"], "supported")
-        self.assertEqual(sdxl["capabilities"]["inpaint"], "planned")
         self.assertTrue(sdxl["loraPolicy"]["orderedStack"])
         self.assertEqual(sdxl["loraPolicy"]["maxStack"], 8)
         self.assertTrue(sdxl["loraPolicy"]["perEntryModelStrength"])
@@ -67,6 +67,7 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(summary["models"][0]["provider"], "sdxl-checkpoint")
         self.assertEqual(summary["models"][0]["capabilities"]["txt2img"], "supported")
         self.assertEqual(summary["models"][0]["capabilities"]["img2img"], "supported")
+        self.assertEqual(summary["models"][0]["capabilities"]["inpaint"], "supported")
         self.assertEqual(summary["models"][0]["loraPolicy"]["maxStack"], 8)
         self.assertEqual(summary["models"][1]["capabilities"]["txt2img"], "planned")
 
