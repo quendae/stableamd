@@ -234,7 +234,7 @@ class PowerShellBridge:
         return self._run_script("Start-StableAMD.ps1", [("ForceRestart", True)])
 
     def stop_backend(self) -> Any:
-        return self._run_script("Stop-StableAMD.ps1")
+        return self._run_script("Stop-StableAMD.ps1", [("BackendOnly", True)])
 
     def diagnostics(self) -> dict[str, Any]:
         log_root = self.repo_root / ".runtime" / "stableamd" / "logs"
