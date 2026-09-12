@@ -2,6 +2,7 @@ Describe 'StableAMD v0.2 generation controls' {
     BeforeAll {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         $generationModulePath = Join-Path $repoRoot 'scripts/StableAmd.Generation.psm1'
+        $runtimeModulePath = Join-Path $repoRoot 'scripts/StableAmd.Runtime.psm1'
         $startPath = Join-Path $repoRoot 'scripts/Start-StableAMD.ps1'
         $invokePath = Join-Path $repoRoot 'scripts/Invoke-Txt2Img.ps1'
         $frontendPath = Join-Path $repoRoot 'app/frontend/index.html'
@@ -45,6 +46,28 @@ Describe 'StableAMD v0.2 generation controls' {
         $config | Should -Match '"loras"'
         $start | Should -Match 'loras:'
         $start | Should -Match 'config\.loras\.roots'
+    }
+
+    It 'adds LoRA defaults to an existing v0.1 user config without requiring reinstallation' {
+        Import-Module $runtimeModulePath -Force
+        $tempRepo = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-v02-config-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $paths = Get-StableAmdRuntimePaths -RepoRoot $tempRepo
+            New-Item -ItemType Directory -Path $paths.StableAmdRoot -Force | Out-Null
+            @{
+                schemaVersion = 1
+                backend = @{ host = '127.0.0.1'; port = 8190; startupTimeoutSeconds = 240 }
+                generation = @{ defaultWidth = 1024; defaultHeight = 1024; defaultSteps = 20; defaultCfg = 7; defaultSampler = 'euler'; defaultScheduler = 'normal' }
+                models = @{ roots = @('.runtime/stableamd/models/checkpoints') }
+            } | ConvertTo-Json -Depth 8 | Set-Content -Path $paths.ConfigPath -Encoding UTF8
+
+            $config = Read-StableAmdConfig -RepoRoot $tempRepo
+            @($config.loras.roots).Count | Should -BeGreaterThan 0
+            @($config.loras.roots) | Should -Contain '.runtime/stableamd/models/loras'
+        }
+        finally {
+            Remove-Item -Path $tempRepo -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It 'ships select controls for sampler scheduler and one LoRA with separate strengths' {
