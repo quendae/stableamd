@@ -144,6 +144,12 @@ class PowerShellBridge:
                 return nested if isinstance(nested, list) else [nested]
         return result if isinstance(result, list) else [result]
 
+    @staticmethod
+    def _normalize_list_payload(result: Any) -> list[Any]:
+        if result is None:
+            return []
+        return result if isinstance(result, list) else [result]
+
     def models(self) -> Any:
         return self._normalize_model_payload(self._run_script("List-Models.ps1"))
 
@@ -151,13 +157,17 @@ class PowerShellBridge:
         return self.models()
 
     def model_roots(self) -> Any:
-        result = self._run_script("Get-ModelRoots.ps1")
-        if result is None:
-            return []
-        return result if isinstance(result, list) else [result]
+        return self._normalize_list_payload(self._run_script("Get-ModelRoots.ps1"))
 
     def browse_model_root(self) -> Any:
         result = self._run_script("Browse-ModelRoot.ps1")
+        return result or {"cancelled": True, "path": None}
+
+    def lora_roots(self) -> Any:
+        return self._normalize_list_payload(self._run_script("Get-LoraRoots.ps1"))
+
+    def browse_lora_root(self) -> Any:
+        result = self._run_script("Browse-LoraRoot.ps1")
         return result or {"cancelled": True, "path": None}
 
     def _backend_restart_required(self) -> bool:
@@ -179,6 +189,20 @@ class PowerShellBridge:
         if isinstance(result, dict):
             return {**result, "restartRequired": restart_required, "models": models}
         return {"removed": False, "path": path, "restartRequired": False, "models": models}
+
+    def add_lora_root(self, path: str) -> Any:
+        result = self._run_script("Add-LoraRoot.ps1", [("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("added") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"added": False, "path": path, "restartRequired": False}
+
+    def remove_lora_root(self, path: str) -> Any:
+        result = self._run_script("Remove-LoraRoot.ps1", [("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("removed") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"removed": False, "path": path, "restartRequired": False}
 
     def install_model(self, request: dict[str, Any]) -> Any:
         source = str(request["source"]).lower()
@@ -209,6 +233,18 @@ class PowerShellBridge:
         if result is None:
             return []
         return result if isinstance(result, list) else [result]
+
+    def generation_profiles(self) -> dict[str, Any]:
+        path = self.repo_root / "config" / "generation-profiles.v0.2.json"
+        if not path.is_file():
+            raise StableAmdBridgeError(f"Generation profile catalog is missing: {path}")
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StableAmdBridgeError(f"Generation profile catalog is invalid: {exc}") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("profiles"), list):
+            raise StableAmdBridgeError("Generation profile catalog must contain a profiles array.")
+        return payload
 
     def _backend_base_url(self) -> str:
         status = self.status()
@@ -325,7 +361,7 @@ class StableAmdApi:
     }
     _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
     _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
-    _model_root_fields = {"path"}
+    _root_fields = {"path"}
 
     def __init__(self, bridge: Any):
         self.bridge = bridge
@@ -349,13 +385,13 @@ class StableAmdApi:
             raise ValueError(f"Model install field '{field}' must be a non-empty string.")
         return value.strip()
 
-    def _validate_model_root(self, request: dict[str, Any]) -> str:
-        unsupported = sorted(set(request) - self._model_root_fields)
+    def _validate_root(self, request: dict[str, Any], label: str) -> str:
+        unsupported = sorted(set(request) - self._root_fields)
         if unsupported:
-            raise ValueError("Unsupported model folder field(s): " + ", ".join(unsupported))
+            raise ValueError(f"Unsupported {label} folder field(s): " + ", ".join(unsupported))
         value = request.get("path")
         if not isinstance(value, str) or not value.strip():
-            raise ValueError("Model folder path must be a non-empty string.")
+            raise ValueError(f"{label} folder path must be a non-empty string.")
         return value.strip()
 
     def _validate_model_install(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -419,6 +455,8 @@ class StableAmdApi:
                 return 200, self.bridge.status()
             if method == "GET" and path == "/api/generation-options":
                 return 200, self.bridge.generation_options()
+            if method == "GET" and path == "/api/generation-profiles":
+                return 200, self.bridge.generation_profiles()
             if method == "GET" and path == "/api/models":
                 return 200, self.bridge.models()
             if method == "POST" and path == "/api/models/scan":
@@ -430,11 +468,22 @@ class StableAmdApi:
                 self._decode_json(body)
                 return 200, self.bridge.browse_model_root()
             if method == "POST" and path == "/api/model-roots":
-                root = self._validate_model_root(self._decode_json(body))
+                root = self._validate_root(self._decode_json(body), "Model")
                 return 200, self.bridge.add_model_root(root)
             if method == "POST" and path == "/api/model-roots/remove":
-                root = self._validate_model_root(self._decode_json(body))
+                root = self._validate_root(self._decode_json(body), "Model")
                 return 200, self.bridge.remove_model_root(root)
+            if method == "GET" and path == "/api/lora-roots":
+                return 200, self.bridge.lora_roots()
+            if method == "POST" and path == "/api/lora-roots/browse":
+                self._decode_json(body)
+                return 200, self.bridge.browse_lora_root()
+            if method == "POST" and path == "/api/lora-roots":
+                root = self._validate_root(self._decode_json(body), "LoRA")
+                return 200, self.bridge.add_lora_root(root)
+            if method == "POST" and path == "/api/lora-roots/remove":
+                root = self._validate_root(self._decode_json(body), "LoRA")
+                return 200, self.bridge.remove_lora_root(root)
             if method == "POST" and path == "/api/models/install":
                 request = self._validate_model_install(self._decode_json(body))
                 return 200, self.bridge.install_model(request)
