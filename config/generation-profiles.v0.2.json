@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026.09",
+  "scope": "Stable Diffusion image model lineage",
+  "profiles": [
+    {
+      "id": "sd15-base",
+      "label": "Stable Diffusion 1.5",
+      "family": "sd15",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd[_ .-]?1[._-]?5", "stable[_ .-]?diffusion[_ .-]?1[._-]?5", "v1[_-]?5"] },
+      "defaults": { "width": 512, "height": 512, "steps": 25, "cfg": 7.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
+      "combinations": [
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "karras", "steps": 25, "cfg": 7.0 },
+        { "id": "classic", "label": "Classic", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 24, "cfg": 7.0 }
+      ]
+    },
+    {
+      "id": "sd21-base",
+      "label": "Stable Diffusion 2.1",
+      "family": "sd21",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd[_ .-]?2[._-]?1", "stable[_ .-]?diffusion[_ .-]?2[._-]?1", "v2[_-]?1"] },
+      "defaults": { "width": 768, "height": 768, "steps": 25, "cfg": 7.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
+      "combinations": [
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "karras", "steps": 25, "cfg": 7.0 },
+        { "id": "classic", "label": "Classic", "sampler": "euler", "scheduler": "normal", "steps": 28, "cfg": 7.0 }
+      ]
+    },
+    {
+      "id": "sdxl-base",
+      "label": "Stable Diffusion XL 1.0",
+      "family": "sdxl",
+      "workflowSupport": "supported",
+      "match": { "namePatterns": ["sd[_-]?xl", "sdxl", "xl[_ .-]?base"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 25, "cfg": 6.0, "sampler": "dpmpp_2m", "scheduler": "karras" },
+      "combinations": [
+        { "id": "stableamd-proven", "label": "StableAMD proven", "sampler": "euler", "scheduler": "normal", "steps": 20, "cfg": 7.0 },
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "karras", "steps": 25, "cfg": 6.0 },
+        { "id": "quality", "label": "Quality", "sampler": "dpmpp_2m_sde", "scheduler": "karras", "steps": 30, "cfg": 5.5 }
+      ]
+    },
+    {
+      "id": "sdxl-turbo",
+      "label": "Stable Diffusion XL Turbo",
+      "family": "sdxl-turbo",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sdxl.*turbo", "sd[_-]?xl.*turbo"] },
+      "defaults": { "width": 512, "height": 512, "steps": 4, "cfg": 1.0, "sampler": "euler_ancestral", "scheduler": "normal" },
+      "combinations": [
+        { "id": "turbo-4", "label": "Turbo 4-step", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 4, "cfg": 1.0 },
+        { "id": "turbo-2", "label": "Turbo 2-step", "sampler": "euler_ancestral", "scheduler": "normal", "steps": 2, "cfg": 1.0 }
+      ]
+    },
+    {
+      "id": "sd3-medium",
+      "label": "Stable Diffusion 3 Medium",
+      "family": "sd3",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd3[_ .-]?medium", "stable[_ .-]?diffusion[_ .-]?3[_ .-]?medium"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 28, "cfg": 4.5, "sampler": "dpmpp_2m", "scheduler": "sgm_uniform" },
+      "combinations": [
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "sgm_uniform", "steps": 28, "cfg": 4.5 }
+      ]
+    },
+    {
+      "id": "sd35-medium",
+      "label": "Stable Diffusion 3.5 Medium",
+      "family": "sd35-medium",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd3[._-]?5[_ .-]?medium", "stable[_ .-]?diffusion[_ .-]?3[._-]?5[_ .-]?medium"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 28, "cfg": 4.5, "sampler": "dpmpp_2m", "scheduler": "sgm_uniform" },
+      "combinations": [
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "sgm_uniform", "steps": 28, "cfg": 4.5 }
+      ]
+    },
+    {
+      "id": "sd35-large",
+      "label": "Stable Diffusion 3.5 Large",
+      "family": "sd35-large",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd3[._-]?5[_ .-]?large(?![_ .-]?turbo)", "stable[_ .-]?diffusion[_ .-]?3[._-]?5[_ .-]?large(?![_ .-]?turbo)"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 28, "cfg": 4.5, "sampler": "dpmpp_2m", "scheduler": "sgm_uniform" },
+      "combinations": [
+        { "id": "balanced", "label": "Balanced", "sampler": "dpmpp_2m", "scheduler": "sgm_uniform", "steps": 28, "cfg": 4.5 }
+      ]
+    },
+    {
+      "id": "sd35-large-turbo",
+      "label": "Stable Diffusion 3.5 Large Turbo",
+      "family": "sd35-large-turbo",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd3[._-]?5[_ .-]?large[_ .-]?turbo", "stable[_ .-]?diffusion[_ .-]?3[._-]?5[_ .-]?large[_ .-]?turbo"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "sgm_uniform" },
+      "combinations": [
+        { "id": "turbo-4", "label": "Turbo 4-step", "sampler": "euler", "scheduler": "sgm_uniform", "steps": 4, "cfg": 1.0 }
+      ]
+    },
+    {
+      "id": "sd35-flash",
+      "label": "Stable Diffusion 3.5 Flash",
+      "family": "sd35-flash",
+      "workflowSupport": "planned",
+      "match": { "namePatterns": ["sd3[._-]?5[_ .-]?flash", "stable[_ .-]?diffusion[_ .-]?3[._-]?5[_ .-]?flash"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 4, "cfg": 1.0, "sampler": "euler", "scheduler": "sgm_uniform" },
+      "combinations": [
+        { "id": "flash-4", "label": "Flash 4-step", "sampler": "euler", "scheduler": "sgm_uniform", "steps": 4, "cfg": 1.0 }
+      ]
+    }
+  ]
+}
