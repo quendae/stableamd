@@ -72,8 +72,8 @@ Describe 'StableAMD v0.3 bundle asset roots' {
             $removed = Remove-StableAmdBundleAssetRoot -RepoRoot $tempRepo -Role 'diffusion_model' -Path $external
             $removed.removed | Should -BeTrue
 
-            $paths = Get-StableAmdRuntimePaths -RepoRoot $tempRepo
-            { Remove-StableAmdBundleAssetRoot -RepoRoot $tempRepo -Role 'diffusion_model' -Path $paths.DiffusionModelsRoot } | Should -Throw '*managed*cannot be removed*'
+            $managedRoot = [IO.Path]::GetFullPath((Join-Path $tempRepo '.runtime/stableamd/models/diffusion_models'))
+            { Remove-StableAmdBundleAssetRoot -RepoRoot $tempRepo -Role 'diffusion_model' -Path $managedRoot } | Should -Throw '*managed*cannot be removed*'
         }
         finally {
             Remove-Item -LiteralPath $tempRepo -Recurse -Force -ErrorAction SilentlyContinue
