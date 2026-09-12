@@ -5,7 +5,7 @@ Describe 'StableAMD v0.2 generation controls' {
         $startPath = Join-Path $repoRoot 'scripts/Start-StableAMD.ps1'
         $invokePath = Join-Path $repoRoot 'scripts/Invoke-Txt2Img.ps1'
         $frontendPath = Join-Path $repoRoot 'app/frontend/index.html'
-        $frontendJsPath = Join-Path $repoRoot 'app/frontend/app.js'
+        $frontendV02JsPath = Join-Path $repoRoot 'app/frontend/app-v02.js'
         $serverPath = Join-Path $repoRoot 'app/backend/stableamd_server.py'
         $configPath = Join-Path $repoRoot 'config/stableamd.default.json'
     }
@@ -49,13 +49,15 @@ Describe 'StableAMD v0.2 generation controls' {
 
     It 'ships select controls for sampler scheduler and one LoRA with separate strengths' {
         $html = Get-Content $frontendPath -Raw
-        $js = Get-Content $frontendJsPath -Raw
+        Test-Path $frontendV02JsPath | Should -BeTrue
+        $js = Get-Content $frontendV02JsPath -Raw
 
         $html | Should -Match '<select[^>]+id="sampler"'
         $html | Should -Match '<select[^>]+id="scheduler"'
         $html | Should -Match '<select[^>]+id="lora-select"'
         $html | Should -Match 'id="lora-model-strength"'
         $html | Should -Match 'id="lora-clip-strength"'
+        $html | Should -Match 'app-v02\.js'
         $js | Should -Match '/api/generation-options'
         $js | Should -Match 'loraName'
         $js | Should -Match 'loraModelStrength'
