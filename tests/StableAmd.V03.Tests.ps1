@@ -39,6 +39,6 @@ Describe 'StableAMD v0.3 workflow provider foundation' {
         Import-Module $workflowsModulePath -Force
 
         { New-StableAmdWorkflow -Family 'flux' -Mode 'txt2img' -CheckpointName 'flux.safetensors' -Prompt 'cat' } | Should -Throw '*not implemented*'
-        { New-StableAmdWorkflow -Family 'sdxl' -Mode 'inpaint' -CheckpointName 'sdxl.safetensors' -Prompt 'cat' } | Should -Throw '*not implemented*'
+        { New-StableAmdWorkflow -Family 'sdxl' -Mode 'controlnet' -CheckpointName 'sdxl.safetensors' -Prompt 'cat' } | Should -Throw '*not implemented*'
     }
 }
