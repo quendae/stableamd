@@ -5,6 +5,7 @@ Set-StrictMode -Version 2.0
 # nested reload can remove those exported commands from the caller session.
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1')
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Img2Img.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Inpaint.psm1') -Force
 
 function Get-StableAmdLoraValue {
     [CmdletBinding()]
@@ -129,7 +130,7 @@ function New-StableAmdWorkflow {
     $normalizedFamily = $Family.Trim().ToLowerInvariant()
     $normalizedMode = $Mode.Trim().ToLowerInvariant()
 
-    if ($normalizedFamily -eq 'sdxl' -and $normalizedMode -in @('txt2img', 'img2img')) {
+    if ($normalizedFamily -eq 'sdxl' -and $normalizedMode -in @('txt2img', 'img2img', 'inpaint')) {
         if (@($LoraStack).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
             throw 'Specify LoraStack or the legacy single LoraName fields, not both.'
         }
@@ -150,6 +151,9 @@ function New-StableAmdWorkflow {
 
         if ($normalizedMode -eq 'img2img') {
             $workflow = New-StableAmdSdxlImg2ImgWorkflow @parameters -InputImageName $InputImageName -Denoise $Denoise
+        }
+        elseif ($normalizedMode -eq 'inpaint') {
+            $workflow = New-StableAmdSdxlInpaintWorkflow @parameters -InputImageName $InputImageName -Denoise $Denoise
         }
         else {
             $workflow = New-StableAmdSdxlWorkflow @parameters
