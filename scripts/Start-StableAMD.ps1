@@ -107,12 +107,10 @@ if ($null -ne $existingState) {
         Remove-StableAmdBackendState -Path $paths.BackendStatePath
     }
     else {
-        throw "A StableAMD-managed process with PID $($existingState.pid) exists but is not healthy. Run Stop-StableAMD.ps1 -BackendOnly or retry with -ForceRestart."
+        throw "A StableAMD-managed process with PID $($existingState.pid) exists but is not healthy. Run Stop-StableAMD.ps1 or retry with -ForceRestart."
     }
 }
 
-# ComfyUI reads external checkpoint folders only at backend startup. Build the
-# generated extra_model_paths.yaml from every configured StableAMD model root.
 $modelRoots = @()
 $seenRoots = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach ($rawRoot in @($config.models.roots)) {
@@ -144,7 +142,10 @@ $stderrPath = Join-Path $paths.LogsRoot "backend-$stamp.stderr.log"
 $url = "http://127.0.0.1:$resolvedPort/"
 $statsUrl = "${url}system_stats"
 
-$arguments = "-s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 127.0.0.1 --port $resolvedPort --extra-model-paths-config `"$modelConfigPath`" --output-directory `"$($paths.OutputRoot)`""
+# -u is important here: the backend has no visible console window, so Python
+# would otherwise block-buffer redirected stdout/stderr and live diagnostics
+# would appear empty until much later in the session.
+$arguments = "-u -s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 127.0.0.1 --port $resolvedPort --extra-model-paths-config `"$modelConfigPath`" --output-directory `"$($paths.OutputRoot)`""
 
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
 $hadOverride = $null -ne $oldOverride
