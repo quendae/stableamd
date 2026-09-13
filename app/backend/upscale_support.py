@@ -12,6 +12,9 @@ from urllib.request import Request, urlopen
 import stableamd_server as base
 
 
+SUPPORTED_UPSCALE_MODEL_SUFFIXES = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft"}
+
+
 def _post_json(url: str, payload: dict[str, Any], timeout: int = 60) -> Any:
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
@@ -27,9 +30,22 @@ class UpscalePowerShellBridge(base.PowerShellBridge):
     def upscale_models(self) -> dict[str, Any]:
         root = (self.repo_root / ".runtime" / "stableamd" / "models" / "upscale_models").resolve()
         models = [str(item) for item in self._upscale_choices() if str(item).strip()]
+        disk_models: list[str] = []
+        if root.is_dir():
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix.lower() not in SUPPORTED_UPSCALE_MODEL_SUFFIXES:
+                    continue
+                disk_models.append(path.relative_to(root).as_posix())
+        disk_models.sort(key=str.lower)
+
+        registered = {str(item).replace("\\", "/").lower() for item in models}
+        unregistered = [item for item in disk_models if item.lower() not in registered]
         return {
             "root": str(root),
             "models": models,
+            "diskModels": disk_models,
+            "unregisteredModels": unregistered,
+            "restartRecommended": bool(unregistered),
             "recommendations": [
                 {
                     "name": "4x-UltraSharp",
