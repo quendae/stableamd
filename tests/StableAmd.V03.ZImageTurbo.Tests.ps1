@@ -35,6 +35,7 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         $workflow['30'].class_type | Should -Be 'CLIPLoader'
         $workflow['30'].inputs.clip_name | Should -Be 'qwen_3_4b.safetensors'
         $workflow['30'].inputs.type | Should -Be 'lumina2'
+        $workflow['30'].inputs.device | Should -Be 'cpu'
         $workflow['29'].class_type | Should -Be 'VAELoader'
         $workflow['27'].class_type | Should -Be 'CLIPTextEncode'
         $workflow['33'].class_type | Should -Be 'ConditioningZeroOut'
@@ -100,6 +101,7 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
 
         $workflow['28'].class_type | Should -Be 'UNETLoader'
         $workflow['30'].class_type | Should -Be 'CLIPLoader'
+        $workflow['30'].inputs.device | Should -Be 'cpu'
         $workflow['3'].inputs.steps | Should -Be 8
     }
 
