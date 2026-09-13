@@ -39,8 +39,8 @@ function New-StableAmdZImageTurboWorkflow {
 
     # Graph follows Comfy-Org/workflow_templates image_z_image_turbo.json.
     # Z-Image Turbo uses Lumina2 text conditioning, an SD3 latent layout and
-    # AuraFlow model sampling with shift=3. The negative conditioning in the
-    # official workflow is a zeroed copy of the positive conditioning.
+    # AuraFlow model sampling with shift=3. Keep the large text encoder on CPU
+    # so the diffusion model can use the RX 6950 XT VRAM during sampling.
     return [ordered]@{
         '28' = [ordered]@{
             class_type = 'UNETLoader'
@@ -54,7 +54,7 @@ function New-StableAmdZImageTurboWorkflow {
             inputs = [ordered]@{
                 clip_name = $TextEncoderName
                 type = 'lumina2'
-                device = 'default'
+                device = 'cpu'
             }
         }
         '29' = [ordered]@{
