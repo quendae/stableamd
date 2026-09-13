@@ -62,6 +62,27 @@ class StableAmdV03UpscaleApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("Unsupported upscale field", payload["error"])
 
+    def test_reads_current_comfy_upscale_combo_options_contract(self):
+        payload = {
+            "UpscaleModelLoader": {
+                "input": {
+                    "required": {
+                        "model_name": [
+                            "COMBO",
+                            {
+                                "multiselect": False,
+                                "options": ["RealESRGAN_x2plus.pth"],
+                            },
+                        ],
+                    }
+                }
+            }
+        }
+        bridge = upscale_support.UpscalePowerShellBridge(REPO_ROOT, powershell=sys.executable)
+        bridge._comfy_json = lambda _: payload
+
+        self.assertEqual(bridge._upscale_choices(), ["RealESRGAN_x2plus.pth"])
+
     def test_reports_model_on_disk_when_comfy_has_not_registered_it(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo_root = Path(temporary)
