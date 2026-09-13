@@ -7,6 +7,7 @@ param(
     [switch]$DisableDynamicVram,
     [switch]$LowVram,
     [switch]$HighVram,
+    [switch]$CacheClassic,
     [switch]$CacheNone
 )
 
@@ -173,6 +174,9 @@ if ($LowVram) {
 if ($HighVram) {
     $arguments += ' --highvram'
 }
+if ($CacheClassic) {
+    $arguments += ' --cache-classic'
+}
 if ($CacheNone) {
     $arguments += ' --cache-none'
 }
@@ -248,6 +252,7 @@ $state = [pscustomobject]@{
     dynamicVramDisabled = [bool]$DisableDynamicVram
     lowVram = [bool]$LowVram
     highVram = [bool]$HighVram
+    cacheClassic = [bool]$CacheClassic
     cacheNone = [bool]$CacheNone
     device = [pscustomobject]@{
         name = [string]$device.name
@@ -268,6 +273,7 @@ return [pscustomobject]@{
     DynamicVramDisabled = [bool]$DisableDynamicVram
     LowVram = [bool]$LowVram
     HighVram = [bool]$HighVram
+    CacheClassic = [bool]$CacheClassic
     CacheNone = [bool]$CacheNone
     StatePath = $paths.BackendStatePath
     StdoutLog = $stdoutPath
