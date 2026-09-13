@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 import uuid
@@ -13,6 +14,19 @@ import stableamd_server as base
 
 
 SUPPORTED_UPSCALE_MODEL_SUFFIXES = {".ckpt", ".pt", ".pt2", ".bin", ".pth", ".safetensors", ".pkl", ".sft"}
+
+
+def infer_upscale_scale(model_name: str) -> int | None:
+    """Infer a conventional native model scale from common upscaler names."""
+    name = str(model_name or "")
+    for pattern in (
+        r"(?i)(?:^|[_\-.])([248])x(?:[_\-.]|$)",
+        r"(?i)x([248])(?:plus|[_\-.]|$)",
+    ):
+        match = re.search(pattern, name)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout: int = 60) -> Any:
@@ -85,6 +99,46 @@ class UpscalePowerShellBridge(base.PowerShellBridge):
                 },
             ],
         }
+
+    def delete_history(self, prompt_id: str) -> dict[str, Any]:
+        prompt_id = str(prompt_id or "").strip()
+        if not prompt_id:
+            raise base.StableAmdBridgeError("History prompt id is required.")
+
+        history_root = (self.repo_root / ".runtime" / "stableamd" / "history").resolve()
+        if not history_root.is_dir():
+            return {"deleted": False, "promptId": prompt_id, "imageDeleted": False}
+
+        for record_path in history_root.glob("*.json"):
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict) or str(record.get("promptId") or "") != prompt_id:
+                continue
+
+            image_deleted = False
+            raw_image = str(record.get("imagePath") or "").strip()
+            if raw_image:
+                try:
+                    image = base.resolve_output_image(self.repo_root, raw_image)
+                    image.unlink(missing_ok=True)
+                    image_deleted = not image.exists()
+                except (ValueError, OSError):
+                    # A stale/missing image must not make the history record undeletable.
+                    image_deleted = False
+
+            try:
+                record_path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise base.StableAmdBridgeError(f"Could not delete Gallery history record: {exc}") from exc
+            return {
+                "deleted": True,
+                "promptId": prompt_id,
+                "imageDeleted": image_deleted,
+            }
+
+        return {"deleted": False, "promptId": prompt_id, "imageDeleted": False}
 
     def _stage_upscale_input(self, source: Path) -> Path:
         input_root = (self.repo_root / ".runtime" / "stableamd" / "input").resolve()
@@ -182,14 +236,19 @@ class UpscalePowerShellBridge(base.PowerShellBridge):
 
             image_path = self._resolve_upscale_output(prompt_id, history_entry)
             generation_seconds = round(time.monotonic() - started, 3)
+            scale = infer_upscale_scale(str(exact))
             record = {
                 "schemaVersion": 3,
                 "createdAtUtc": datetime.now(timezone.utc).isoformat(),
                 "promptId": prompt_id,
                 "mode": "upscale",
-                "prompt": "",
+                "prompt": "Upscaled image",
                 "sourceImagePath": str(source),
+                "modelName": f"Upscale · {exact}",
+                "family": "upscale",
+                "provider": "stock-upscale",
                 "upscaleModel": str(exact),
+                "upscaleScale": scale,
                 "generationSeconds": generation_seconds,
                 "imagePath": str(image_path),
                 "backendUrl": backend_url,
@@ -199,7 +258,9 @@ class UpscalePowerShellBridge(base.PowerShellBridge):
                 "PromptId": prompt_id,
                 "Mode": "upscale",
                 "SourceImagePath": str(source),
+                "ModelName": record["modelName"],
                 "UpscaleModel": str(exact),
+                "UpscaleScale": scale,
                 "GenerationSeconds": generation_seconds,
                 "ImagePath": str(image_path),
                 "HistoryPath": str(history_path),
@@ -214,6 +275,7 @@ class UpscalePowerShellBridge(base.PowerShellBridge):
 
 class UpscaleStableAmdApi(base.StableAmdApi):
     _upscale_fields = {"imagePath", "modelName"}
+    _history_delete_fields = {"promptId"}
 
     def _validate_upscale(self, request: dict[str, Any]) -> dict[str, Any]:
         unsupported = sorted(set(request) - self._upscale_fields)
@@ -227,6 +289,15 @@ class UpscaleStableAmdApi(base.StableAmdApi):
             raise ValueError("modelName is required for upscale.")
         return {"imagePath": image_path.strip(), "modelName": model_name.strip()}
 
+    def _validate_history_delete(self, request: dict[str, Any]) -> str:
+        unsupported = sorted(set(request) - self._history_delete_fields)
+        if unsupported:
+            raise ValueError("Unsupported Gallery delete field(s): " + ", ".join(unsupported))
+        prompt_id = request.get("promptId")
+        if not isinstance(prompt_id, str) or not prompt_id.strip():
+            raise ValueError("promptId is required to delete a Gallery item.")
+        return prompt_id.strip()
+
     def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
         path = target.split("?", 1)[0]
         try:
@@ -235,6 +306,9 @@ class UpscaleStableAmdApi(base.StableAmdApi):
             if method == "POST" and path == "/api/upscale":
                 request = self._validate_upscale(self._decode_json(body))
                 return 200, self.bridge.upscale(request)
+            if method == "POST" and path == "/api/history/delete":
+                prompt_id = self._validate_history_delete(self._decode_json(body))
+                return 200, self.bridge.delete_history(prompt_id)
         except ValueError as exc:
             return 400, {"error": str(exc)}
         return super().dispatch(method, target, body)
