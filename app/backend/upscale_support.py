@@ -25,7 +25,28 @@ def _post_json(url: str, payload: dict[str, Any], timeout: int = 60) -> Any:
 class UpscalePowerShellBridge(base.PowerShellBridge):
     def _upscale_choices(self) -> list[str]:
         info = self._comfy_json("object_info/UpscaleModelLoader")
-        return self._comfy_choice_list(info, "UpscaleModelLoader", "model_name")
+
+        # Legacy Comfy nodes expose enum choices directly as the first item,
+        # e.g. [["model-a.pth", "model-b.pth"]]. Newer Comfy io.Schema nodes
+        # expose a typed COMBO plus an options object instead:
+        # ["COMBO", {"options": ["model-a.pth"]}].
+        legacy = self._comfy_choice_list(info, "UpscaleModelLoader", "model_name")
+        if legacy:
+            return legacy
+
+        if not isinstance(info, dict):
+            return []
+        node = info.get("UpscaleModelLoader")
+        if not isinstance(node, dict):
+            return []
+        required = node.get("input", {}).get("required", {})
+        spec = required.get("model_name") if isinstance(required, dict) else None
+        if not isinstance(spec, list) or len(spec) < 2 or spec[0] != "COMBO" or not isinstance(spec[1], dict):
+            return []
+        options = spec[1].get("options")
+        if not isinstance(options, list):
+            return []
+        return [str(value) for value in options if str(value).strip()]
 
     def upscale_models(self) -> dict[str, Any]:
         root = (self.repo_root / ".runtime" / "stableamd" / "models" / "upscale_models").resolve()
