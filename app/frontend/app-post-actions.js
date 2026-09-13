@@ -3,13 +3,36 @@
     outpaintRecord: null,
   };
 
+  function loadCompactGenerateUi() {
+    if (document.querySelector('script[data-stableamd-compact-generate]')) return;
+    const script = document.createElement('script');
+    script.src = '/app-generate-compact.js';
+    script.dataset.stableamdCompactGenerate = '';
+    document.body.append(script);
+  }
+
+  function iconSvg(name) {
+    const common = 'viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+    const paths = {
+      upscale: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/><path d="M3 8l6-6M21 8l-6-6M3 16l6 6M21 16l-6 6"/>',
+      img2img: '<rect x="3" y="5" width="14" height="14" rx="2"/><path d="m3 15 4-4 4 4 2-2 4 4"/><path d="M18 8h3m-1.5-1.5L21 8l-1.5 1.5"/>',
+      inpaint: '<path d="m14 4 6 6-8.5 8.5a3 3 0 0 1-4.2 0l-1.8-1.8a3 3 0 0 1 0-4.2L14 4Z"/><path d="m11 7 6 6"/>',
+      outpaint: '<path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/><rect x="7" y="7" width="10" height="10" rx="1"/>',
+      delete: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
+    };
+    return `<svg ${common}>${paths[name] || ''}</svg>`;
+  }
+
   function installPostActionStyles() {
     if (document.querySelector("#post-action-styles")) return;
     const style = document.createElement("style");
     style.id = "post-action-styles";
     style.textContent = `
-      .history-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
-      .history-actions .button { min-width: 0; padding-inline: 8px; }
+      .history-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .history-actions .button { min-width: 0; min-height: 32px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; }
+      .history-actions .button svg { flex: 0 0 auto; }
+      .history-actions .gallery-delete { margin-left: auto; color: var(--danger, #ef6f79); }
+      .history-card-upscale .history-model { color: var(--accent, #ef6c45); }
       .outpaint-controls { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #303844); }
       .outpaint-margin-grid { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 8px; }
       @media (max-width: 760px) { .outpaint-margin-grid { grid-template-columns: repeat(2, minmax(90px, 1fr)); } }
@@ -19,6 +42,10 @@
 
   function recordImagePath(record) {
     return String(getValue(record, "imagePath", "ImagePath") || "");
+  }
+
+  function recordMode(record) {
+    return String(getValue(record, "mode", "Mode") || "").toLowerCase();
   }
 
   function postActionEvent(action, record) {
@@ -143,8 +170,6 @@
       });
       return image;
     } finally {
-      // Caller draws synchronously after this promise resolves, so keep image data
-      // decoded while releasing the backing object URL immediately afterwards.
       setTimeout(() => URL.revokeObjectURL(url), 0);
     }
   }
@@ -223,25 +248,62 @@
     showToast("Upscale provider is not loaded yet.", "error");
   }
 
+  async function deleteGalleryRecord(record) {
+    const promptId = String(getValue(record, "promptId", "PromptId") || "").trim();
+    if (!promptId) throw new Error("This Gallery item has no deletable history identifier.");
+    if (!window.confirm("Delete this Gallery item and its local output image?")) return;
+
+    const result = await api("/api/history/delete", {
+      method: "POST",
+      body: JSON.stringify({ promptId }),
+    });
+    if (!result?.deleted) throw new Error("Gallery item was not found on disk.");
+    await refreshHistory();
+    showToast(result.imageDeleted ? "Gallery item and image deleted." : "Gallery history item deleted.", "success");
+  }
+
+  function labelUpscaleCard(card, record) {
+    if (recordMode(record) !== "upscale") return;
+    card.classList.add("history-card-upscale");
+    const modelName = String(getValue(record, "upscaleModel", "UpscaleModel") || getValue(record, "modelName", "ModelName") || "Upscaler");
+    const scale = Number(getValue(record, "upscaleScale", "UpscaleScale"));
+    const prompt = card.querySelector(".history-prompt");
+    const model = card.querySelector(".history-model");
+    if (prompt) prompt.textContent = Number.isFinite(scale) && scale > 0 ? `Upscaled image · ${scale}×` : "Upscaled image";
+    if (model) model.textContent = `Upscale · ${modelName.replace(/^Upscale\s*·\s*/i, "")}`;
+    card.querySelector(".reuse-button")?.remove();
+  }
+
+  function actionButton(action, label, index) {
+    const button = document.createElement("button");
+    button.className = `button button-quiet${action === "delete" ? " gallery-delete" : ""}`;
+    button.type = "button";
+    button.dataset.postAction = action;
+    button.dataset.postIndex = String(index);
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.innerHTML = `${iconSvg(action)}<span>${label}</span>`;
+    return button;
+  }
+
   function addGalleryActions() {
     const cards = Array.from(document.querySelectorAll("#gallery-grid .history-card"));
     cards.forEach((card, index) => {
-      if (card.querySelector(".history-actions")) return;
       const record = state.history?.[index];
-      if (!record || !recordImagePath(record)) return;
+      if (!record) return;
+      labelUpscaleCard(card, record);
+      if (card.querySelector(".history-actions")) return;
       const body = card.querySelector(".history-body");
       if (!body) return;
       const actions = document.createElement("div");
       actions.className = "history-actions";
-      for (const [action, label] of [["upscale", "Upscale"], ["img2img", "Img2Img"], ["inpaint", "Inpaint"], ["outpaint", "Outpaint"]]) {
-        const button = document.createElement("button");
-        button.className = "button button-quiet";
-        button.type = "button";
-        button.dataset.postAction = action;
-        button.dataset.postIndex = String(index);
-        button.textContent = label;
-        actions.append(button);
+
+      if (recordImagePath(record)) {
+        for (const [action, label] of [["upscale", "Upscale"], ["img2img", "Img2Img"], ["inpaint", "Inpaint"], ["outpaint", "Outpaint"]]) {
+          actions.append(actionButton(action, label, index));
+        }
       }
+      actions.append(actionButton("delete", "Delete", index));
       body.append(actions);
     });
   }
@@ -255,11 +317,13 @@
     if (action === "img2img") return handoffToImg2Img(record);
     if (action === "inpaint") return handoffToInpaint(record);
     if (action === "outpaint") return handoffToOutpaint(record);
+    if (action === "delete") return deleteGalleryRecord(record);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
     installPostActionStyles();
     ensureOutpaintControls();
+    loadCompactGenerateUi();
     const grid = document.querySelector("#gallery-grid");
     if (grid) {
       grid.addEventListener("click", (event) => {
