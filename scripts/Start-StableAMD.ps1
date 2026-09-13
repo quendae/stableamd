@@ -5,7 +5,8 @@ param(
     [int]$StartupTimeoutSeconds = 0,
     [switch]$ForceRestart,
     [switch]$DisableDynamicVram,
-    [switch]$LowVram
+    [switch]$LowVram,
+    [switch]$CacheNone
 )
 
 $ErrorActionPreference = 'Stop'
@@ -168,6 +169,9 @@ if ($DisableDynamicVram) {
 if ($LowVram) {
     $arguments += ' --lowvram'
 }
+if ($CacheNone) {
+    $arguments += ' --cache-none'
+}
 
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
 $hadOverride = $null -ne $oldOverride
@@ -239,6 +243,7 @@ $state = [pscustomobject]@{
     stderrLog = $stderrPath
     dynamicVramDisabled = [bool]$DisableDynamicVram
     lowVram = [bool]$LowVram
+    cacheNone = [bool]$CacheNone
     device = [pscustomobject]@{
         name = [string]$device.name
         type = [string]$device.type
@@ -257,6 +262,7 @@ return [pscustomobject]@{
     Device = $state.device
     DynamicVramDisabled = [bool]$DisableDynamicVram
     LowVram = [bool]$LowVram
+    CacheNone = [bool]$CacheNone
     StatePath = $paths.BackendStatePath
     StdoutLog = $stdoutPath
     StderrLog = $stderrPath
