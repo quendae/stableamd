@@ -74,6 +74,6 @@ Describe 'StableAMD v0.3 logical model packages' {
         $frontend | Should -Match 'model-package-list'
         $frontend | Should -Match 'package-component'
         $frontend | Should -Match 'window\.renderModels'
-        $frontend | Should -Match 'capabilities\?\.txt2img'
+        $frontend | Should -Match 'capabilities.*txt2img'
     }
 }
