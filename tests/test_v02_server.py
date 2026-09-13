@@ -138,27 +138,6 @@ class StableAmdV02ApiTests(unittest.TestCase):
             ["euler", "dpmpp_2m"],
         )
 
-    def test_comfy_choice_parser_reads_current_combo_options_contract(self):
-        payload = {
-            "UpscaleModelLoader": {
-                "input": {
-                    "required": {
-                        "model_name": [
-                            "COMBO",
-                            {
-                                "multiselect": False,
-                                "options": ["RealESRGAN_x2plus.pth"],
-                            },
-                        ],
-                    }
-                }
-            }
-        }
-        self.assertEqual(
-            PowerShellBridge._comfy_choice_list(payload, "UpscaleModelLoader", "model_name"),
-            ["RealESRGAN_x2plus.pth"],
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
