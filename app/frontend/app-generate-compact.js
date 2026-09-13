@@ -52,15 +52,12 @@
     const field = control?.closest('.field');
     if (!field || !container) return null;
     if (label) shortFieldLabel(field, label);
-    container.append(field);
+    if (field.parentElement !== container) container.append(field);
     return field;
   }
 
   function compactifyLoraRow(row) {
     if (!row || row.dataset.compactLora === 'true') return;
-    row.dataset.compactLora = 'true';
-    row.classList.add('lora-stack-row-compact');
-
     const main = row.querySelector('.model-root-main');
     const actions = row.querySelector('.model-root-actions');
     const enabled = row.querySelector('[data-lora-enabled]')?.closest('.checkbox-field');
@@ -71,6 +68,8 @@
     const clipInput = row.querySelector('[data-lora-clip-strength]');
     if (!main || !actions || !nameField || !modelField || !clipField || !modelInput || !clipInput) return;
 
+    row.dataset.compactLora = 'true';
+    row.classList.add('lora-stack-row-compact');
     shortFieldLabel(nameField, 'LoRA');
     shortFieldLabel(modelField, 'Strength');
     shortFieldLabel(clipField, 'CLIP strength');
@@ -166,12 +165,17 @@
     const negativeField = document.querySelector('#negative-prompt')?.closest('.field');
     if (negativeField) {
       negativeField.classList.add('negative-prompt-field');
-      promptField.after(negativeField);
+      if (negativeField.previousElementSibling !== promptField) promptField.after(negativeField);
     }
 
     if (!sizeRow.isConnected) (negativeField || promptField).after(sizeRow);
-    moveField(sizeRow, '#resolution-tier', 'Size');
-    moveField(sizeRow, '#aspect-ratio', 'Ratio');
+    const resolutionPanel = document.querySelector('#resolution-preset-panel');
+    if (resolutionPanel) {
+      resolutionPanel.classList.add('compact-resolution-panel');
+      shortFieldLabel(document.querySelector('#resolution-tier')?.closest('.field'), 'Size');
+      shortFieldLabel(document.querySelector('#aspect-ratio')?.closest('.field'), 'Ratio');
+      if (resolutionPanel.parentElement !== sizeRow) sizeRow.append(resolutionPanel);
+    }
 
     moveField(customSize, '#width', 'Width');
     moveField(customSize, '#height', 'Height');
@@ -185,13 +189,13 @@
     if (!parameterRow.isConnected) customSize.after(parameterRow);
 
     const stack = document.querySelector('#lora-stack-panel');
-    if (stack) parameterRow.after(stack);
+    if (stack && stack.previousElementSibling !== parameterRow) parameterRow.after(stack);
 
     const modePanel = document.querySelector('#generation-mode-panel');
     const img2img = document.querySelector('#img2img-controls');
-    if (img2img) modeWorkspace.append(img2img);
+    if (img2img && img2img.parentElement !== modeWorkspace) modeWorkspace.append(img2img);
     const inpaint = document.querySelector('#inpaint-controls');
-    if (inpaint) modeWorkspace.append(inpaint);
+    if (inpaint && inpaint.parentElement !== modeWorkspace) modeWorkspace.append(inpaint);
     if (!modeWorkspace.isConnected) (stack || parameterRow).after(modeWorkspace);
     if (modePanel && !modePanel.querySelector('.field') && !modePanel.querySelector('#img2img-controls')) modePanel.hidden = true;
 
@@ -203,7 +207,7 @@
       button.classList.add('compact-generate-button');
       const submitRow = createSection('generate-submit-row', 'generate-submit-row');
       if (!submitRow.isConnected) form.append(submitRow);
-      submitRow.append(button);
+      if (button.parentElement !== submitRow) submitRow.append(button);
     }
 
     compactifyLoraStack();
