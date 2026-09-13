@@ -1,0 +1,13 @@
+Describe 'StableAMD memory diagnostics' {
+    It 'supports disabling the ComfyUI RAM pressure cache independently from VRAM mode' {
+        $backendScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
+        $launcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Launch-StableAMD.ps1') -Raw
+
+        $backendScript | Should -Match '\[switch\]\$CacheNone'
+        $backendScript | Should -Match '--cache-none'
+        $backendScript | Should -Match 'cacheNone = \[bool\]\$CacheNone'
+        $launcherScript | Should -Match '\[switch\]\$CacheNone'
+        $launcherScript | Should -Match '\$backendParams\.CacheNone = \$true'
+        $launcherScript | Should -Match 'RAM pressure cache disabled'
+    }
+}
