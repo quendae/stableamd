@@ -32,6 +32,8 @@ $diffusionRoots = @(Get-ExistingStableAmdBundleRoots -Role 'diffusion_model')
 $textEncoderRoots = @(Get-ExistingStableAmdBundleRoots -Role 'text_encoder')
 $vaeRoots = @(Get-ExistingStableAmdBundleRoots -Role 'vae')
 
+# Find-StableAmdTemplateBundles remains the ready-only compatibility helper.
+# Product discovery uses packages so incomplete known models stay visible.
 $packages = @(
     Find-StableAmdTemplatePackages `
         -DiffusionRoots $diffusionRoots `
