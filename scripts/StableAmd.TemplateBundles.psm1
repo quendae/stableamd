@@ -64,9 +64,9 @@ function Find-StableAmdTemplatePackages {
     )
     $ready = @($components | Where-Object { -not $_.present }).Count -eq 0
 
-    $diffusionAssets = @($components | Where-Object role -eq 'diffusion_model' | Where-Object present | ForEach-Object path)
-    $encoderAssets = @($components | Where-Object role -eq 'text_encoder' | Where-Object present | ForEach-Object path)
-    $vaeAssets = @($components | Where-Object role -eq 'vae' | Where-Object present | ForEach-Object path)
+    $diffusionAssets = @($components | Where-Object { $_.role -eq 'diffusion_model' -and $_.present } | ForEach-Object { $_.path })
+    $encoderAssets = @($components | Where-Object { $_.role -eq 'text_encoder' -and $_.present } | ForEach-Object { $_.path })
+    $vaeAssets = @($components | Where-Object { $_.role -eq 'vae' -and $_.present } | ForEach-Object { $_.path })
 
     return @(
         [pscustomobject]@{
