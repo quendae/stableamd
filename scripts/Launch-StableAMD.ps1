@@ -9,6 +9,7 @@ param(
     [switch]$DisableDynamicVram,
     [switch]$LowVram,
     [switch]$HighVram,
+    [switch]$CacheClassic,
     [switch]$CacheNone
 )
 
@@ -195,6 +196,10 @@ if ($LowVram) {
 if ($HighVram) {
     Write-Host 'Diagnostic memory mode: ComfyUI highvram enabled.' -ForegroundColor Yellow
     $backendParams.HighVram = $true
+}
+if ($CacheClassic) {
+    Write-Host 'Diagnostic memory mode: ComfyUI classic cache enabled.' -ForegroundColor Yellow
+    $backendParams.CacheClassic = $true
 }
 if ($CacheNone) {
     Write-Host 'Diagnostic memory mode: ComfyUI RAM pressure cache disabled.' -ForegroundColor Yellow
