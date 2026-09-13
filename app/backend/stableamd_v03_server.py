@@ -16,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_server as base
+from lora_catalog import families_compatible, normalize_model_family, scan_lora_catalog
 
 
 def _value(record: dict[str, Any], *names: str, default: Any = None) -> Any:
@@ -51,6 +52,84 @@ class PowerShellBridge(base.PowerShellBridge):
                 seen.add(key)
                 merged.append(model)
             return merged
+
+    def lora_catalog(self) -> list[dict[str, Any]]:
+        roots: list[Path] = []
+        for record in self.lora_roots():
+            raw_path = _value(record, "path", "Path", default="") if isinstance(record, dict) else record
+            if str(raw_path or "").strip():
+                roots.append(Path(str(raw_path)).expanduser())
+        return scan_lora_catalog(roots)
+
+    @staticmethod
+    def _enabled_lora_names(request: dict[str, Any]) -> list[str]:
+        stack = request.get("loraStack")
+        if isinstance(stack, list):
+            return [
+                str(entry.get("name") or "").strip()
+                for entry in stack
+                if isinstance(entry, dict)
+                and entry.get("enabled", True) is not False
+                and str(entry.get("name") or "").strip()
+            ]
+        legacy = str(request.get("loraName") or "").strip()
+        return [legacy] if legacy else []
+
+    def lora_compatibility_error(self, request: dict[str, Any]) -> str | None:
+        names = self._enabled_lora_names(request)
+        if not names:
+            return None
+
+        selected = self._selected_product_model(request)
+        if selected is None:
+            return None
+        model_family_raw = str(_value(selected, "family", "Family", default=""))
+        model_family = normalize_model_family(model_family_raw)
+
+        # Families whose StableAMD capability is not implemented must never
+        # silently accept an adapter merely because ComfyUI can instantiate a
+        # loader node.
+        support = self.model_support()
+        support_models = support.get("models", []) if isinstance(support, dict) else []
+        support_entry = next(
+            (
+                item
+                for item in support_models
+                if isinstance(item, dict)
+                and str(item.get("id") or "") == str(_value(selected, "id", "Id", default=""))
+            ),
+            None,
+        )
+        if isinstance(support_entry, dict):
+            capability = str((support_entry.get("capabilities") or {}).get("lora") or "unsupported").lower()
+            if capability != "supported":
+                return f"LoRA is not supported for selected model family '{model_family_raw or model_family}'."
+
+        catalog = self.lora_catalog()
+        exact: dict[str, dict[str, Any]] = {}
+        by_basename: dict[str, list[dict[str, Any]]] = {}
+        for item in catalog:
+            name = str(item.get("name") or "").replace("\\", "/").lower()
+            if name:
+                exact[name] = item
+                by_basename.setdefault(Path(name).name.lower(), []).append(item)
+
+        for requested_name in names:
+            normalized = requested_name.replace("\\", "/").lower()
+            item = exact.get(normalized)
+            if item is None:
+                matches = by_basename.get(Path(normalized).name.lower(), [])
+                if len(matches) == 1:
+                    item = matches[0]
+            if item is None:
+                continue
+            lora_family = str(item.get("family") or "unknown")
+            if not families_compatible(model_family, lora_family):
+                return (
+                    f"LoRA '{requested_name}' targets family '{lora_family}' and is incompatible with "
+                    f"selected model family '{model_family_raw or model_family}'."
+                )
+        return None
 
     def _selected_product_model(self, request: dict[str, Any]) -> dict[str, Any] | None:
         model_id = str(request.get("modelId") or "").strip()
@@ -523,25 +602,37 @@ class StableAmdApi(base.StableAmdApi):
     def _validate_generation(self, request: dict[str, Any]) -> dict[str, Any]:
         mode = request.get("mode", "txt2img")
         if mode != "inpaint":
-            return super()._validate_generation(request)
+            validated = super()._validate_generation(request)
+        else:
+            unsupported = sorted(set(request) - self._generation_fields)
+            if unsupported:
+                raise ValueError("Unsupported generation field(s): " + ", ".join(unsupported))
 
-        unsupported = sorted(set(request) - self._generation_fields)
-        if unsupported:
-            raise ValueError("Unsupported generation field(s): " + ", ".join(unsupported))
+            # Reuse the proven img2img validation for prompt, image payload,
+            # denoise, LoRA and numeric generation fields, then enforce the
+            # inpaint-specific PNG contract used to carry the painted mask in alpha.
+            proxy = dict(request)
+            proxy["mode"] = "img2img"
+            super()._validate_generation(proxy)
 
-        # Reuse the proven img2img validation for prompt, image payload,
-        # denoise, LoRA and numeric generation fields, then enforce the
-        # inpaint-specific PNG contract used to carry the painted mask in alpha.
-        proxy = dict(request)
-        proxy["mode"] = "img2img"
-        super()._validate_generation(proxy)
+            image = request.get("inputImage")
+            if not isinstance(image, dict):
+                raise ValueError("inpaint requires inputImage.")
+            if image.get("mimeType") != "image/png" or Path(str(image.get("name", ""))).suffix.lower() != ".png":
+                raise ValueError("inpaint requires a PNG input with the mask embedded in its alpha channel.")
+            validated = request
 
-        image = request.get("inputImage")
-        if not isinstance(image, dict):
-            raise ValueError("inpaint requires inputImage.")
-        if image.get("mimeType") != "image/png" or Path(str(image.get("name", ""))).suffix.lower() != ".png":
-            raise ValueError("inpaint requires a PNG input with the mask embedded in its alpha channel.")
-        return request
+        checker = getattr(self.bridge, "lora_compatibility_error", None)
+        if callable(checker):
+            error = checker(validated)
+            if error:
+                raise ValueError(error)
+        return validated
+
+    def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
+        if (method or "").upper() == "GET" and target.split("?", 1)[0] == "/api/lora-catalog":
+            return 200, self.bridge.lora_catalog()
+        return super().dispatch(method, target, body)
 
 
 # The shared server creates these classes through module globals at runtime.
