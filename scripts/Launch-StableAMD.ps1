@@ -5,7 +5,8 @@ param(
     [int]$AppStartupTimeoutSeconds = 30,
     [switch]$NoBrowser,
     [switch]$SkipRuntimeInstall,
-    [switch]$Detached
+    [switch]$Detached,
+    [switch]$DisableDynamicVram
 )
 
 $ErrorActionPreference = 'Stop'
@@ -183,7 +184,13 @@ namespace StableAmd {
 Write-Host ''
 Write-Host 'StableAMD v0.3' -ForegroundColor Cyan
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
-$backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot
+if ($DisableDynamicVram) {
+    Write-Host 'Diagnostic memory mode: ComfyUI DynamicVRAM disabled.' -ForegroundColor Yellow
+    $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot -DisableDynamicVram
+}
+else {
+    $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot
+}
 if ($null -eq $backendStatus -or -not [bool]$backendStatus.Healthy) {
     throw 'StableAMD managed compute backend did not become healthy.'
 }
