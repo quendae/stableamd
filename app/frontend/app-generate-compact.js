@@ -43,7 +43,7 @@
 
   function shortFieldLabel(field, label) {
     const span = field?.querySelector(':scope > span');
-    if (!span) return;
+    if (!span || span.textContent === label) return;
     span.textContent = label;
   }
 
@@ -129,7 +129,8 @@
     const toolbar = panel.querySelector('.section-toolbar');
     toolbar?.classList.add('compact-lora-heading');
     const headingText = toolbar?.querySelector('p');
-    if (headingText) headingText.textContent = 'Stack adapters in order; one strength controls model + CLIP unless you override CLIP.';
+    const compactHelp = 'Stack adapters in order; one strength controls model + CLIP unless you override CLIP.';
+    if (headingText && headingText.textContent !== compactHelp) headingText.textContent = compactHelp;
     for (const row of panel.querySelectorAll('[data-lora-stack-row]')) compactifyLoraRow(row);
   }
 
