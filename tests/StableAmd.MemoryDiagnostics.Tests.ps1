@@ -10,4 +10,16 @@ Describe 'StableAMD memory diagnostics' {
         $launcherScript | Should -Match '\$backendParams\.CacheNone = \$true'
         $launcherScript | Should -Match 'RAM pressure cache disabled'
     }
+
+    It 'supports keeping models resident in GPU memory with ComfyUI highvram' {
+        $backendScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
+        $launcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Launch-StableAMD.ps1') -Raw
+
+        $backendScript | Should -Match '\[switch\]\$HighVram'
+        $backendScript | Should -Match '--highvram'
+        $backendScript | Should -Match 'highVram = \[bool\]\$HighVram'
+        $launcherScript | Should -Match '\[switch\]\$HighVram'
+        $launcherScript | Should -Match '\$backendParams\.HighVram = \$true'
+        $launcherScript | Should -Match 'highvram enabled'
+    }
 }
