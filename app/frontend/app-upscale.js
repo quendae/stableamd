@@ -1,7 +1,7 @@
 (() => {
   const upscaleState = {
     record: null,
-    data: { root: "", models: [], recommendations: [] },
+    data: { root: "", models: [], diskModels: [], restartRecommended: false, recommendations: [] },
   };
 
   function installUpscaleStyles() {
@@ -16,7 +16,8 @@
       .upscale-heading h2 { margin: 0; }
       .upscale-note { padding: 12px; border-radius: 12px; background: rgba(255,255,255,.035); }
       .upscale-note code { word-break: break-all; }
-      .upscale-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      .upscale-note ul { margin: 8px 0; padding-left: 22px; }
+      .upscale-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
     `;
     document.head.append(style);
   }
@@ -43,6 +44,7 @@
         </label>
         <div class="upscale-note" id="upscale-model-note"></div>
         <div class="upscale-actions">
+          <button class="button button-quiet" id="upscale-refresh-models" type="button">Check again</button>
           <button class="button button-quiet" id="upscale-cancel" type="button">Cancel</button>
           <button class="button button-primary" id="upscale-run" type="button">Upscale</button>
         </div>
@@ -50,6 +52,7 @@
     document.body.append(overlay);
     overlay.querySelector("#upscale-close").addEventListener("click", closeUpscale);
     overlay.querySelector("#upscale-cancel").addEventListener("click", closeUpscale);
+    overlay.querySelector("#upscale-refresh-models").addEventListener("click", () => void refreshUpscaleModelsWithFeedback());
     overlay.addEventListener("click", (event) => { if (event.target === overlay) closeUpscale(); });
     overlay.querySelector("#upscale-run").addEventListener("click", () => void runUpscale());
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !overlay.hidden) closeUpscale(); });
@@ -68,15 +71,33 @@
     if (!select || !note) return;
     select.replaceChildren();
     const models = Array.isArray(upscaleState.data?.models) ? upscaleState.data.models : [];
+    const diskModels = Array.isArray(upscaleState.data?.diskModels) ? upscaleState.data.diskModels : [];
+    const restartRecommended = upscaleState.data?.restartRecommended === true;
     if (!models.length) {
       const empty = document.createElement("option");
       empty.value = "";
-      empty.textContent = "No upscale models installed";
+      empty.textContent = diskModels.length ? "Model file found, waiting for ComfyUI" : "No upscale models installed";
       select.append(empty);
       select.disabled = true;
       document.querySelector("#upscale-run").disabled = true;
       const root = String(upscaleState.data?.root || "");
-      note.innerHTML = `<strong>No stock upscale model detected.</strong><p>Place a compatible model such as <b>4x-UltraSharp</b>, <b>RealESRGAN x4plus</b> or <b>RealESRGAN x2plus</b> in:</p><code></code><p>Then restart the backend so ComfyUI can discover it. SeedVR2 is a separate optional provider and is not enabled by this stock workflow.</p>`;
+
+      if (diskModels.length) {
+        note.innerHTML = `<strong>Model file found on disk, but ComfyUI has not registered it yet.</strong><p>The file is in the correct StableAMD folder, so do not download or move it again.</p><ul></ul><p class="upscale-registration-hint"></p><code></code>`;
+        const list = note.querySelector("ul");
+        for (const model of diskModels) {
+          const item = document.createElement("li");
+          item.textContent = String(model);
+          list.append(item);
+        }
+        note.querySelector(".upscale-registration-hint").textContent = restartRecommended
+          ? "A full compute-backend restart is recommended so ComfyUI reloads the upscale_models search path. After restart, use Check again."
+          : "Use Check again after ComfyUI refreshes its model list.";
+        note.querySelector("code").textContent = root || ".runtime/stableamd/models/upscale_models";
+        return;
+      }
+
+      note.innerHTML = `<strong>No stock upscale model detected.</strong><p>Place a compatible model such as <b>4x-UltraSharp</b>, <b>RealESRGAN x4plus</b> or <b>RealESRGAN x2plus</b> in:</p><code></code><p>Then use Check again. SeedVR2 is a separate optional provider and is not enabled by this stock workflow.</p>`;
       note.querySelector("code").textContent = root || ".runtime/stableamd/models/upscale_models";
       return;
     }
@@ -95,6 +116,27 @@
   async function refreshUpscaleModels() {
     upscaleState.data = await api("/api/upscale-models");
     renderUpscaleModels();
+  }
+
+  async function refreshUpscaleModelsWithFeedback() {
+    const button = document.querySelector("#upscale-refresh-models");
+    const oldText = button?.textContent || "Check again";
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Checking…";
+    }
+    try {
+      await refreshUpscaleModels();
+      const ready = Array.isArray(upscaleState.data?.models) ? upscaleState.data.models.length : 0;
+      if (ready) showToast(`${ready} upscale model${ready === 1 ? "" : "s"} ready.`, "success");
+    } catch (error) {
+      showToast(`Upscale models unavailable: ${error.message}`, "error");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = oldText;
+      }
+    }
   }
 
   async function openStableAmdUpscale(record) {
