@@ -26,6 +26,11 @@
       ".runtime/SwarmUI/Models/Lora"
     ]
   },
+  "upscaleModels": {
+    "roots": [
+      ".runtime/stableamd/models/upscale_models"
+    ]
+  },
   "bundleAssets": {
     "diffusionModels": {
       "roots": [
