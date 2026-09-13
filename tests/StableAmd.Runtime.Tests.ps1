@@ -111,6 +111,16 @@ Describe 'StableAMD managed backend lifecycle scripts' {
         $script | Should -Not -Match '--listen\s+0\.0\.0\.0'
     }
 
+    It 'supports a controlled legacy VRAM diagnostic launch without changing the default mode' {
+        $backendScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
+        $launcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Launch-StableAMD.ps1') -Raw
+
+        $backendScript | Should -Match '\[switch\]\$DisableDynamicVram'
+        $backendScript | Should -Match '--disable-dynamic-vram'
+        $launcherScript | Should -Match '\[switch\]\$DisableDynamicVram'
+        $launcherScript | Should -Match 'DisableDynamicVram'
+    }
+
     It 'reports stopped running and degraded states from managed state plus HTTP health' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/Get-StableAMDStatus.ps1'
         Test-Path $scriptPath | Should -BeTrue
