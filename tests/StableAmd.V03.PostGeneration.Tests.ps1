@@ -15,7 +15,7 @@ Describe 'StableAMD v0.3 post-generation gallery actions' {
         $frontend = Get-Content $frontendPath -Raw
 
         foreach ($label in @('Upscale', 'Img2Img', 'Inpaint', 'Outpaint')) {
-            $frontend | Should -Match [regex]::Escape($label)
+            $frontend | Should -Match ([regex]::Escape($label))
         }
         $frontend | Should -Match 'data-post-action'
         $frontend | Should -Match 'history-card'
