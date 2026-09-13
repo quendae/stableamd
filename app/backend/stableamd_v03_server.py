@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -25,22 +26,31 @@ def _value(record: dict[str, Any], *names: str, default: Any = None) -> Any:
 
 
 class PowerShellBridge(base.PowerShellBridge):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._model_scan_lock = RLock()
+
     def models(self) -> Any:
-        checkpoints = list(super().models())
-        bundles = self._normalize_model_payload(self._run_script("List-BundleModels.ps1"))
-        merged: list[Any] = []
-        seen: set[str] = set()
-        for model in [*checkpoints, *bundles]:
-            if not isinstance(model, dict):
+        # ThreadingHTTPServer may service /api/models, /api/model-support and
+        # generation model lookup concurrently. Both discovery scripts update
+        # small JSON registries on Windows, so serialize the complete logical
+        # model scan to avoid readers racing a Set-Content writer.
+        with self._model_scan_lock:
+            checkpoints = list(super().models())
+            bundles = self._normalize_model_payload(self._run_script("List-BundleModels.ps1"))
+            merged: list[Any] = []
+            seen: set[str] = set()
+            for model in [*checkpoints, *bundles]:
+                if not isinstance(model, dict):
+                    merged.append(model)
+                    continue
+                model_id = str(_value(model, "id", "Id", default="")).strip()
+                key = model_id.lower() if model_id else json.dumps(model, sort_keys=True, default=str)
+                if key in seen:
+                    continue
+                seen.add(key)
                 merged.append(model)
-                continue
-            model_id = str(_value(model, "id", "Id", default="")).strip()
-            key = model_id.lower() if model_id else json.dumps(model, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(model)
-        return merged
+            return merged
 
     def _selected_product_model(self, request: dict[str, Any]) -> dict[str, Any] | None:
         model_id = str(request.get("modelId") or "").strip()
@@ -330,9 +340,7 @@ class PowerShellBridge(base.PowerShellBridge):
             candidate = (output_root / str(image.get("subfolder") or "") / str(image["filename"])).resolve()
             if output_root in candidate.parents and candidate.is_file():
                 return candidate
-        raise base.StableAmdBridgeError(
-            f"ComfyUI completed Z-Image Turbo prompt '{prompt_id}', but StableAMD could not resolve its output image."
-        )
+        raise base.StableAmdBridgeError(f"ComfyUI completed Z-Image Turbo prompt '{prompt_id}', but StableAMD could not resolve its output image.")
 
     def _save_zimage_history(self, record: dict[str, Any]) -> Path:
         history_root = self.repo_root / ".runtime" / "stableamd" / "history"
@@ -353,9 +361,12 @@ class PowerShellBridge(base.PowerShellBridge):
 
         if request.get("startBackendIfNeeded"):
             try:
-                self._backend_base_url()
+                backend_url = self._backend_base_url()
             except base.StableAmdBridgeError:
                 self.start_backend()
+                backend_url = self._backend_base_url()
+        else:
+            backend_url = self._backend_base_url()
 
         diffusion_path = self._bundle_asset_path(model, "diffusion_model")
         encoder_path = self._bundle_asset_path(model, "text_encoder")
@@ -430,7 +441,6 @@ class PowerShellBridge(base.PowerShellBridge):
         generation_seconds = round(time.monotonic() - started, 3)
         model_id = str(_value(model, "id", "Id", default=""))
         model_name = str(_value(model, "name", "Name", default="Z-Image Turbo"))
-        backend_url = self._backend_base_url()
         assets = {
             "diffusion_model": [str(diffusion_path)],
             "text_encoder": [str(encoder_path)],
