@@ -8,6 +8,7 @@ param(
     [switch]$Detached,
     [switch]$DisableDynamicVram,
     [switch]$LowVram,
+    [switch]$HighVram,
     [switch]$CacheNone
 )
 
@@ -62,7 +63,7 @@ if ($runtimeMissing) {
     Write-Host 'StableAMD runtime is missing or incomplete. Preparing the pinned Radeon runtime...' -ForegroundColor Yellow
     Write-Host 'The first launch downloads Python, the locked TheRock ROCm/PyTorch stack and ComfyUI. This can download more than 1 GB.' -ForegroundColor DarkGray
     $runtimeInstall = & $runtimeInstaller -RepoRoot $RepoRoot
-    if ($null -eq $runtimeInstall -or -not (Test-Path $paths.TheRockPython -PathType Leaf) -or -not (Test-Path $comfyMain -PathType Leaf)) {
+    if ($null -eq $runtimeInstall -or -not (Test-Path $paths.TheRockPython -PathType Leaf) -or (-not (Test-Path $comfyMain -PathType Leaf))) {
         throw 'StableAMD runtime bootstrap returned without creating the required managed runtime.'
     }
 }
@@ -190,6 +191,10 @@ if ($DisableDynamicVram) {
 if ($LowVram) {
     Write-Host 'Diagnostic memory mode: ComfyUI lowvram enabled.' -ForegroundColor Yellow
     $backendParams.LowVram = $true
+}
+if ($HighVram) {
+    Write-Host 'Diagnostic memory mode: ComfyUI highvram enabled.' -ForegroundColor Yellow
+    $backendParams.HighVram = $true
 }
 if ($CacheNone) {
     Write-Host 'Diagnostic memory mode: ComfyUI RAM pressure cache disabled.' -ForegroundColor Yellow
