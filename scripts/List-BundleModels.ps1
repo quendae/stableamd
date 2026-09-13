@@ -10,6 +10,8 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 
+# Import shared primitives explicitly. Dependent modules must not force-reload
+# these dependencies because this scanner uses their exports directly below.
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.BundleRoots.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Bundles.psm1') -Force
