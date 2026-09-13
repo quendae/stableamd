@@ -3,6 +3,7 @@ BeforeAll {
     $runtimePath = Join-Path $repoRoot 'scripts/StableAmd.Runtime.psm1'
     $startPath = Join-Path $repoRoot 'scripts/Start-StableAMD.ps1'
     $modulePath = Join-Path $repoRoot 'scripts/StableAmd.Upscale.psm1'
+    $builderPath = Join-Path $repoRoot 'scripts/Build-StableAmdUpscaleWorkflow.ps1'
     $listPath = Join-Path $repoRoot 'scripts/List-UpscaleModels.ps1'
     $frontendPath = Join-Path $repoRoot 'app/frontend/app-upscale.js'
     $indexPath = Join-Path $repoRoot 'app/frontend/index.html'
@@ -40,6 +41,15 @@ Describe 'StableAMD v0.3 stock ComfyUI upscale provider' {
         $workflow['3'].inputs.upscale_model | Should -Be @('2', 0)
         $workflow['3'].inputs.image | Should -Be @('1', 0)
         $workflow['9'].inputs.images | Should -Be @('3', 0)
+    }
+
+    It 'accepts the generic service RepoRoot parameter when building an upscale workflow' {
+        Test-Path $builderPath | Should -BeTrue
+
+        $workflow = & $builderPath -RepoRoot $repoRoot -InputImageName 'source.png' -ModelName 'RealESRGAN_x2plus.pth' -FilenamePrefix 'StableAMD_UPSCALE_TEST'
+
+        $workflow['2'].inputs.model_name | Should -Be 'RealESRGAN_x2plus.pth'
+        $workflow['9'].inputs.filename_prefix | Should -Be 'StableAMD_UPSCALE_TEST'
     }
 
     It 'discovers installed upscale models through the ComfyUI UpscaleModelLoader contract' {
