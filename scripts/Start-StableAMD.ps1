@@ -4,7 +4,8 @@ param(
     [int]$Port = 0,
     [int]$StartupTimeoutSeconds = 0,
     [switch]$ForceRestart,
-    [switch]$DisableDynamicVram
+    [switch]$DisableDynamicVram,
+    [switch]$LowVram
 )
 
 $ErrorActionPreference = 'Stop'
@@ -164,6 +165,9 @@ $arguments = "-u -s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 1
 if ($DisableDynamicVram) {
     $arguments += ' --disable-dynamic-vram'
 }
+if ($LowVram) {
+    $arguments += ' --lowvram'
+}
 
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
 $hadOverride = $null -ne $oldOverride
@@ -234,6 +238,7 @@ $state = [pscustomobject]@{
     stdoutLog = $stdoutPath
     stderrLog = $stderrPath
     dynamicVramDisabled = [bool]$DisableDynamicVram
+    lowVram = [bool]$LowVram
     device = [pscustomobject]@{
         name = [string]$device.name
         type = [string]$device.type
@@ -251,6 +256,7 @@ return [pscustomobject]@{
     Url = $url
     Device = $state.device
     DynamicVramDisabled = [bool]$DisableDynamicVram
+    LowVram = [bool]$LowVram
     StatePath = $paths.BackendStatePath
     StdoutLog = $stdoutPath
     StderrLog = $stderrPath
