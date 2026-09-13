@@ -6,6 +6,11 @@ import struct
 from pathlib import Path
 from typing import Any, Iterable
 
+# stableamd_v03_server imports this module before declaring its v0.3 bridge/API
+# subclasses. Register the stock upscale extension here so those subclasses
+# inherit it without duplicating the proven base HTTP/server implementation.
+import upscale_support  # noqa: F401,E402
+
 MAX_SAFETENSORS_HEADER_BYTES = 16 * 1024 * 1024
 KNOWN_FAMILIES = ("shared", "sd15", "sdxl", "sd3", "z-image", "flux", "krea")
 
