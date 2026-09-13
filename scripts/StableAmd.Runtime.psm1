@@ -32,6 +32,9 @@ function New-StableAmdDefaultConfig {
                 '.runtime/SwarmUI/Models/Lora'
             )
         }
+        upscaleModels = [pscustomobject]@{
+            roots = @('.runtime/stableamd/models/upscale_models')
+        }
         bundleAssets = [pscustomobject]@{
             diffusionModels = [pscustomobject]@{
                 roots = @('.runtime/stableamd/models/diffusion_models')
@@ -86,6 +89,7 @@ function Get-StableAmdRuntimePaths {
         ModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models'))
         CheckpointsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/checkpoints'))
         LorasRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/loras'))
+        UpscaleModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/upscale_models'))
         DiffusionModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/diffusion_models'))
         TextEncodersRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/text_encoders'))
         VaeRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/vae'))
@@ -121,6 +125,7 @@ function Initialize-StableAmdRuntimeDirectories {
         (Join-Path $Paths.LorasRoot 'z-image'),
         (Join-Path $Paths.LorasRoot 'flux'),
         (Join-Path $Paths.LorasRoot 'krea'),
+        $Paths.UpscaleModelsRoot,
         $Paths.DiffusionModelsRoot,
         $Paths.TextEncodersRoot,
         $Paths.VaeRoot,
@@ -171,6 +176,15 @@ function Add-StableAmdMissingConfigDefaults {
     }
     elseif ($null -eq $Config.loras.PSObject.Properties['roots'] -or $null -eq $Config.loras.roots) {
         $Config.loras | Add-Member -MemberType NoteProperty -Name roots -Value @('.runtime/stableamd/models/loras') -Force
+    }
+
+    if ($null -eq $Config.PSObject.Properties['upscaleModels'] -or $null -eq $Config.upscaleModels) {
+        $Config | Add-Member -MemberType NoteProperty -Name upscaleModels -Value ([pscustomobject]@{
+            roots = @('.runtime/stableamd/models/upscale_models')
+        }) -Force
+    }
+    elseif ($null -eq $Config.upscaleModels.PSObject.Properties['roots'] -or $null -eq $Config.upscaleModels.roots) {
+        $Config.upscaleModels | Add-Member -MemberType NoteProperty -Name roots -Value @('.runtime/stableamd/models/upscale_models') -Force
     }
 
     if ($null -eq $Config.PSObject.Properties['bundleAssets'] -or $null -eq $Config.bundleAssets) {
