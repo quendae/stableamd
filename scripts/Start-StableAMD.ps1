@@ -3,7 +3,8 @@ param(
     [string]$RepoRoot = '',
     [int]$Port = 0,
     [int]$StartupTimeoutSeconds = 0,
-    [switch]$ForceRestart
+    [switch]$ForceRestart,
+    [switch]$DisableDynamicVram
 )
 
 $ErrorActionPreference = 'Stop'
@@ -160,6 +161,9 @@ $url = "http://127.0.0.1:$resolvedPort/"
 $statsUrl = "${url}system_stats"
 
 $arguments = "-u -s `"$($paths.ComfyRunner)`" `"$($paths.ComfyRoot)`" --listen 127.0.0.1 --port $resolvedPort --extra-model-paths-config `"$modelConfigPath`" --input-directory `"$($paths.InputRoot)`" --output-directory `"$($paths.OutputRoot)`""
+if ($DisableDynamicVram) {
+    $arguments += ' --disable-dynamic-vram'
+}
 
 $oldOverride = [Environment]::GetEnvironmentVariable('HSA_OVERRIDE_GFX_VERSION', 'Process')
 $hadOverride = $null -ne $oldOverride
@@ -229,6 +233,7 @@ $state = [pscustomobject]@{
     outputRoot = $paths.OutputRoot
     stdoutLog = $stdoutPath
     stderrLog = $stderrPath
+    dynamicVramDisabled = [bool]$DisableDynamicVram
     device = [pscustomobject]@{
         name = [string]$device.name
         type = [string]$device.type
@@ -245,6 +250,7 @@ return [pscustomobject]@{
     Pid = $process.Id
     Url = $url
     Device = $state.device
+    DynamicVramDisabled = [bool]$DisableDynamicVram
     StatePath = $paths.BackendStatePath
     StdoutLog = $stdoutPath
     StderrLog = $stderrPath
