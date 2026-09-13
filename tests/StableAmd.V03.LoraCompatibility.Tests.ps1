@@ -1,7 +1,8 @@
 BeforeAll {
     $repoRoot = Join-Path $PSScriptRoot '..'
     $serverPath = Join-Path $repoRoot 'app/backend/stableamd_v03_server.py'
-    $frontendPath = Join-Path $repoRoot 'app/frontend/app-v02.js'
+    $frontendPath = Join-Path $repoRoot 'app/frontend/app-lora-compat.js'
+    $indexPath = Join-Path $repoRoot 'app/frontend/index.html'
 }
 
 Describe 'StableAMD v0.3 LoRA compatibility contract' {
@@ -15,9 +16,11 @@ Describe 'StableAMD v0.3 LoRA compatibility contract' {
     }
 
     It 'shows compatibility metadata and keeps incompatible adapters hidden by default' {
+        Test-Path $frontendPath | Should -BeTrue
         $frontend = Get-Content $frontendPath -Raw
+        $index = Get-Content $indexPath -Raw
 
-        $frontend | Should -Match 'loraCatalog'
+        $index | Should -Match 'app-lora-compat\.js'
         $frontend | Should -Match '/api/lora-catalog'
         $frontend | Should -Match 'Show incompatible'
         $frontend | Should -Match 'showIncompatibleLoras'
@@ -31,6 +34,6 @@ Describe 'StableAMD v0.3 LoRA compatibility contract' {
 
         $frontend | Should -Match 'refreshLoraStackCompatibility'
         $frontend | Should -Match 'model-select'
-        $frontend | Should -Match 'populateLoraRowSelect'
+        $frontend | Should -Match 'data-lora-name'
     }
 }
