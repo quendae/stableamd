@@ -22,4 +22,16 @@ Describe 'StableAMD memory diagnostics' {
         $launcherScript | Should -Match '\$backendParams\.HighVram = \$true'
         $launcherScript | Should -Match 'highvram enabled'
     }
+
+    It 'supports classic node caching without RAM pressure eviction' {
+        $backendScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
+        $launcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Launch-StableAMD.ps1') -Raw
+
+        $backendScript | Should -Match '\[switch\]\$CacheClassic'
+        $backendScript | Should -Match '--cache-classic'
+        $backendScript | Should -Match 'cacheClassic = \[bool\]\$CacheClassic'
+        $launcherScript | Should -Match '\[switch\]\$CacheClassic'
+        $launcherScript | Should -Match '\$backendParams\.CacheClassic = \$true'
+        $launcherScript | Should -Match 'classic cache enabled'
+    }
 }
