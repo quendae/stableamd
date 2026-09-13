@@ -1,5 +1,6 @@
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_v03_server as v03
+import upscale_support
 
 
 class UpscaleApiBridge:
@@ -59,6 +61,22 @@ class StableAmdV03UpscaleApiTests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertIn("Unsupported upscale field", payload["error"])
+
+    def test_reports_model_on_disk_when_comfy_has_not_registered_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo_root = Path(temporary)
+            root = repo_root / ".runtime" / "stableamd" / "models" / "upscale_models"
+            root.mkdir(parents=True)
+            (root / "RealESRGAN_x2plus.pth").write_bytes(b"placeholder")
+
+            bridge = upscale_support.UpscalePowerShellBridge(repo_root, powershell=sys.executable)
+            bridge._upscale_choices = lambda: []
+
+            payload = bridge.upscale_models()
+
+            self.assertEqual(payload["models"], [])
+            self.assertEqual(payload["diskModels"], ["RealESRGAN_x2plus.pth"])
+            self.assertTrue(payload["restartRecommended"])
 
 
 if __name__ == "__main__":
