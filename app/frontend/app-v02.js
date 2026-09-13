@@ -9,6 +9,7 @@
   };
 
   const baseApi = api;
+  let applyingResolutionPreset = false;
 
   function fillSelect(select, values, preferred, emptyLabel = null) {
     if (!select) return;
@@ -67,7 +68,8 @@
   function ensureGenerationModeUi() {
     if (document.querySelector("#generation-mode")) return document.querySelector("#generation-mode");
     const profile = ensureProfileControl();
-    const anchor = profile?.closest(".field") || document.querySelector("#model-select")?.closest(".field");
+    const resolutionPanel = ensureResolutionPresetUi();
+    const anchor = resolutionPanel || profile?.closest(".field") || document.querySelector("#model-select")?.closest(".field");
     if (!anchor) return null;
 
     const panel = document.createElement("div");
@@ -241,6 +243,137 @@
     return profiles.find((profile) => profileMatchesModel(profile, model)) || null;
   }
 
+  function ensureResolutionPresetUi() {
+    let panel = document.querySelector("#resolution-preset-panel");
+    if (panel) return panel;
+    const profile = ensureProfileControl();
+    const anchor = profile?.closest(".field");
+    if (!anchor) return null;
+
+    panel = document.createElement("div");
+    panel.id = "resolution-preset-panel";
+    panel.className = "model-root-card";
+    panel.hidden = true;
+    panel.innerHTML = `
+      <div class="field-grid field-grid-2">
+        <label class="field">
+          <span>Size tier <small>model-aware resolution bucket</small></span>
+          <select id="resolution-tier" name="resolutionTier">
+            <option value="custom">Custom size</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Aspect ratio <small>updates width and height</small></span>
+          <select id="aspect-ratio" name="aspectRatio" disabled></select>
+        </label>
+      </div>
+      <p id="resolution-preset-hint" class="history-model">Custom size · width and height stay editable below.</p>`;
+    anchor.after(panel);
+
+    panel.querySelector("#resolution-tier").addEventListener("change", () => {
+      populateResolutionControls(false);
+      applyResolutionPreset();
+    });
+    panel.querySelector("#aspect-ratio").addEventListener("change", applyResolutionPreset);
+    for (const selector of ["#width", "#height"]) {
+      document.querySelector(selector)?.addEventListener("input", () => {
+        if (applyingResolutionPreset) return;
+        const tier = document.querySelector("#resolution-tier");
+        const ratio = document.querySelector("#aspect-ratio");
+        if (tier && !panel.hidden) tier.value = "custom";
+        if (ratio) ratio.disabled = true;
+        const hint = document.querySelector("#resolution-preset-hint");
+        if (hint && !panel.hidden) hint.textContent = "Custom size · width and height are controlled manually.";
+      });
+    }
+    return panel;
+  }
+
+  function populateResolutionControls(applyDefault = false) {
+    const panel = ensureResolutionPresetUi();
+    if (!panel) return;
+    const tierSelect = panel.querySelector("#resolution-tier");
+    const ratioSelect = panel.querySelector("#aspect-ratio");
+    const hint = panel.querySelector("#resolution-preset-hint");
+    const profile = matchedProfile();
+    const resolutionTiers = Array.isArray(profile?.resolutionTiers) ? profile.resolutionTiers : [];
+
+    if (!resolutionTiers.length) {
+      panel.hidden = true;
+      tierSelect.replaceChildren();
+      const custom = document.createElement("option");
+      custom.value = "custom";
+      custom.textContent = "Custom size";
+      tierSelect.append(custom);
+      ratioSelect.replaceChildren();
+      ratioSelect.disabled = true;
+      return;
+    }
+
+    panel.hidden = false;
+    const previousTier = tierSelect.value;
+    const previousRatio = ratioSelect.value;
+    tierSelect.replaceChildren();
+    const custom = document.createElement("option");
+    custom.value = "custom";
+    custom.textContent = "Custom size";
+    tierSelect.append(custom);
+    for (const tier of resolutionTiers) {
+      const option = document.createElement("option");
+      option.value = String(tier.id);
+      option.textContent = String(tier.label || tier.id);
+      tierSelect.append(option);
+    }
+
+    const recommended = resolutionTiers.find((tier) => tier.recommended) || resolutionTiers[0];
+    const previousValid = Array.from(tierSelect.options).some((option) => option.value === previousTier);
+    tierSelect.value = applyDefault || !previousValid || !previousTier ? String(recommended.id) : previousTier;
+
+    ratioSelect.replaceChildren();
+    if (tierSelect.value === "custom") {
+      ratioSelect.disabled = true;
+      if (hint) hint.textContent = "Custom size · width and height are controlled manually.";
+      return;
+    }
+
+    const tier = resolutionTiers.find((item) => String(item.id) === tierSelect.value) || recommended;
+    const sizes = Array.isArray(tier?.sizes) ? tier.sizes : [];
+    for (const size of sizes) {
+      const option = document.createElement("option");
+      option.value = String(size.ratio);
+      option.textContent = `${size.ratio} · ${size.width} × ${size.height}`;
+      ratioSelect.append(option);
+    }
+    ratioSelect.disabled = !sizes.length;
+    if (sizes.length) {
+      const ratioValid = sizes.some((size) => String(size.ratio) === previousRatio);
+      ratioSelect.value = !applyDefault && ratioValid ? previousRatio : String(sizes.find((size) => size.ratio === "1:1")?.ratio || sizes[0].ratio);
+    }
+    if (hint) hint.textContent = `${tier.label || tier.id} · choose an aspect ratio or switch to Custom size.`;
+    if (applyDefault) applyResolutionPreset();
+  }
+
+  function applyResolutionPreset() {
+    const profile = matchedProfile();
+    const resolutionTiers = Array.isArray(profile?.resolutionTiers) ? profile.resolutionTiers : [];
+    const tierId = document.querySelector("#resolution-tier")?.value || "custom";
+    const ratioId = document.querySelector("#aspect-ratio")?.value || "";
+    if (!resolutionTiers.length || tierId === "custom") return;
+    const tier = resolutionTiers.find((item) => String(item.id) === String(tierId));
+    const size = tier?.sizes?.find((item) => String(item.ratio) === String(ratioId));
+    if (!size) return;
+
+    applyingResolutionPreset = true;
+    try {
+      document.querySelector("#width").value = size.width;
+      document.querySelector("#height").value = size.height;
+    } finally {
+      applyingResolutionPreset = false;
+    }
+    const hint = document.querySelector("#resolution-preset-hint");
+    if (hint) hint.textContent = `${tier.label || tier.id} · ${size.ratio} · ${size.width} × ${size.height}`;
+  }
+
   function populateProfileControl(applyDefault = false) {
     const select = ensureProfileControl();
     if (!select) return;
@@ -267,7 +400,8 @@
     }
 
     if (applyDefault && combinations.length) {
-      select.value = `${profile.id}::${combinations[0].id}`;
+      const recommended = combinations.find((combination) => combination.recommended) || combinations[0];
+      select.value = `${profile.id}::${recommended.id}`;
       applySelectedProfile();
     }
   }
@@ -288,16 +422,51 @@
     if (!profile || !combination) return;
 
     const defaults = profile.defaults || {};
-    if (defaults.width) document.querySelector("#width").value = defaults.width;
-    if (defaults.height) document.querySelector("#height").value = defaults.height;
+    if (Array.isArray(profile.resolutionTiers) && profile.resolutionTiers.length) {
+      populateResolutionControls(false);
+      applyResolutionPreset();
+    } else {
+      if (defaults.width) document.querySelector("#width").value = defaults.width;
+      if (defaults.height) document.querySelector("#height").value = defaults.height;
+    }
     if (combination.steps) document.querySelector("#steps").value = combination.steps;
     if (combination.cfg !== undefined) document.querySelector("#cfg").value = combination.cfg;
     setIfOptionExists("#sampler", combination.sampler || defaults.sampler);
     setIfOptionExists("#scheduler", combination.scheduler || defaults.scheduler);
   }
 
+  function currentModelFamily() {
+    const model = currentModel();
+    const support = supportForCurrentModel();
+    return String(getValue(model, "family", "Family") || support?.family || "").toLowerCase();
+  }
+
+  function loraFamilyGroupsForCurrentModel() {
+    const family = currentModelFamily();
+    if (family.includes("z-image")) return ['shared', 'z-image'];
+    if (family.includes("sdxl")) return ['shared', 'sdxl'];
+    if (family === "sd15" || family.startsWith("sd1")) return ['shared', 'sd15'];
+    if (family === "sd3" || family.startsWith("sd3")) return ['shared', 'sd3'];
+    if (family.includes("flux")) return ['shared', 'flux'];
+    if (family.includes("krea")) return ['shared', 'krea'];
+    return ['shared'];
+  }
+
+  function filterLoraChoicesForCurrentModel(values) {
+    const choices = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
+    if (!currentModelFamily()) return choices;
+    const allowed = new Set(loraFamilyGroupsForCurrentModel());
+    const familyGroups = new Set(['shared', 'sd15', 'sdxl', 'sd3', 'z-image', 'flux', 'krea']);
+    return choices.filter((value) => {
+      const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "");
+      const group = normalized.split("/", 1)[0].toLowerCase();
+      return !familyGroups.has(group) || allowed.has(group);
+    });
+  }
+
   function loraChoices() {
-    return Array.isArray(v02State.generationOptions?.loras) ? v02State.generationOptions.loras.map(String).filter(Boolean) : [];
+    const all = Array.isArray(v02State.generationOptions?.loras) ? v02State.generationOptions.loras : [];
+    return filterLoraChoicesForCurrentModel(all);
   }
 
   function populateLoraRowSelect(select, preferred = "") {
@@ -315,6 +484,12 @@
       select.append(option);
     }
     if (previous && Array.from(select.options).some((option) => option.value === String(previous))) select.value = String(previous);
+  }
+
+  function refreshLoraChoiceControls() {
+    fillSelect(document.querySelector("#lora-select"), loraChoices(), "", "None");
+    syncLegacyLoraStrengthState();
+    for (const select of document.querySelectorAll("[data-lora-name]")) populateLoraRowSelect(select, select.value);
   }
 
   function ensureLoraStackUi() {
@@ -506,10 +681,11 @@
       v02State.modelSupport = modelSupport || { models: [] };
       fillSelect(document.querySelector("#sampler"), options?.samplers, "euler");
       fillSelect(document.querySelector("#scheduler"), options?.schedulers, "normal");
-      fillSelect(document.querySelector("#lora-select"), options?.loras, "", "None");
-      syncLegacyLoraStrengthState();
-      for (const select of document.querySelectorAll("[data-lora-name]")) populateLoraRowSelect(select, select.value);
-      populateProfileControl(false);
+      refreshLoraChoiceControls();
+      const profileSelect = document.querySelector("#generation-profile");
+      const applyDefaults = Boolean(currentModel()) && !profileSelect?.value;
+      populateProfileControl(applyDefaults);
+      populateResolutionControls(applyDefaults);
       renderModelSupportHint();
       syncLoraStackAvailability();
       syncGenerationModeUi();
@@ -556,6 +732,10 @@
     syncGenerationModeUi();
 
     if (document.querySelector("#generation-profile")) document.querySelector("#generation-profile").value = "";
+    const tier = document.querySelector("#resolution-tier");
+    const ratio = document.querySelector("#aspect-ratio");
+    if (tier) tier.value = "custom";
+    if (ratio) ratio.disabled = true;
   }
 
   function ensureLoraRootUi() {
@@ -570,7 +750,7 @@
       <div class="section-toolbar">
         <div>
           <h2>LoRA folders</h2>
-          <p>Add existing LoRA libraries without copying files. Changes refresh the managed backend.</p>
+          <p>Managed LoRAs can be grouped into shared, SDXL, Z-Image, FLUX, Krea and other family folders. External libraries remain available without copying files.</p>
         </div>
       </div>
       <div class="model-root-card">
@@ -648,7 +828,7 @@
         document.querySelector("#lora-root-path").focus();
       }
     } catch (error) {
-      showToast(`LoRA folder picker failed: ${error.message}`, "error");
+      showToast(`Bundle folder picker failed: ${error.message}`, "error");
     } finally {
       button.disabled = false;
       button.textContent = oldText;
@@ -711,13 +891,16 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     ensureProfileControl();
+    ensureResolutionPresetUi();
     ensureGenerationModeUi();
     ensureModelSupportHint();
     ensureLoraStackUi();
     ensureLoraRootUi();
     document.querySelector("#model-select")?.addEventListener("change", () => {
       populateProfileControl(true);
+      populateResolutionControls(true);
       renderModelSupportHint();
+      refreshLoraChoiceControls();
       syncLoraStackAvailability();
       syncGenerationModeUi();
     });
@@ -731,7 +914,9 @@
     const modelSelect = document.querySelector("#model-select");
     if (modelSelect) new MutationObserver(() => {
       populateProfileControl(false);
+      populateResolutionControls(false);
       renderModelSupportHint();
+      refreshLoraChoiceControls();
       syncGenerationModeUi();
     }).observe(modelSelect, { childList: true });
 
