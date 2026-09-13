@@ -1,20 +1,222 @@
 (() => {
   const bundleRoles = [
-    { id: "diffusion_model", label: "Diffusion models", hint: "UNet / diffusion-model files used by FLUX, Krea and other bundle families." },
-    { id: "text_encoder", label: "Text encoders", hint: "CLIP, T5, Qwen and other text-encoder assets. A logical model may use more than one." },
+    { id: "diffusion_model", label: "Diffusion models", hint: "UNet / diffusion-model files used by Z-Image, Krea and other package families." },
+    { id: "text_encoder", label: "Text encoders", hint: "CLIP, T5, Qwen and other text-encoder assets. A model package may use more than one." },
     { id: "vae", label: "VAE", hint: "VAE / autoencoder assets used to encode or decode images." },
   ];
 
-  const bundleState = { roots: {} };
+  const packageState = { roots: {}, support: null };
+  const baseRenderModels = renderModels;
 
-  function ensureBundleRootUi() {
-    let section = document.querySelector("#bundle-root-section");
-    if (section) return section;
+  function normalizeModels(payload) {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+    const nested = getValue(payload, "models", "Models");
+    if (!nested) return [];
+    return Array.isArray(nested) ? nested : [nested];
+  }
 
+  function normalizeComponents(model) {
+    const explicit = getValue(model, "components", "Components");
+    if (explicit) return Array.isArray(explicit) ? explicit : [explicit];
+
+    const path = String(getValue(model, "path", "Path") || "");
+    const name = String(getValue(model, "name", "Name") || "Checkpoint");
+    return [{ role: "checkpoint", label: "Checkpoint", expectedName: name, path, present: Boolean(path) }];
+  }
+
+  function isModelReady(model) {
+    const value = getValue(model, "ready", "Ready");
+    return value === undefined || value === null ? true : Boolean(value);
+  }
+
+  function ensureModelPackageUi() {
     const page = document.querySelector("#page-models");
     if (!page) return null;
-    const anchor = page.querySelector(".v02-lora-roots") || page.querySelector(".model-list-heading");
-    if (!anchor) return null;
+
+    const toolbar = page.querySelector(":scope > .section-toolbar");
+    if (toolbar && !toolbar.dataset.packageToolbar) {
+      toolbar.dataset.packageToolbar = "true";
+      const heading = toolbar.querySelector("h2");
+      const copy = toolbar.querySelector("p");
+      if (heading) heading.textContent = "Model packages";
+      if (copy) copy.textContent = "StableAMD groups the files a model needs into one logical package. Ready packages can be selected directly in Generate.";
+    }
+
+    let list = page.querySelector("#model-package-list");
+    if (!list) {
+      list = document.createElement("div");
+      list.id = "model-package-list";
+      list.className = "model-install-grid model-package-list";
+      if (toolbar) toolbar.after(list);
+      else page.prepend(list);
+    }
+
+    let advanced = page.querySelector("#advanced-model-assets");
+    if (!advanced) {
+      advanced = document.createElement("details");
+      advanced.id = "advanced-model-assets";
+      advanced.className = "secondary-model-options model-assets-advanced";
+      advanced.innerHTML = '<summary>Advanced model asset folders</summary><div id="advanced-model-assets-content"></div>';
+      list.after(advanced);
+    }
+
+    const content = advanced.querySelector("#advanced-model-assets-content");
+    if (content) {
+      const moveIntoAdvanced = [
+        page.querySelector(":scope > .model-root-card"),
+        page.querySelector(":scope > .v02-lora-roots"),
+        page.querySelector(":scope > .model-list-heading"),
+        page.querySelector(":scope > #model-list"),
+        page.querySelector(":scope > .secondary-model-options:not(#advanced-model-assets)"),
+      ].filter(Boolean);
+      for (const node of moveIntoAdvanced) content.append(node);
+    }
+
+    return { page, list, advanced, content };
+  }
+
+  function renderModelPackages(models) {
+    const ui = ensureModelPackageUi();
+    if (!ui) return;
+    ui.list.replaceChildren();
+
+    if (!models.length) {
+      ui.list.innerHTML = '<div class="empty-state"><strong>No model packages found</strong><p>Add model files or folders, then scan again.</p></div>';
+      return;
+    }
+
+    for (const model of models) {
+      const name = String(getValue(model, "name", "Name") || "Unnamed model");
+      const family = String(getValue(model, "family", "Family") || "unknown");
+      const ready = isModelReady(model);
+      const components = normalizeComponents(model);
+      const missing = components.filter((component) => !Boolean(getValue(component, "present", "Present"))).length;
+
+      const card = document.createElement("article");
+      card.className = `install-card model-package-card ${ready ? "is-ready" : "is-incomplete"}`;
+      card.dataset.modelPackage = String(getValue(model, "id", "Id") || name);
+
+      const heading = document.createElement("div");
+      heading.className = "install-card-heading";
+      const title = document.createElement("strong");
+      title.textContent = name;
+      const subtitle = document.createElement("span");
+      subtitle.textContent = family === "unknown" ? "Model package" : family;
+      heading.append(title, subtitle);
+
+      const status = document.createElement("span");
+      status.className = `root-state ${ready ? "is-ready" : "is-missing"}`;
+      status.textContent = ready ? "Ready" : `Incomplete · ${missing} missing`;
+      heading.append(status);
+      card.append(heading);
+
+      const componentList = document.createElement("div");
+      componentList.className = "model-root-list package-components";
+      for (const component of components) {
+        const present = Boolean(getValue(component, "present", "Present"));
+        const label = String(getValue(component, "label", "Label") || getValue(component, "role", "Role") || "Component");
+        const expected = String(getValue(component, "expectedName", "ExpectedName") || "");
+        const path = String(getValue(component, "path", "Path") || "");
+
+        const row = document.createElement("div");
+        row.className = "model-root-row package-component";
+        const main = document.createElement("div");
+        main.className = "model-root-main";
+        const componentTitle = document.createElement("strong");
+        componentTitle.textContent = `${present ? "✓" : "✗"} ${label}`;
+        const componentPath = document.createElement("code");
+        componentPath.textContent = path || expected || "Missing";
+        main.append(componentTitle, componentPath);
+
+        const state = document.createElement("span");
+        state.className = `root-state ${present ? "is-ready" : "is-missing"}`;
+        state.textContent = present ? "Found" : "Missing";
+        row.append(main, state);
+        componentList.append(row);
+      }
+      card.append(componentList);
+      ui.list.append(card);
+    }
+  }
+
+  function supportedTxt2ImgIds() {
+    const records = normalizeModels(packageState.support);
+    const supported = new Set();
+    for (const record of records) {
+      if (getValue(record, "capabilities", "Capabilities")?.txt2img !== "supported") continue;
+      const id = String(getValue(record, "id", "Id") || "");
+      if (id) supported.add(id);
+    }
+    return supported;
+  }
+
+  function syncGenerateModelSelect(models) {
+    const select = document.querySelector("#model-select");
+    if (!select) return;
+    const previous = select.value;
+    const supportedIds = supportedTxt2ImgIds();
+
+    const selectable = models.filter((model) => {
+      if (!isModelReady(model)) return false;
+      const id = String(getValue(model, "id", "Id") || "");
+      if (supportedIds.size) return supportedIds.has(id);
+      const family = String(getValue(model, "family", "Family") || "").toLowerCase();
+      return family === "sdxl" || family === "z-image-turbo";
+    });
+
+    select.replaceChildren();
+    if (!selectable.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No ready supported models found";
+      select.append(option);
+      return;
+    }
+
+    for (const model of selectable) {
+      const option = document.createElement("option");
+      option.value = String(getValue(model, "id", "Id") || "");
+      option.textContent = String(getValue(model, "name", "Name") || "Unnamed model");
+      select.append(option);
+    }
+    if (previous && selectable.some((model) => String(getValue(model, "id", "Id") || "") === previous)) {
+      select.value = previous;
+    }
+  }
+
+  window.renderModels = function renderModelsV03(models) {
+    const normalized = Array.isArray(models) ? models : normalizeModels(models);
+    baseRenderModels(normalized);
+    renderModelPackages(normalized);
+    syncGenerateModelSelect(normalized);
+  };
+  renderModels = window.renderModels;
+
+  async function refreshExecutionSupport() {
+    try {
+      packageState.support = await api("/api/model-support");
+      syncGenerateModelSelect(state.models || []);
+    } catch (error) {
+      showToast(`Model capability refresh failed: ${error.message}`, "error");
+    }
+  }
+
+  async function refreshModelPackages() {
+    try {
+      const models = normalizeModels(await api("/api/models"));
+      renderModels(models);
+    } catch (error) {
+      showToast(`Model package scan failed: ${error.message}`, "error");
+    }
+  }
+
+  function ensureBundleRootUi() {
+    const ui = ensureModelPackageUi();
+    if (!ui?.content) return null;
+
+    let section = document.querySelector("#bundle-root-section");
+    if (section) return section;
 
     section = document.createElement("section");
     section.id = "bundle-root-section";
@@ -22,8 +224,8 @@
     section.innerHTML = `
       <div class="section-toolbar">
         <div>
-          <h2>Bundle asset folders</h2>
-          <p>Modern model families can use separate diffusion model, text encoder and VAE files. StableAMD keeps these as asset roles and later combines them into one logical model.</p>
+          <h3>Bundle asset folders</h3>
+          <p>Advanced model asset folders map diffusion models, text encoders and VAE files into logical packages. Most users only need the package status above.</p>
         </div>
       </div>
       <div id="bundle-root-groups" class="model-install-grid"></div>`;
@@ -52,7 +254,9 @@
       groups.append(card);
     }
 
-    anchor.before(section);
+    const loraSection = ui.content.querySelector(".v02-lora-roots");
+    if (loraSection) loraSection.before(section);
+    else ui.content.prepend(section);
     section.addEventListener("submit", handleBundleRootSubmit);
     section.addEventListener("click", handleBundleRootClick);
     return section;
@@ -112,7 +316,7 @@
   }
 
   function renderBundleRoots(payload) {
-    bundleState.roots = payload || {};
+    packageState.roots = payload || {};
     for (const role of bundleRoles) renderBundleRole(role.id, normalizeRoots(payload, role.id));
   }
 
@@ -154,8 +358,7 @@
     try {
       const status = await api("/api/backend/restart", { method: "POST", body: "{}" });
       renderStatus(status);
-      await refreshBundleRoots();
-      document.querySelector("#refresh-button")?.click();
+      await Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
       showToast(message, "success");
     } catch (error) {
       showToast(`Bundle folder saved, but backend restart failed: ${error.message}`, "error");
@@ -180,6 +383,7 @@
       if (restartRequired) {
         void restartBackendForBundleFolders(`${role.replaceAll("_", " ")} folder added and backend refreshed.`);
       } else {
+        await refreshModelPackages();
         showToast(added ? "Bundle asset folder added." : "Bundle asset folder is already configured.", "success");
       }
     } catch (error) {
@@ -203,6 +407,7 @@
       if (restartRequired) {
         void restartBackendForBundleFolders(`${role.replaceAll("_", " ")} folder removed and backend refreshed.`);
       } else {
+        await refreshModelPackages();
         showToast(removed ? "Bundle asset folder removed." : "Bundle asset folder was not configured.", "success");
       }
     } catch (error) {
@@ -238,11 +443,16 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    ensureModelPackageUi();
     ensureBundleRootUi();
-    document.querySelector('[data-page="models"]')?.addEventListener("click", () => void refreshBundleRoots());
-    document.querySelector("#refresh-button")?.addEventListener("click", () => {
-      if (document.querySelector("#page-models")?.classList.contains("is-visible")) void refreshBundleRoots();
+    document.querySelector('[data-page="models"]')?.addEventListener("click", () => {
+      void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
     });
-    void refreshBundleRoots();
+    document.querySelector("#refresh-button")?.addEventListener("click", () => {
+      if (document.querySelector("#page-models")?.classList.contains("is-visible")) {
+        void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
+      }
+    });
+    void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
   });
 })();
