@@ -1,6 +1,8 @@
 Set-StrictMode -Version 2.0
 
-Import-Module (Join-Path $PSScriptRoot 'StableAmd.Bundles.psm1') -Force
+# Shared dependency: avoid -Force here so callers that already imported the
+# bundle primitives do not lose their exported commands when templates load.
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Bundles.psm1')
 
 function Find-StableAmdTemplateAsset {
     [CmdletBinding()]
