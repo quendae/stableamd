@@ -54,31 +54,26 @@ Describe 'StableAMD v0.3 logical model packages' {
         }
     }
 
-    It 'ships a unified model-package product endpoint while generation receives ready bundle models only' {
-        $packageScriptPath = Join-Path $repoRoot 'scripts/List-ModelPackages.ps1'
-        Test-Path $packageScriptPath -PathType Leaf | Should -BeTrue
-        $packageScript = Get-Content -LiteralPath $packageScriptPath -Raw
+    It 'keeps package discovery on the existing product model API and persists only ready bundles for execution' {
         $bundleScript = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/List-BundleModels.ps1') -Raw
         $server = Get-Content -LiteralPath (Join-Path $repoRoot 'app/backend/stableamd_v03_server.py') -Raw
 
-        $packageScript | Should -Match 'Find-StableAmdTemplatePackages'
-        $packageScript | Should -Match 'List-Models\.ps1'
         $bundleScript | Should -Match 'Find-StableAmdTemplatePackages'
         $bundleScript | Should -Match '\.ready'
-        $server | Should -Match 'model_packages'
-        $server | Should -Match '/api/model-packages'
+        $bundleScript | Should -Match 'readyBundles'
+        $server | Should -Match 'List-BundleModels\.ps1'
+        $server | Should -Not -Match '/api/model-packages'
     }
 
     It 'presents logical model packages first and moves raw asset folders under Advanced' {
         $frontend = Get-Content -LiteralPath (Join-Path $repoRoot 'app/frontend/app-v03.js') -Raw
-        $baseFrontend = Get-Content -LiteralPath (Join-Path $repoRoot 'app/frontend/app.js') -Raw
-        $index = Get-Content -LiteralPath (Join-Path $repoRoot 'app/frontend/index.html') -Raw
 
-        $frontend | Should -Match '/api/model-packages'
+        $frontend | Should -Match '/api/models'
         $frontend | Should -Match 'Model packages'
         $frontend | Should -Match 'Advanced model asset folders'
+        $frontend | Should -Match 'model-package-list'
         $frontend | Should -Match 'package-component'
-        $index | Should -Match 'model-package-list'
-        $baseFrontend | Should -Not -Match 'const sdxl = models\.filter'
+        $frontend | Should -Match 'window\.renderModels'
+        $frontend | Should -Match 'capabilities\?\.txt2img'
     }
 }
