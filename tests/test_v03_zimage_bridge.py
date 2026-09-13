@@ -1,4 +1,6 @@
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -53,6 +55,69 @@ class FakeBridge(v03.PowerShellBridge):
         return {"PromptId": "zimage-path", "ModelId": model["id"]}
 
 
+class CompletionBridge(v03.PowerShellBridge):
+    def __init__(self):
+        super().__init__(REPO_ROOT, powershell=sys.executable)
+        self.backend_checks = 0
+
+    def _backend_base_url(self):
+        self.backend_checks += 1
+        if self.backend_checks > 1:
+            raise v03.base.StableAmdBridgeError("temporary post-generation health timeout")
+        return "http://127.0.0.1:8190/"
+
+    def _bundle_asset_path(self, model, role):
+        return Path(model["assets"][role][0])
+
+    def _resolve_comfy_bundle_asset(self, node_name, input_name, path):
+        return path.name
+
+    def _run_script(self, name, parameters=None):
+        if name == "Build-StableAmdWorkflow.ps1":
+            return {"9": {"class_type": "SaveImage", "inputs": {}}}
+        return None
+
+    def _post_comfy_json(self, relative_path, payload, timeout=60):
+        return {"prompt_id": "prompt-zimage", "node_errors": {}}
+
+    def _comfy_json(self, relative_path):
+        return {
+            "prompt-zimage": {
+                "status": {"status_str": "success", "completed": True},
+                "outputs": {"9": {"images": [{"filename": "z.png", "subfolder": ""}]}},
+            }
+        }
+
+    def _resolve_zimage_output(self, prompt_id, history_entry):
+        return REPO_ROOT / ".runtime" / "stableamd" / "output" / "z.png"
+
+    def _save_zimage_history(self, record):
+        return REPO_ROOT / ".runtime" / "stableamd" / "history" / "z.json"
+
+
+class ConcurrentModelBridge(v03.PowerShellBridge):
+    def __init__(self):
+        super().__init__(REPO_ROOT, powershell=sys.executable)
+        self.counter_lock = threading.Lock()
+        self.active_scans = 0
+        self.max_active_scans = 0
+
+    def _run_script(self, name, parameters=None):
+        if name in {"List-Models.ps1", "List-BundleModels.ps1"}:
+            with self.counter_lock:
+                self.active_scans += 1
+                self.max_active_scans = max(self.max_active_scans, self.active_scans)
+            try:
+                time.sleep(0.05)
+                if name == "List-Models.ps1":
+                    return {"models": [CHECKPOINT]}
+                return {"models": [ZIMAGE]}
+            finally:
+                with self.counter_lock:
+                    self.active_scans -= 1
+        return None
+
+
 class StableAmdV03ZImageBridgeTests(unittest.TestCase):
     def setUp(self):
         self.bridge = FakeBridge()
@@ -76,6 +141,35 @@ class StableAmdV03ZImageBridgeTests(unittest.TestCase):
         result = self.bridge.generate(request)
         self.assertEqual(result["PromptId"], "checkpoint-path")
         self.assertTrue(any(name == "Invoke-Txt2Img.ps1" for name, _ in self.bridge.calls))
+
+    def test_successful_zimage_prompt_does_not_require_a_second_backend_health_probe(self):
+        bridge = CompletionBridge()
+        result = bridge._generate_zimage_turbo(
+            {"prompt": "a mountain village", "startBackendIfNeeded": True},
+            ZIMAGE,
+        )
+        self.assertEqual(result["PromptId"], "prompt-zimage")
+        self.assertEqual(result["BackendUrl"], "http://127.0.0.1:8190/")
+        self.assertEqual(bridge.backend_checks, 1)
+
+    def test_parallel_model_requests_serialize_registry_scans(self):
+        bridge = ConcurrentModelBridge()
+        errors = []
+
+        def worker():
+            try:
+                bridge.models()
+            except Exception as exc:  # pragma: no cover - captured for assertion
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker), threading.Thread(target=worker)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(bridge.max_active_scans, 1)
 
 
 if __name__ == "__main__":
