@@ -121,6 +121,23 @@ Describe 'StableAMD managed backend lifecycle scripts' {
         $launcherScript | Should -Match 'DisableDynamicVram'
     }
 
+    It 'supports a lowvram diagnostic switch independently from dynamic VRAM selection' {
+        $backendScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
+        $launcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Launch-StableAMD.ps1') -Raw
+
+        $backendScript | Should -Match '\[switch\]\$LowVram'
+        $backendScript | Should -Match '--lowvram'
+        $launcherScript | Should -Match '\[switch\]\$LowVram'
+        $launcherScript | Should -Match 'LowVram'
+    }
+
+    It 'timestamps each live diagnostic event with millisecond wall-clock time' {
+        $watcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Watch-StableAMD.ps1') -Raw
+
+        $watcherScript | Should -Match "Get-Date -Format 'HH:mm:ss\.fff'"
+        $watcherScript | Should -Match '\[\{0\}\] \[\{1\}\] \{2\}'
+    }
+
     It 'reports stopped running and degraded states from managed state plus HTTP health' {
         $scriptPath = Join-Path $PSScriptRoot '../scripts/Get-StableAMDStatus.ps1'
         Test-Path $scriptPath | Should -BeTrue
