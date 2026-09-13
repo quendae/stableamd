@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [string]$RepoRoot = '',
     [Parameter(Mandatory = $true)][string]$InputImageName,
     [Parameter(Mandatory = $true)][string]$ModelName,
     [string]$FilenamePrefix = 'StableAMD_UPSCALE'
