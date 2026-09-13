@@ -32,15 +32,18 @@ $diffusionRoots = @(Get-ExistingStableAmdBundleRoots -Role 'diffusion_model')
 $textEncoderRoots = @(Get-ExistingStableAmdBundleRoots -Role 'text_encoder')
 $vaeRoots = @(Get-ExistingStableAmdBundleRoots -Role 'vae')
 
-$discovered = @(
-    Find-StableAmdTemplateBundles `
+$packages = @(
+    Find-StableAmdTemplatePackages `
         -DiffusionRoots $diffusionRoots `
         -TextEncoderRoots $textEncoderRoots `
         -VaeRoots $vaeRoots
 )
 
+# The product model list keeps incomplete packages visible for diagnostics and
+# setup UX. Only ready packages are persisted as executable bundle models.
+$readyBundles = @($packages | Where-Object { $_.ready })
 $complete = @()
-foreach ($bundle in $discovered) {
+foreach ($bundle in $readyBundles) {
     $validation = Test-StableAmdBundleEntry `
         -Entry $bundle `
         -RequiredRoles @('diffusion_model', 'text_encoder', 'vae') `
@@ -55,6 +58,7 @@ foreach ($bundle in $complete) {
 Write-StableAmdBundleRegistry -Path $paths.BundlesRegistryPath -Registry $registry
 
 [pscustomobject]@{
-    count = @($complete).Count
-    models = @($complete)
+    count = @($packages).Count
+    readyCount = @($complete).Count
+    models = [object[]]@($packages)
 }
