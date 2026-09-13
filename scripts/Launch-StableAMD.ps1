@@ -6,7 +6,8 @@ param(
     [switch]$NoBrowser,
     [switch]$SkipRuntimeInstall,
     [switch]$Detached,
-    [switch]$DisableDynamicVram
+    [switch]$DisableDynamicVram,
+    [switch]$LowVram
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,10 +82,6 @@ function Get-StableAmdAppHealth {
 }
 
 function New-StableAmdKillOnCloseJob {
-    # In normal desktop mode the launcher is the StableAMD supervisor. A Windows
-    # Job Object provides the hard guarantee we want: if this PowerShell host is
-    # closed or crashes, Windows terminates the assigned app/backend processes,
-    # which also releases ROCm VRAM. Detached acceptance/service runs skip this.
     if (-not ('StableAmd.NativeJob' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -184,13 +181,16 @@ namespace StableAmd {
 Write-Host ''
 Write-Host 'StableAMD v0.3' -ForegroundColor Cyan
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
+$backendParams = @{ RepoRoot = $RepoRoot }
 if ($DisableDynamicVram) {
     Write-Host 'Diagnostic memory mode: ComfyUI DynamicVRAM disabled.' -ForegroundColor Yellow
-    $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot -DisableDynamicVram
+    $backendParams.DisableDynamicVram = $true
 }
-else {
-    $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot
+if ($LowVram) {
+    Write-Host 'Diagnostic memory mode: ComfyUI lowvram enabled.' -ForegroundColor Yellow
+    $backendParams.LowVram = $true
 }
+$backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') @backendParams
 if ($null -eq $backendStatus -or -not [bool]$backendStatus.Healthy) {
     throw 'StableAMD managed compute backend did not become healthy.'
 }
@@ -225,8 +225,6 @@ else {
     $stderrPath = Join-Path $paths.LogsRoot "app-$stamp.stderr.log"
 
     Write-Host "Starting StableAMD application on $appUrl ..." -ForegroundColor Cyan
-    # -u makes application-side PowerShell/progress forwarding immediately
-    # visible in the managed log rather than waiting for Python's file buffer.
     $arguments = "-u -s `"$appServer`" --repo-root `"$RepoRoot`" --host 127.0.0.1 --port $resolvedAppPort"
     $appProcess = Start-Process `
         -FilePath $paths.TheRockPython `
@@ -319,9 +317,6 @@ try {
     & (Join-Path $PSScriptRoot 'Watch-StableAMD.ps1') -RepoRoot $RepoRoot -Tail 20
 }
 finally {
-    # Closing the job handle first guarantees process termination even if the
-    # normal script-level cleanup path is interrupted. Stop-StableAMD then
-    # verifies the repo-scoped process state and removes runtime state files.
     if ($supervisorJob -ne [IntPtr]::Zero) {
         [StableAmd.NativeJob]::Close($supervisorJob)
         $supervisorJob = [IntPtr]::Zero
