@@ -1,6 +1,9 @@
 Set-StrictMode -Version 2.0
 
-Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
+# This is a shared dependency. Do not force-reload it here: callers such as
+# List-BundleModels.ps1 may already have imported Runtime and need its exports
+# to remain visible in their session after this module loads.
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1')
 
 function Get-StableAmdBundleRoleMetadata {
     [CmdletBinding()]
