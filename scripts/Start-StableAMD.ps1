@@ -127,6 +127,7 @@ function Get-StableAmdExistingRoots {
 
 $modelRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.models.roots) -ManagedRoot $paths.CheckpointsRoot)
 $loraRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.loras.roots) -ManagedRoot $paths.LorasRoot)
+$upscaleModelRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.upscaleModels.roots) -ManagedRoot $paths.UpscaleModelsRoot)
 $diffusionModelRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.diffusionModels.roots) -ManagedRoot $paths.DiffusionModelsRoot)
 $textEncoderRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.textEncoders.roots) -ManagedRoot $paths.TextEncodersRoot)
 $vaeRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.vae.roots) -ManagedRoot $paths.VaeRoot)
@@ -153,6 +154,7 @@ function Add-StableAmdExtraModelRoot {
 
 Add-StableAmdExtraModelRoot -Prefix 'checkpoint' -FolderType 'checkpoints' -Roots $modelRoots
 Add-StableAmdExtraModelRoot -Prefix 'lora' -FolderType 'loras' -Roots $loraRoots
+Add-StableAmdExtraModelRoot -Prefix 'upscale_model' -FolderType 'upscale_models' -Roots $upscaleModelRoots
 Add-StableAmdExtraModelRoot -Prefix 'diffusion_model' -FolderType 'diffusion_models' -Roots $diffusionModelRoots
 Add-StableAmdExtraModelRoot -Prefix 'text_encoder' -FolderType 'text_encoders' -Roots $textEncoderRoots
 Add-StableAmdExtraModelRoot -Prefix 'vae' -FolderType 'vae' -Roots $vaeRoots
