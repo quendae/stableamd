@@ -23,6 +23,71 @@ function Find-StableAmdTemplateAsset {
     return $null
 }
 
+function New-StableAmdTemplateComponent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Role,
+        [Parameter(Mandatory = $true)][string]$Label,
+        [Parameter(Mandatory = $true)][string]$ExpectedName,
+        [AllowNull()][string]$Path
+    )
+
+    $present = -not [string]::IsNullOrWhiteSpace($Path)
+    return [pscustomobject]@{
+        role = $Role
+        label = $Label
+        expectedName = $ExpectedName
+        path = if ($present) { [IO.Path]::GetFullPath($Path) } else { $null }
+        present = $present
+    }
+}
+
+function Find-StableAmdTemplatePackages {
+    [CmdletBinding()]
+    param(
+        [string[]]$DiffusionRoots = @(),
+        [string[]]$TextEncoderRoots = @(),
+        [string[]]$VaeRoots = @()
+    )
+
+    # Official ComfyUI template: image_z_image_turbo.json
+    # A package is returned even when incomplete so the product UI can explain
+    # what is present and what is still missing instead of silently hiding it.
+    $diffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'z_image_turbo_bf16.safetensors'
+    $encoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen_3_4b.safetensors'
+    $vae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'ae.safetensors'
+
+    $components = @(
+        New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model' -ExpectedName 'z_image_turbo_bf16.safetensors' -Path $diffusion
+        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Text encoder' -ExpectedName 'qwen_3_4b.safetensors' -Path $encoder
+        New-StableAmdTemplateComponent -Role 'vae' -Label 'VAE' -ExpectedName 'ae.safetensors' -Path $vae
+    )
+    $ready = @($components | Where-Object { -not $_.present }).Count -eq 0
+
+    $diffusionAssets = @($components | Where-Object role -eq 'diffusion_model' | Where-Object present | ForEach-Object path)
+    $encoderAssets = @($components | Where-Object role -eq 'text_encoder' | Where-Object present | ForEach-Object path)
+    $vaeAssets = @($components | Where-Object role -eq 'vae' | Where-Object present | ForEach-Object path)
+
+    return @(
+        [pscustomobject]@{
+            id = Get-StableAmdBundleId -Family 'z-image-turbo' -Name 'Z-Image Turbo'
+            name = 'Z-Image Turbo'
+            family = 'z-image-turbo'
+            provider = 'z-image-turbo-bundle'
+            assetMode = 'bundle'
+            ready = $ready
+            status = if ($ready) { 'ready' } else { 'incomplete' }
+            components = [object[]]@($components)
+            assets = [pscustomobject]@{
+                diffusion_model = [object[]]@($diffusionAssets)
+                text_encoder = [object[]]@($encoderAssets)
+                vae = [object[]]@($vaeAssets)
+            }
+            updatedAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+    )
+}
+
 function Find-StableAmdTemplateBundles {
     [CmdletBinding()]
     param(
@@ -31,26 +96,13 @@ function Find-StableAmdTemplateBundles {
         [string[]]$VaeRoots = @()
     )
 
-    $bundles = @()
-
-    # Official ComfyUI template: image_z_image_turbo.json
-    $diffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'z_image_turbo_bf16.safetensors'
-    $encoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen_3_4b.safetensors'
-    $vae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'ae.safetensors'
-
-    if ($null -ne $diffusion -and $null -ne $encoder -and $null -ne $vae) {
-        $bundles += New-StableAmdBundleEntry `
-            -Family 'z-image-turbo' `
-            -Name 'Z-Image Turbo' `
-            -Provider 'z-image-turbo-bundle' `
-            -Assets @{
-                diffusion_model = @($diffusion)
-                text_encoder = @($encoder)
-                vae = @($vae)
-            }
-    }
-
-    return @($bundles)
+    return @(
+        Find-StableAmdTemplatePackages `
+            -DiffusionRoots $DiffusionRoots `
+            -TextEncoderRoots $TextEncoderRoots `
+            -VaeRoots $VaeRoots |
+            Where-Object { $_.ready }
+    )
 }
 
-Export-ModuleMember -Function Find-StableAmdTemplateBundles
+Export-ModuleMember -Function Find-StableAmdTemplatePackages, Find-StableAmdTemplateBundles
