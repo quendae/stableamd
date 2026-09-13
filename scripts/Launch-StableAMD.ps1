@@ -7,7 +7,8 @@ param(
     [switch]$SkipRuntimeInstall,
     [switch]$Detached,
     [switch]$DisableDynamicVram,
-    [switch]$LowVram
+    [switch]$LowVram,
+    [switch]$CacheNone
 )
 
 $ErrorActionPreference = 'Stop'
@@ -189,6 +190,10 @@ if ($DisableDynamicVram) {
 if ($LowVram) {
     Write-Host 'Diagnostic memory mode: ComfyUI lowvram enabled.' -ForegroundColor Yellow
     $backendParams.LowVram = $true
+}
+if ($CacheNone) {
+    Write-Host 'Diagnostic memory mode: ComfyUI RAM pressure cache disabled.' -ForegroundColor Yellow
+    $backendParams.CacheNone = $true
 }
 $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') @backendParams
 if ($null -eq $backendStatus -or -not [bool]$backendStatus.Healthy) {
