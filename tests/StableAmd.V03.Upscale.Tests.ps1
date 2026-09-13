@@ -61,4 +61,14 @@ Describe 'StableAMD v0.3 stock ComfyUI upscale provider' {
         $frontend | Should -Match 'Upscale model'
         $frontend | Should -Match '4x-UltraSharp|RealESRGAN'
     }
+
+    It 'distinguishes model files on disk from models registered by ComfyUI' {
+        $frontend = Get-Content $frontendPath -Raw
+
+        $frontend | Should -Match 'diskModels'
+        $frontend | Should -Match 'restartRecommended'
+        $frontend | Should -Match 'found on disk'
+        $frontend | Should -Match 'upscale-refresh-models'
+        $frontend | Should -Match 'Check again'
+    }
 }
