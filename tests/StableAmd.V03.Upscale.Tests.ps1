@@ -7,6 +7,7 @@ BeforeAll {
     $listPath = Join-Path $repoRoot 'scripts/List-UpscaleModels.ps1'
     $frontendPath = Join-Path $repoRoot 'app/frontend/app-upscale.js'
     $indexPath = Join-Path $repoRoot 'app/frontend/index.html'
+    $catalogPath = Join-Path $repoRoot 'config/upscalers.v0.3.json'
 }
 
 Describe 'StableAMD v0.3 stock ComfyUI upscale provider' {
@@ -59,9 +60,11 @@ Describe 'StableAMD v0.3 stock ComfyUI upscale provider' {
         $script | Should -Match 'model_name'
     }
 
-    It 'ships an upscale UI launched from the gallery action' {
+    It 'ships an upscale UI launched from the gallery action and a curated model catalog' {
         Test-Path $frontendPath | Should -BeTrue
+        Test-Path $catalogPath | Should -BeTrue
         $frontend = Get-Content $frontendPath -Raw
+        $catalog = Get-Content $catalogPath -Raw
         $index = Get-Content $indexPath -Raw
 
         $index | Should -Match 'app-upscale\.js'
@@ -69,7 +72,7 @@ Describe 'StableAMD v0.3 stock ComfyUI upscale provider' {
         $frontend | Should -Match '/api/upscale'
         $frontend | Should -Match 'openStableAmdUpscale'
         $frontend | Should -Match 'Upscale model'
-        $frontend | Should -Match '4x-UltraSharp|RealESRGAN'
+        $catalog | Should -Match '4x-UltraSharp|RealESRGAN'
     }
 
     It 'distinguishes model files on disk from models registered by ComfyUI' {
