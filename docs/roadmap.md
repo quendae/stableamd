@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-14
 
-This file tracks larger product directions. Detailed implementation/acceptance state for the active release remains in `docs/v0.3-status.md`.
+This file tracks larger product directions. Detailed implementation/acceptance state for the active release remains in `docs/v0.3-status.md`; the agreed execution order and feature backlog live in `docs/v0.3-forward-plan.md`.
 
 ## v0.3 — active
 
@@ -10,11 +10,14 @@ Primary goal: turn the proven Radeon/ComfyUI runtime into a practical multi-prov
 
 Current order:
 
-1. Target-test provider-native Z-Image inpaint/outpaint through the official Fun Control Union model patch; keep Krea 2 editing capability-gated until a validated local workflow exists.
-2. Optional reduced-memory SeedVR2 evaluation.
-3. Batch/queue generation with model residency preservation.
-4. ControlNet/OpenPose.
-5. Remaining UX/polish work, including deferred outpaint seam compositing.
+1. Curated one-click dependency installer, starting with the accepted Z-Image Union 2.1 Lite model patch.
+2. Real Krea 2 LoRA execution and target acceptance, including stack/history/reuse behavior where the pinned loader path supports it.
+3. ControlNet / structural guidance, beginning with Canny, Depth and OpenPose and keeping provider/model compatibility explicit.
+4. First-class image-edit workflows: general image edit, material replacement, one/two-image reference and style guidance, then a character turnaround sheet preset.
+5. Separate vector/graphics providers for text-to-SVG, image-to-SVG and infographic-specialized generation.
+6. Remaining v0.3 polish and infrastructure that directly supports these workflows; inpaint/outpaint stay maintained but are no longer the main development focus.
+
+Batch/queue work and optional SeedVR2 evaluation remain useful supporting work, but they do not take priority over installer -> Krea 2 LoRA -> ControlNet.
 
 ## v0.4 candidate — Image(s) to Gaussian Splat
 
@@ -55,3 +58,7 @@ Rationale:
 4. Export and Gallery persistence.
 
 This feature is intentionally **post-v0.3** so it does not delay the current image-model/provider work.
+
+## Later — video generation
+
+Video is intentionally after the core v0.3 image workstation and the first 3D work. It needs its own queue/job lifecycle, preview/export UX and memory/runtime acceptance. MiniMax H3 is the first candidate to benchmark on the target Radeon system; other models should be selected by demonstrated Windows/AMD feasibility rather than name recognition alone.
