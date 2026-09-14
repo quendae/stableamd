@@ -3,7 +3,7 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     }
 
-    It 'declares Z-Image Turbo txt2img as supported bundle model' {
+    It 'declares Z-Image Turbo txt2img and model-only LoRA as supported' {
         $catalog = Get-Content -Path (Join-Path $repoRoot 'config/model-support.v0.3.json') -Raw | ConvertFrom-Json
         $family = $catalog.families.'z-image-turbo'
 
@@ -12,7 +12,11 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         @($family.requiredAssetRoles) | Should -Be @('diffusion_model', 'text_encoder', 'vae')
         $family.capabilities.txt2img | Should -Be 'supported'
         $family.capabilities.img2img | Should -Be 'planned'
-        $family.capabilities.lora | Should -Be 'planned'
+        $family.capabilities.lora | Should -Be 'supported'
+        $family.loraPolicy.orderedStack | Should -BeTrue
+        $family.loraPolicy.maxStack | Should -Be 8
+        $family.loraPolicy.perEntryModelStrength | Should -BeTrue
+        $family.loraPolicy.perEntryClipStrength | Should -BeFalse
     }
 
     It 'builds the official ComfyUI Z-Image Turbo txt2img graph' {
@@ -49,6 +53,35 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         $workflow['3'].inputs.scheduler | Should -Be 'simple'
         $workflow['8'].class_type | Should -Be 'VAEDecode'
         $workflow['9'].class_type | Should -Be 'SaveImage'
+    }
+
+    It 'chains Z-Image LoRAs through the diffusion model only' {
+        Import-Module (Join-Path $repoRoot 'scripts/StableAmd.Workflows.psm1') -Force
+
+        $stack = @(
+            [pscustomobject]@{ name = 'z-image/style-a.safetensors'; modelStrength = 0.8; clipStrength = 0.3; enabled = $true },
+            [pscustomobject]@{ name = 'z-image/style-b.safetensors'; modelStrength = 1.1; clipStrength = 0.7; enabled = $true }
+        )
+        $workflow = New-StableAmdWorkflow `
+            -Family 'z-image-turbo' `
+            -Mode 'txt2img' `
+            -Prompt 'a lighthouse at sunset' `
+            -DiffusionModelName 'z_image_turbo_bf16.safetensors' `
+            -TextEncoderName 'qwen_3_4b.safetensors' `
+            -VaeName 'ae.safetensors' `
+            -LoraStack $stack `
+            -Seed 42
+
+        $workflow['40'].class_type | Should -Be 'LoraLoaderModelOnly'
+        $workflow['40'].inputs.lora_name | Should -Be 'z-image/style-a.safetensors'
+        $workflow['40'].inputs.strength_model | Should -Be 0.8
+        @($workflow['40'].inputs.model) | Should -Be @('28', 0)
+        $workflow['41'].class_type | Should -Be 'LoraLoaderModelOnly'
+        @($workflow['41'].inputs.model) | Should -Be @('40', 0)
+        @($workflow['11'].inputs.model) | Should -Be @('41', 0)
+        @($workflow['27'].inputs.clip) | Should -Be @('30', 0)
+        $workflow['40'].inputs.PSObject.Properties.Name | Should -Not -Contain 'strength_clip'
+        $workflow['41'].inputs.PSObject.Properties.Name | Should -Not -Contain 'clip'
     }
 
     It 'discovers the exact official template asset trio as one logical model' {
