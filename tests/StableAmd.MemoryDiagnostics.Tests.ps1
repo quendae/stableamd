@@ -34,4 +34,12 @@ Describe 'StableAMD memory diagnostics' {
         $launcherScript | Should -Match '\$backendParams\.CacheClassic = \$true'
         $launcherScript | Should -Match 'classic cache enabled'
     }
+
+    It 'keeps VAE decode on CPU to avoid Windows ROCm partial-unload crashes' {
+        $runner = Get-Content (Join-Path $PSScriptRoot '../scripts/probes/run_comfy_isolated.py') -Raw
+
+        $runner | Should -Match '--cpu-vae'
+        $runner | Should -Match 'partial model'
+        $runner | Should -Match 'access violations'
+    }
 }
