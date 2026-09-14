@@ -44,6 +44,38 @@ function New-StableAmdTemplateComponent {
     }
 }
 
+function New-StableAmdTemplatePackage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Family,
+        [Parameter(Mandatory = $true)][string]$Provider,
+        [Parameter(Mandatory = $true)][object[]]$Components
+    )
+
+    $ready = @($Components | Where-Object { -not $_.present }).Count -eq 0
+    $diffusionAssets = @($Components | Where-Object { $_.role -eq 'diffusion_model' -and $_.present } | ForEach-Object { $_.path })
+    $encoderAssets = @($Components | Where-Object { $_.role -eq 'text_encoder' -and $_.present } | ForEach-Object { $_.path })
+    $vaeAssets = @($Components | Where-Object { $_.role -eq 'vae' -and $_.present } | ForEach-Object { $_.path })
+
+    return [pscustomobject]@{
+        id = Get-StableAmdBundleId -Family $Family -Name $Name
+        name = $Name
+        family = $Family
+        provider = $Provider
+        assetMode = 'bundle'
+        ready = $ready
+        status = if ($ready) { 'ready' } else { 'incomplete' }
+        components = [object[]]@($Components)
+        assets = [pscustomobject]@{
+            diffusion_model = [object[]]@($diffusionAssets)
+            text_encoder = [object[]]@($encoderAssets)
+            vae = [object[]]@($vaeAssets)
+        }
+        updatedAtUtc = [DateTime]::UtcNow.ToString('o')
+    }
+}
+
 function Find-StableAmdTemplatePackages {
     [CmdletBinding()]
     param(
@@ -52,41 +84,31 @@ function Find-StableAmdTemplatePackages {
         [string[]]$VaeRoots = @()
     )
 
-    # Official ComfyUI template: image_z_image_turbo.json
-    # A package is returned even when incomplete so the product UI can explain
-    # what is present and what is still missing instead of silently hiding it.
-    $diffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'z_image_turbo_bf16.safetensors'
-    $encoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen_3_4b.safetensors'
-    $vae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'ae.safetensors'
-
-    $components = @(
-        New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model' -ExpectedName 'z_image_turbo_bf16.safetensors' -Path $diffusion
-        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Text encoder' -ExpectedName 'qwen_3_4b.safetensors' -Path $encoder
-        New-StableAmdTemplateComponent -Role 'vae' -Label 'VAE' -ExpectedName 'ae.safetensors' -Path $vae
+    # Official ComfyUI template: image_z_image_turbo.json.
+    $zDiffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'z_image_turbo_bf16.safetensors'
+    $zEncoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen_3_4b.safetensors'
+    $zVae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'ae.safetensors'
+    $zComponents = @(
+        New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model' -ExpectedName 'z_image_turbo_bf16.safetensors' -Path $zDiffusion
+        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Text encoder' -ExpectedName 'qwen_3_4b.safetensors' -Path $zEncoder
+        New-StableAmdTemplateComponent -Role 'vae' -Label 'VAE' -ExpectedName 'ae.safetensors' -Path $zVae
     )
-    $ready = @($components | Where-Object { -not $_.present }).Count -eq 0
 
-    $diffusionAssets = @($components | Where-Object { $_.role -eq 'diffusion_model' -and $_.present } | ForEach-Object { $_.path })
-    $encoderAssets = @($components | Where-Object { $_.role -eq 'text_encoder' -and $_.present } | ForEach-Object { $_.path })
-    $vaeAssets = @($components | Where-Object { $_.role -eq 'vae' -and $_.present } | ForEach-Object { $_.path })
+    # Official ComfyUI Krea-2 Turbo package. FP8 is the first StableAMD target
+    # because it is the realistic fit for a 16 GiB Radeon. RAW/BF16 can be
+    # added as separate logical packages after the Turbo path is target-tested.
+    $kDiffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'krea2_turbo_fp8_scaled.safetensors'
+    $kEncoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen3vl_4b_fp8_scaled.safetensors'
+    $kVae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'qwen_image_vae.safetensors'
+    $kComponents = @(
+        New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model (FP8)' -ExpectedName 'krea2_turbo_fp8_scaled.safetensors' -Path $kDiffusion
+        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Qwen3-VL text encoder (FP8)' -ExpectedName 'qwen3vl_4b_fp8_scaled.safetensors' -Path $kEncoder
+        New-StableAmdTemplateComponent -Role 'vae' -Label 'Qwen Image VAE' -ExpectedName 'qwen_image_vae.safetensors' -Path $kVae
+    )
 
     return @(
-        [pscustomobject]@{
-            id = Get-StableAmdBundleId -Family 'z-image-turbo' -Name 'Z-Image Turbo'
-            name = 'Z-Image Turbo'
-            family = 'z-image-turbo'
-            provider = 'z-image-turbo-bundle'
-            assetMode = 'bundle'
-            ready = $ready
-            status = if ($ready) { 'ready' } else { 'incomplete' }
-            components = [object[]]@($components)
-            assets = [pscustomobject]@{
-                diffusion_model = [object[]]@($diffusionAssets)
-                text_encoder = [object[]]@($encoderAssets)
-                vae = [object[]]@($vaeAssets)
-            }
-            updatedAtUtc = [DateTime]::UtcNow.ToString('o')
-        }
+        New-StableAmdTemplatePackage -Name 'Z-Image Turbo' -Family 'z-image-turbo' -Provider 'z-image-turbo-bundle' -Components $zComponents
+        New-StableAmdTemplatePackage -Name 'Krea 2 Turbo (FP8)' -Family 'krea2' -Provider 'krea2-bundle' -Components $kComponents
     )
 }
 
