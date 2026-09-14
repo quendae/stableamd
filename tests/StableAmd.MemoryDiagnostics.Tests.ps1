@@ -35,13 +35,14 @@ Describe 'StableAMD memory diagnostics' {
         $launcherScript | Should -Match 'classic cache enabled'
     }
 
-    It 'uses conservative Windows ROCm host-memory guards for gfx1030' {
+    It 'keeps CPU VAE without regressing large safetensors model loading' {
         $runner = Get-Content (Join-Path $PSScriptRoot '../scripts/probes/run_comfy_isolated.py') -Raw
 
         $runner | Should -Match '--cpu-vae'
-        $runner | Should -Match '--disable-mmap'
-        $runner | Should -Match '--disable-pinned-memory'
-        $runner | Should -Match '--disable-async-offload'
-        $runner | Should -Match '0xC0000005'
+        $runner | Should -Not -Match '"--disable-mmap"'
+        $runner | Should -Not -Match '"--disable-pinned-memory"'
+        $runner | Should -Not -Match '"--disable-async-offload"'
+        $runner | Should -Match 'StableAMD bootstrap'
+        $runner | Should -Match 'load_torch_file'
     }
 }
