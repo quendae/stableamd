@@ -1,6 +1,8 @@
 (() => {
   const previousApi = api;
+  const DEFAULT_OUTPAINT_MARGIN = 256;
   let outpaintRecord = null;
+  let autoPreparing = false;
 
   function getValue(record, camel, pascal) {
     if (!record || typeof record !== "object") return undefined;
@@ -46,6 +48,45 @@
   function useOutpaintDenoiseDefault() {
     const denoise = document.querySelector("#inpaint-denoise");
     if (denoise) denoise.value = "1";
+  }
+
+  function useOutpaintMarginDefaults() {
+    for (const side of ["left", "right", "top", "bottom"]) {
+      const input = document.querySelector(`#outpaint-${side}`);
+      if (input) input.value = String(DEFAULT_OUTPAINT_MARGIN);
+    }
+  }
+
+  function syncPreparedDimensions() {
+    const source = document.querySelector("#inpaint-source-canvas");
+    if (!source?.width || !source?.height) return;
+
+    const tier = document.querySelector("#resolution-tier");
+    if (tier && Array.from(tier.options).some((option) => option.value === "custom")) {
+      tier.value = "custom";
+      tier.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    const width = document.querySelector("#width");
+    const height = document.querySelector("#height");
+    if (width) {
+      width.value = String(source.width);
+      width.dispatchEvent(new Event("input", { bubbles: true }));
+      width.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (height) {
+      height.value = String(source.height);
+      height.dispatchEvent(new Event("input", { bubbles: true }));
+      height.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    document.dispatchEvent(new CustomEvent("stableamd:outpaint-prepared", {
+      detail: {
+        width: source.width,
+        height: source.height,
+        margins: buildEditContext().margins,
+      },
+    }));
   }
 
   async function waitForPreparedSourceCanvas(file) {
@@ -115,10 +156,30 @@
     canvas.dataset.outpaintLatentSeed = "blurred-edge";
   }
 
+  async function autoPrepareOutpaint() {
+    if (!outpaintRecord || autoPreparing) return;
+    if (typeof window.prepareOutpaintSource !== "function") return;
+
+    autoPreparing = true;
+    const prepareButton = document.querySelector("#outpaint-prepare");
+    const hint = document.querySelector("#inpaint-hint");
+    if (prepareButton) prepareButton.disabled = true;
+    if (hint) hint.textContent = "Preparing 256 px outpaint expansion on every side…";
+    showToast("Preparing 256 px outpaint expansion on every side…", "success");
+    try {
+      await window.prepareOutpaintSource(outpaintRecord);
+      syncPreparedDimensions();
+    } finally {
+      autoPreparing = false;
+      if (prepareButton) prepareButton.disabled = false;
+    }
+  }
+
   document.addEventListener("stableamd:load-generated-image", (event) => {
     const detail = event.detail || {};
     if (detail.action === "outpaint") {
       outpaintRecord = detail.record || null;
+      useOutpaintMarginDefaults();
       useOutpaintDenoiseDefault();
     } else if (detail.action === "img2img" || detail.action === "inpaint") {
       outpaintRecord = null;
@@ -131,9 +192,17 @@
     });
     document.querySelector("#inpaint-source-image")?.addEventListener("change", (event) => {
       const file = event.target.files?.[0];
-      if (!outpaintRecord || !file || !/^stableamd-outpaint\.png$/i.test(file.name || "")) return;
+      if (!outpaintRecord || !file) return;
+
       useOutpaintDenoiseDefault();
-      void seedOutpaintCanvas(file).catch((error) => showToast(`Outpaint preparation warning: ${error.message}`, "error"));
+      if (/^stableamd-outpaint-original\.(png|jpe?g|webp)$/i.test(file.name || "")) {
+        void autoPrepareOutpaint().catch((error) => showToast(`Outpaint preparation failed: ${error.message}`, "error"));
+        return;
+      }
+      if (!/^stableamd-outpaint\.png$/i.test(file.name || "")) return;
+      void seedOutpaintCanvas(file)
+        .then(syncPreparedDimensions)
+        .catch((error) => showToast(`Outpaint preparation warning: ${error.message}`, "error"));
     });
   });
 
@@ -141,8 +210,8 @@
     const method = String(options?.method || "GET").toUpperCase();
     if (path === "/api/generate" && method === "POST" && outpaintPrepared()) {
       let payload = {};
-      try { payload = options.body ? JSON.parse(options.body) : {}; }
-      catch { payload = {}; }
+      try { payload = options.body ? JSON.parse(options.body) : {};
+      } catch { payload = {}; }
       const editContext = buildEditContext();
       const total = Object.values(editContext.margins).reduce((sum, value) => sum + value, 0);
       if (total <= 0) throw new Error("Outpaint requires at least one non-zero expansion margin.");
