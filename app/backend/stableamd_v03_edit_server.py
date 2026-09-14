@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -31,12 +33,25 @@ ZIMAGE_FUN_LEGACY_PATCH = editing.ZIMAGE_FUN_LEGACY_PATCH
 ZIMAGE_FUN_PATCH_SHA256 = editing.ZIMAGE_FUN_PATCH_SHA256
 ZIMAGE_FUN_PATCH_BYTES = editing.ZIMAGE_FUN_PATCH_BYTES
 
+_POWERSHELL_JSON_SENTINEL = "__STABLEAMD_JSON__"
+
 
 class PowerShellBridge(editing.PowerShellBridge):
     """Final v0.3 product bridge with curated dependencies and Krea 2 LoRA."""
 
     def __post_init__(self) -> None:
+        requested_powershell = self.powershell
         super().__post_init__()
+
+        # StableAMD's target-machine development shell and CI both use
+        # PowerShell 7. Prefer pwsh when the application chooses the executable
+        # automatically. Windows PowerShell 5.1 remains a fallback for machines
+        # where pwsh is not installed.
+        if requested_powershell is None:
+            preferred = shutil.which("pwsh.exe") or shutil.which("pwsh")
+            if preferred:
+                self.powershell = preferred
+
         self._krea_lora_context = local()
 
     def _registered_model_patches(self) -> list[str]:
@@ -75,8 +90,115 @@ class PowerShellBridge(editing.PowerShellBridge):
         # contract while forcing CLIP strength to zero.
         return self._resolve_zimage_loras(request)
 
+    @staticmethod
+    def _powershell_parameter_tokens(parameters: list[tuple[str, Any]] | None) -> list[str]:
+        parts: list[str] = []
+        for key, value in parameters or []:
+            if value is None or value is False:
+                continue
+            parts.append(f"-{key}")
+            if value is True:
+                continue
+            if isinstance(value, bool):
+                parts.append("$true" if value else "$false")
+            elif isinstance(value, (int, float)):
+                parts.append(str(value))
+            else:
+                parts.append(base._powershell_literal(str(value)))
+        return parts
+
+    @staticmethod
+    def _parse_powershell_json(stdout: str) -> Any:
+        lines = [line.strip() for line in str(stdout or "").splitlines() if line.strip()]
+
+        # Preferred v0.3 contract. The sentinel makes parsing deterministic even
+        # when PowerShell modules print warnings, progress, verbose messages or
+        # other host output before the actual machine-readable payload.
+        for line in reversed(lines):
+            marker = line.find(_POWERSHELL_JSON_SENTINEL)
+            if marker < 0:
+                continue
+            payload = line[marker + len(_POWERSHELL_JSON_SENTINEL) :].strip()
+            if not payload:
+                return None
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+
+        # Backward-compatible parser for explicit/custom PowerShell commands and
+        # old scripts that may still emit a clean JSON line without the marker.
+        for line in reversed(lines):
+            if line.startswith("{") or line.startswith("[") or line in {"null", "true", "false"}:
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        raise ValueError("no machine-readable JSON payload found")
+
     def _run_script(self, name: str, parameters: list[tuple[str, Any]] | None = None) -> Any:
-        result = super()._run_script(name, parameters)
+        script = self._script_path(name)
+        invocation = [
+            "&",
+            base._powershell_literal(str(script)),
+            "-RepoRoot",
+            base._powershell_literal(str(self.repo_root)),
+            *self._powershell_parameter_tokens(parameters),
+        ]
+        invoke_text = " ".join(invocation)
+
+        # Force terminating failures and wrap the script output in a unique JSON
+        # envelope. Convert the whole success-stream result at once so arrays,
+        # objects and scalar/null results all share the same transport contract.
+        command = (
+            "$ErrorActionPreference = 'Stop'; "
+            "try { "
+            f"$stableamdPayload = @({invoke_text}); "
+            "$stableamdJson = $stableamdPayload | ConvertTo-Json -Depth 20 -Compress; "
+            "if ($null -eq $stableamdJson) { $stableamdJson = 'null' }; "
+            f"Write-Output ('{_POWERSHELL_JSON_SENTINEL}' + $stableamdJson); "
+            "} catch { "
+            "[Console]::Error.WriteLine(($_ | Out-String)); exit 1 "
+            "}"
+        )
+
+        completed = subprocess.run(
+            [
+                str(self.powershell),
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
+            cwd=str(self.repo_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=1800,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "PowerShell command failed").strip()
+            executable = Path(str(self.powershell)).name or str(self.powershell)
+            raise base.StableAmdBridgeError(
+                f"StableAMD PowerShell script '{name}' failed via {executable}: {detail[-8000:]}"
+            )
+
+        try:
+            result = self._parse_powershell_json(completed.stdout)
+        except ValueError as exc:
+            executable = Path(str(self.powershell)).name or str(self.powershell)
+            stdout_tail = str(completed.stdout or "").strip()[-4000:]
+            stderr_tail = str(completed.stderr or "").strip()[-4000:]
+            detail = stdout_tail or stderr_tail or "<no output>"
+            raise base.StableAmdBridgeError(
+                f"StableAMD PowerShell script '{name}' via {executable} returned no machine-readable JSON. "
+                f"Output tail: {detail}"
+            ) from exc
+
         stack = self._active_krea_loras()
         if name != "Build-StableAmdWorkflow.ps1" or not stack or not isinstance(result, dict):
             return result
