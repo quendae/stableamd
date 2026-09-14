@@ -15,6 +15,7 @@ class StableAmdV03SupportTests(unittest.TestCase):
         catalog = load_model_support_catalog(REPO_ROOT)
         self.assertEqual(catalog["schemaVersion"], 1)
         self.assertIn("sdxl", catalog["families"])
+        self.assertIn("z-image-turbo", catalog["families"])
         self.assertIn("flux", catalog["families"])
         self.assertIn("krea2", catalog["families"])
 
@@ -29,6 +30,16 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(sdxl["loraPolicy"]["maxStack"], 8)
         self.assertTrue(sdxl["loraPolicy"]["perEntryModelStrength"])
         self.assertTrue(sdxl["loraPolicy"]["perEntryClipStrength"])
+
+        zimage = catalog["families"]["z-image-turbo"]
+        self.assertEqual(zimage["provider"], "z-image-turbo-bundle")
+        self.assertEqual(zimage["assetMode"], "bundle")
+        self.assertEqual(zimage["capabilities"]["txt2img"], "supported")
+        self.assertEqual(zimage["capabilities"]["lora"], "supported")
+        self.assertTrue(zimage["loraPolicy"]["orderedStack"])
+        self.assertEqual(zimage["loraPolicy"]["maxStack"], 8)
+        self.assertTrue(zimage["loraPolicy"]["perEntryModelStrength"])
+        self.assertFalse(zimage["loraPolicy"]["perEntryClipStrength"])
 
         flux = catalog["families"]["flux"]
         self.assertEqual(flux["assetMode"], "bundle")
@@ -58,6 +69,7 @@ class StableAmdV03SupportTests(unittest.TestCase):
             catalog,
             [
                 {"id": "mdl_sdxl", "family": "sdxl", "name": "sd_xl_base_1.0.safetensors"},
+                {"id": "mdl_zimage", "family": "z-image-turbo", "name": "Z-Image Turbo"},
                 {"id": "mdl_flux", "family": "flux", "name": "flux1-dev.safetensors"},
             ],
         )
@@ -69,7 +81,9 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(summary["models"][0]["capabilities"]["img2img"], "supported")
         self.assertEqual(summary["models"][0]["capabilities"]["inpaint"], "supported")
         self.assertEqual(summary["models"][0]["loraPolicy"]["maxStack"], 8)
-        self.assertEqual(summary["models"][1]["capabilities"]["txt2img"], "planned")
+        self.assertEqual(summary["models"][1]["capabilities"]["lora"], "supported")
+        self.assertEqual(summary["models"][1]["loraPolicy"]["maxStack"], 8)
+        self.assertEqual(summary["models"][2]["capabilities"]["txt2img"], "planned")
 
 
 if __name__ == "__main__":
