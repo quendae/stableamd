@@ -8,12 +8,30 @@
     document.head.append(link);
   }
 
+  function makeGenerateCopyGeneric() {
+    if (typeof pageMeta !== 'undefined' && Array.isArray(pageMeta.generate)) {
+      pageMeta.generate[1] = 'Create an image locally on your Radeon GPU.';
+    }
+    const page = document.querySelector('#page-generate');
+    const subtitle = document.querySelector('#page-subtitle');
+    if (page?.classList.contains('is-visible') && subtitle) {
+      subtitle.textContent = 'Create an image locally on your Radeon GPU.';
+    }
+  }
+
   function modelFamily() {
-    const id = document.querySelector('#model-select')?.value || '';
+    const select = document.querySelector('#model-select');
+    const id = select?.value || '';
     const model = Array.isArray(state?.models)
       ? state.models.find((entry) => String(getValue(entry, 'id', 'Id') || '') === String(id))
       : null;
-    return String(getValue(model, 'family', 'Family') || '').toLowerCase();
+    const family = String(getValue(model, 'family', 'Family') || '').toLowerCase();
+    if (family) return family;
+
+    const label = String(select?.selectedOptions?.[0]?.textContent || '').toLowerCase();
+    if (label.includes('z-image') || label.includes('z image')) return 'z-image-turbo';
+    if (label.includes('sdxl')) return 'sdxl';
+    return '';
   }
 
   function currentUiHints() {
@@ -54,6 +72,59 @@
     if (label) shortFieldLabel(field, label);
     if (field.parentElement !== container) container.append(field);
     return field;
+  }
+
+  function setGenerateMenuOpen(open) {
+    const button = document.querySelector('.nav-item[data-page="generate"]');
+    const submenu = document.querySelector('#generate-nav-submenu');
+    if (!button || !submenu) return;
+    const expanded = Boolean(open);
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    submenu.hidden = !expanded;
+  }
+
+  function ensureGenerateSidebarMode() {
+    const nav = document.querySelector('.nav-list');
+    const generateButton = nav?.querySelector('.nav-item[data-page="generate"]');
+    const mode = document.querySelector('#generation-mode');
+    const field = mode?.closest('.field');
+    if (!nav || !generateButton || !field) return null;
+
+    let submenu = document.querySelector('#generate-nav-submenu');
+    if (!submenu) {
+      submenu = document.createElement('div');
+      submenu.id = 'generate-nav-submenu';
+      submenu.className = 'nav-generate-submenu';
+      generateButton.after(submenu);
+    }
+
+    shortFieldLabel(field, 'Mode');
+    field.classList.add('nav-generate-mode-field');
+    if (field.parentElement !== submenu) submenu.append(field);
+
+    if (!generateButton.dataset.generateSubmenu) {
+      generateButton.dataset.generateSubmenu = 'true';
+      generateButton.setAttribute('aria-controls', 'generate-nav-submenu');
+      generateButton.addEventListener('click', () => {
+        const isOpen = generateButton.getAttribute('aria-expanded') === 'true';
+        setGenerateMenuOpen(!isOpen);
+      });
+      for (const item of nav.querySelectorAll('.nav-item:not([data-page="generate"])')) {
+        item.addEventListener('click', () => setGenerateMenuOpen(false));
+      }
+    }
+
+    if (!generateButton.hasAttribute('aria-expanded')) {
+      setGenerateMenuOpen(document.querySelector('#page-generate')?.classList.contains('is-visible'));
+    }
+    return field;
+  }
+
+  function hideModelSupportHint() {
+    const hint = document.querySelector('#model-support-hint');
+    if (!hint) return;
+    hint.hidden = true;
+    hint.setAttribute('aria-hidden', 'true');
   }
 
   function compactifyLoraRow(row) {
@@ -156,9 +227,10 @@
     const modeWorkspace = createSection('generate-mode-workspace', 'generate-mode-workspace');
 
     if (!contextRow.isConnected) form.prepend(contextRow);
-    moveField(contextRow, '#generation-mode', 'Mode');
+    ensureGenerateSidebarMode();
     moveField(contextRow, '#model-select', 'Model');
     moveField(contextRow, '#generation-profile', 'Preset');
+    hideModelSupportHint();
 
     if (promptField.previousElementSibling !== contextRow) contextRow.after(promptField);
     promptField.classList.add('compact-prompt-field');
@@ -223,11 +295,14 @@
       new MutationObserver(() => {
         compactifyGenerateLayout();
         compactifyLoraStack();
+        hideModelSupportHint();
+        syncNegativePromptVisibility();
       }).observe(form, { childList: true, subtree: true });
     }
 
     document.querySelector('#model-select')?.addEventListener('change', () => {
       queueMicrotask(() => {
+        hideModelSupportHint();
         syncNegativePromptVisibility();
         syncCustomSizeVisibility();
       });
@@ -237,6 +312,7 @@
 
   ensureCompactStylesheet();
   const boot = () => {
+    makeGenerateCopyGeneric();
     compactifyGenerateLayout();
     installObservers();
     setTimeout(compactifyGenerateLayout, 50);

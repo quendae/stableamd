@@ -3,6 +3,7 @@ BeforeAll {
     $compactPath = Join-Path $repoRoot 'app/frontend/app-generate-compact.js'
     $compactStylesPath = Join-Path $repoRoot 'app/frontend/compact-generate.css'
     $postPath = Join-Path $repoRoot 'app/frontend/app-post-actions.js'
+    $progressPath = Join-Path $repoRoot 'app/frontend/app-progress.js'
 }
 
 Describe 'StableAMD v0.3 compact Generate workspace' {
@@ -12,14 +13,16 @@ Describe 'StableAMD v0.3 compact Generate workspace' {
         (Get-Content $postPath -Raw) | Should -Match '/app-generate-compact\.js'
     }
 
-    It 'groups mode model preset size and dense generation parameters without full-width numeric fields' {
+    It 'keeps model preset size and dense generation parameters compact while moving mode under Generate in the sidebar' {
         $compact = Get-Content $compactPath -Raw
         $styles = Get-Content $compactStylesPath -Raw
 
         foreach ($token in @('generate-context-row', 'generate-size-row', 'generate-parameter-row', 'custom-size-fields')) {
             $compact | Should -Match ([regex]::Escape($token))
         }
-        $compact | Should -Match 'generation-mode'
+        foreach ($token in @('generation-mode', 'generate-nav-submenu', 'nav-generate-mode-field', 'aria-expanded')) {
+            $compact | Should -Match ([regex]::Escape($token))
+        }
         $compact | Should -Match 'model-select'
         $compact | Should -Match 'generation-profile'
         $compact | Should -Match 'resolution-preset-panel'
@@ -28,8 +31,19 @@ Describe 'StableAMD v0.3 compact Generate workspace' {
         foreach ($id in @('seed', 'sampler', 'scheduler', 'steps', 'cfg')) {
             $compact | Should -Match ('#' + [regex]::Escape($id))
         }
+        $styles | Should -Match '\.nav-generate-submenu'
         $styles | Should -Match '\.generate-parameter-row'
         $styles | Should -Match 'grid-template-columns'
+    }
+
+    It 'keeps Size and Ratio side by side and hides the model capability description in Generate' {
+        $compact = Get-Content $compactPath -Raw
+        $styles = Get-Content $compactStylesPath -Raw
+
+        $compact | Should -Match 'model-support-hint'
+        $styles | Should -Match '#model-support-hint\[hidden\]'
+        $styles | Should -Match '\.compact-resolution-panel \.field-grid'
+        $styles | Should -Match 'repeat\(2, minmax\(0, 1fr\)\)'
     }
 
     It 'uses one visible LoRA strength with an optional CLIP override while preserving the stack contract' {
@@ -41,11 +55,20 @@ Describe 'StableAMD v0.3 compact Generate workspace' {
         $compact | Should -Match 'CLIP override'
     }
 
-    It 'makes the negative prompt capability-aware instead of always visible' {
+    It 'makes the negative prompt capability-aware and actually hides it outside SDXL' {
         $compact = Get-Content $compactPath -Raw
+        $styles = Get-Content $compactStylesPath -Raw
         $compact | Should -Match 'negative-prompt'
         $compact | Should -Match 'negativePrompt'
         $compact | Should -Match 'uiHints'
+        $styles | Should -Match '\.negative-prompt-field\[hidden\]'
+    }
+
+    It 'uses model-neutral progress copy while generation is running' {
+        $progress = Get-Content $progressPath -Raw
+        $progress | Should -Match 'Generation in progress'
+        $progress | Should -Match 'resultCopy\.hidden = true'
+        $progress | Should -Not -Match 'running the SDXL workflow'
     }
 
     It 'adds icon-led compact gallery actions including delete' {

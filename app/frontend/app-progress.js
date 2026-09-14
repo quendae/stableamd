@@ -111,7 +111,7 @@
     const prompt = qs("#prompt").value.trim();
     const modelId = qs("#model-select").value;
     if (!prompt) { showToast("Enter a prompt first.", "error"); qs("#prompt").focus(); return; }
-    if (!modelId) { showToast("Select an SDXL checkpoint first.", "error"); return; }
+    if (!modelId) { showToast("Select a model first.", "error"); return; }
 
     const payload = {
       prompt,
@@ -137,9 +137,12 @@
 
     button.disabled = true;
     button.textContent = "Generating…";
-    qs("#result-empty").hidden = false;
-    qs("#result-empty strong").textContent = "Generation in progress";
-    qs("#result-empty p").textContent = "StableAMD is running the SDXL workflow on the Radeon GPU.";
+    const resultEmpty = qs("#result-empty");
+    const resultCopy = resultEmpty.querySelector("p");
+    resultEmpty.hidden = false;
+    resultEmpty.querySelector("strong").textContent = "Generation in progress";
+    resultCopy.textContent = "";
+    resultCopy.hidden = true;
     qs("#result-details").hidden = true;
 
     let progress = null;
@@ -155,8 +158,9 @@
       showToast("Generation completed.", "success");
     } catch (error) {
       progress?.remove();
-      qs("#result-empty strong").textContent = "Generation failed";
-      qs("#result-empty p").textContent = error.message;
+      resultEmpty.querySelector("strong").textContent = "Generation failed";
+      resultCopy.hidden = false;
+      resultCopy.textContent = error.message;
       showToast(error.message, "error");
     } finally {
       button.disabled = false;

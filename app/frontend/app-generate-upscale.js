@@ -109,6 +109,33 @@
     return { targetWidth, targetHeight };
   }
 
+  function withUpscaledDimensions(upscaled, source, factor) {
+    const existingWidth = Number(getValue(upscaled, 'Width', 'width'));
+    const existingHeight = Number(getValue(upscaled, 'Height', 'height'));
+    if (Number.isFinite(existingWidth) && existingWidth > 0 && Number.isFinite(existingHeight) && existingHeight > 0) {
+      return upscaled;
+    }
+
+    const sourceWidth = Number(getValue(source, 'Width', 'width'));
+    const sourceHeight = Number(getValue(source, 'Height', 'height'));
+    let width = Number.isFinite(sourceWidth) && sourceWidth > 0 ? Math.round(sourceWidth * factor) : 0;
+    let height = Number.isFinite(sourceHeight) && sourceHeight > 0 ? Math.round(sourceHeight * factor) : 0;
+    if (!width || !height) {
+      const configured = targetDimensions(factor);
+      width = configured.targetWidth;
+      height = configured.targetHeight;
+    }
+    if (!width || !height) return upscaled;
+
+    return {
+      ...upscaled,
+      width,
+      height,
+      Width: width,
+      Height: height,
+    };
+  }
+
   function syncUi() {
     ensureUi();
     const factor = selectedFactor();
@@ -190,7 +217,7 @@
     const request = { imagePath, factor };
     if (modelName) request.modelName = modelName;
     const upscaled = await api('/api/upscale', { method: 'POST', body: JSON.stringify(request) });
-    renderGenerationResult(upscaled);
+    renderGenerationResult(withUpscaledDimensions(upscaled, result, factor));
     await refreshHistory();
     showToast(`Upscale ${factor}× completed.`, 'success');
   }

@@ -34,4 +34,13 @@ Describe 'StableAMD v0.3 upscale after generation' {
         $frontend | Should -Match 'targetHeight'
         $frontend | Should -Match 'large-output'
     }
+
+    It 'fills final result dimensions when the upscale API record omits width and height' {
+        $frontend = Get-Content $frontendPath -Raw
+        $frontend | Should -Match 'withUpscaledDimensions'
+        $frontend | Should -Match 'sourceWidth'
+        $frontend | Should -Match 'sourceHeight'
+        $frontend | Should -Match 'Width: width'
+        $frontend | Should -Match 'Height: height'
+    }
 }
