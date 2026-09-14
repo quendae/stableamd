@@ -46,6 +46,11 @@
       "roots": [
         ".runtime/stableamd/models/vae"
       ]
+    },
+    "modelPatches": {
+      "roots": [
+        ".runtime/stableamd/models/model_patches"
+      ]
     }
   }
 }
