@@ -23,7 +23,8 @@ if ($Version -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
 
 $requiredFiles = @(
     'README.md',
-    'Start-StableAMD.cmd'
+    'Start-StableAMD.cmd',
+    'Stop-StableAMD.cmd'
 )
 $requiredDirectories = @(
     'app',
