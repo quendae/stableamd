@@ -52,7 +52,11 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(krea["provider"], "krea2-bundle")
         self.assertEqual(krea["assetMode"], "bundle")
         self.assertEqual(krea["capabilities"]["txt2img"], "supported")
-        self.assertEqual(krea["capabilities"]["lora"], "planned")
+        self.assertEqual(krea["capabilities"]["lora"], "supported")
+        self.assertTrue(krea["loraPolicy"]["orderedStack"])
+        self.assertEqual(krea["loraPolicy"]["maxStack"], 8)
+        self.assertTrue(krea["loraPolicy"]["perEntryModelStrength"])
+        self.assertFalse(krea["loraPolicy"]["perEntryClipStrength"])
 
     def test_support_resolution_never_upgrades_unknown_or_planned_models_to_supported(self):
         catalog = load_model_support_catalog(REPO_ROOT)
@@ -90,6 +94,9 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(summary["models"][2]["capabilities"]["txt2img"], "planned")
         self.assertEqual(summary["models"][3]["provider"], "krea2-bundle")
         self.assertEqual(summary["models"][3]["capabilities"]["txt2img"], "supported")
+        self.assertEqual(summary["models"][3]["capabilities"]["lora"], "supported")
+        self.assertEqual(summary["models"][3]["loraPolicy"]["maxStack"], 8)
+        self.assertFalse(summary["models"][3]["loraPolicy"]["perEntryClipStrength"])
 
 
 if __name__ == "__main__":
