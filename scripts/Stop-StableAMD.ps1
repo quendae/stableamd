@@ -115,7 +115,7 @@ function Get-StableAmdManagedProcesses {
         if ($commandLine -match '(?i)run_comfy_isolated\.py|[\\/]ComfyUI[\\/]main\.py') {
             $role = 'backend'
         }
-        elseif (-not $BackendOnlySearch -and $commandLine -match '(?i)stableamd_server\.py|stableamd_v03_lora_server\.py|stableamd_v03_server\.py') {
+        elseif (-not $BackendOnlySearch -and $commandLine -match '(?i)stableamd_server\.py|stableamd_v03_edit_server\.py|stableamd_v03_lora_server\.py|stableamd_v03_server\.py') {
             $role = 'application'
         }
         if ($null -eq $role) { continue }
