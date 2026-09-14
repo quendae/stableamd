@@ -119,6 +119,61 @@ class StableAmdV03ZImageLoraServerTests(unittest.TestCase):
         self.assertEqual(saved["loraModelStrength"], 0.8)
         self.assertEqual(saved["loraClipStrength"], 0.0)
 
+    def test_changed_lora_stack_requests_full_comfy_memory_release(self):
+        first = [{"name": "z-image/style.safetensors", "modelStrength": 0.8, "enabled": True}]
+        second = [
+            {"name": "z-image/style.safetensors", "modelStrength": 0.8, "enabled": True},
+            {"name": "z-image/detail.safetensors", "modelStrength": 0.6, "enabled": True},
+        ]
+
+        with patch.object(self.bridge, "_release_comfy_memory") as release:
+            self.bridge._prepare_zimage_memory(first)
+            release.assert_not_called()
+            self.bridge._prepare_zimage_memory(second)
+
+        release.assert_called_once()
+        self.assertIn("LoRA stack changed", release.call_args.args[0])
+
+    def test_postprocessing_marks_resident_graph_dirty_for_next_zimage(self):
+        with patch.object(v03.PowerShellBridge, "upscale", return_value={"ok": True}) as delegated:
+            result = self.bridge.upscale({"imagePath": "x", "factor": 2})
+        self.assertEqual(result, {"ok": True})
+        delegated.assert_called_once()
+        self.assertTrue(self.bridge._zimage_memory_dirty)
+
+    def test_dirty_graph_releases_memory_even_when_lora_stack_is_unchanged(self):
+        stack = [{"name": "z-image/style.safetensors", "modelStrength": 0.8, "enabled": True}]
+        self.bridge._prepare_zimage_memory(stack)
+        self.bridge._zimage_memory_dirty = True
+
+        with patch.object(self.bridge, "_release_comfy_memory") as release:
+            self.bridge._prepare_zimage_memory(stack)
+
+        release.assert_called_once()
+        self.assertIn("post-processing", release.call_args.args[0])
+        self.assertFalse(self.bridge._zimage_memory_dirty)
+
+    def test_gallery_history_is_read_directly_and_skips_broken_records(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo_root = Path(temporary)
+            history_root = repo_root / ".runtime" / "stableamd" / "history"
+            history_root.mkdir(parents=True)
+            (history_root / "broken.json").write_text("{broken", encoding="utf-8")
+            (history_root / "older.json").write_text(
+                json.dumps({"PromptId": "legacy", "CreatedAtUtc": "2026-09-14T08:00:00Z"}),
+                encoding="utf-8",
+            )
+            (history_root / "newer.json").write_text(
+                json.dumps({"promptId": "current", "createdAtUtc": "2026-09-14T09:00:00+00:00"}),
+                encoding="utf-8",
+            )
+
+            bridge = lora_server.PowerShellBridge(repo_root, powershell=sys.executable)
+            records = bridge.history(limit=1)
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["promptId"], "current")
+
     def test_gallery_delete_accepts_legacy_pascal_case_history_records(self):
         with tempfile.TemporaryDirectory() as temporary:
             repo_root = Path(temporary)
