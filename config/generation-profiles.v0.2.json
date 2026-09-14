@@ -150,6 +150,31 @@
       ]
     },
     {
+      "id": "krea2-turbo",
+      "label": "Krea 2 Turbo (FP8)",
+      "family": "krea2",
+      "workflowSupport": "supported",
+      "match": { "namePatterns": ["krea[_ .-]?2.*turbo", "krea2.*turbo"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple" },
+      "resolutionTiers": [
+        {
+          "id": "1024",
+          "label": "1024 · First acceptance",
+          "recommended": true,
+          "sizes": [
+            { "ratio": "1:1", "width": 1024, "height": 1024 },
+            { "ratio": "4:3", "width": 1152, "height": 864 },
+            { "ratio": "3:4", "width": 864, "height": 1152 },
+            { "ratio": "16:9", "width": 1280, "height": 720 },
+            { "ratio": "9:16", "width": 720, "height": 1280 }
+          ]
+        }
+      ],
+      "combinations": [
+        { "id": "official-turbo-8", "label": "Official Turbo 8-step", "sampler": "euler", "scheduler": "simple", "steps": 8, "cfg": 1.0, "recommended": true }
+      ]
+    },
+    {
       "id": "sd3-medium",
       "label": "Stable Diffusion 3 Medium",
       "family": "sd3",
