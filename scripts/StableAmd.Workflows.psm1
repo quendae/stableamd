@@ -94,6 +94,66 @@ function Add-StableAmdLoraStackToWorkflow {
     return $Workflow
 }
 
+function Add-StableAmdModelOnlyLoraStackToWorkflow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary]$Workflow,
+
+        [AllowEmptyCollection()]
+        [object[]]$LoraStack = @(),
+
+        [string]$BaseModelNodeId = '28',
+        [string]$TargetModelNodeId = '11',
+        [int]$FirstNodeId = 40,
+        [int]$MaxLoras = 8
+    )
+
+    $entries = @($LoraStack | Where-Object { $null -ne $_ })
+    if ($entries.Count -eq 0) { return $Workflow }
+    if ($entries.Count -gt $MaxLoras) {
+        throw "StableAMD supports at most $MaxLoras LoRAs in one stack."
+    }
+    if (-not $Workflow.Contains($BaseModelNodeId) -or -not $Workflow.Contains($TargetModelNodeId)) {
+        throw 'Model-only LoRA workflow anchors are missing.'
+    }
+
+    $modelRef = @($BaseModelNodeId, 0)
+    $applied = 0
+    for ($index = 0; $index -lt $entries.Count; $index++) {
+        $entry = $entries[$index]
+        $name = [string](Get-StableAmdLoraValue -Entry $entry -Name 'name' -Default '')
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            throw "LoRA stack entry $($index + 1) does not contain a name."
+        }
+
+        $enabled = [bool](Get-StableAmdLoraValue -Entry $entry -Name 'enabled' -Default $true)
+        if (-not $enabled) { continue }
+
+        $modelStrength = [double](Get-StableAmdLoraValue -Entry $entry -Name 'modelStrength' -Default 1.0)
+        if ([double]::IsNaN($modelStrength) -or [double]::IsInfinity($modelStrength) -or $modelStrength -lt -100 -or $modelStrength -gt 100) {
+            throw 'LoRA model strength must be between -100 and 100.'
+        }
+
+        $nodeId = [string]($FirstNodeId + $applied)
+        $Workflow[$nodeId] = [ordered]@{
+            class_type = 'LoraLoaderModelOnly'
+            inputs = [ordered]@{
+                lora_name = $name
+                strength_model = $modelStrength
+                model = $modelRef
+            }
+        }
+        $modelRef = @($nodeId, 0)
+        $applied++
+    }
+
+    if ($applied -gt 0) {
+        $Workflow[$TargetModelNodeId].inputs.model = $modelRef
+    }
+    return $Workflow
+}
+
 function New-StableAmdWorkflow {
     [CmdletBinding()]
     param(
@@ -181,8 +241,8 @@ function New-StableAmdWorkflow {
     }
 
     if ($normalizedFamily -eq 'z-image-turbo' -and $normalizedMode -eq 'txt2img') {
-        if (@($LoraStack).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($LoraName)) {
-            throw 'LoRA execution is not implemented for Z-Image Turbo yet.'
+        if (@($LoraStack).Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
+            throw 'Specify LoraStack or the legacy single LoraName fields, not both.'
         }
 
         $zSteps = if ($PSBoundParameters.ContainsKey('Steps')) { $Steps } else { 8 }
@@ -191,7 +251,7 @@ function New-StableAmdWorkflow {
         $zScheduler = if ($PSBoundParameters.ContainsKey('Scheduler')) { $Scheduler } else { 'simple' }
         $zPrefix = if ($PSBoundParameters.ContainsKey('FilenamePrefix')) { $FilenamePrefix } else { 'StableAMD_ZIMAGE_TURBO' }
 
-        return New-StableAmdZImageTurboWorkflow `
+        $workflow = New-StableAmdZImageTurboWorkflow `
             -DiffusionModelName $DiffusionModelName `
             -TextEncoderName $TextEncoderName `
             -VaeName $VaeName `
@@ -204,9 +264,23 @@ function New-StableAmdWorkflow {
             -SamplerName $zSampler `
             -Scheduler $zScheduler `
             -FilenamePrefix $zPrefix
+
+        $resolvedStack = @($LoraStack)
+        if ($resolvedStack.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
+            $resolvedStack = @(
+                [pscustomobject]@{
+                    name = $LoraName
+                    modelStrength = $LoraModelStrength
+                    clipStrength = 0.0
+                    enabled = $true
+                }
+            )
+        }
+
+        return Add-StableAmdModelOnlyLoraStackToWorkflow -Workflow $workflow -LoraStack $resolvedStack
     }
 
     throw "StableAMD workflow provider is not implemented for family '$normalizedFamily' and mode '$normalizedMode'."
 }
 
-Export-ModuleMember -Function New-StableAmdWorkflow, Add-StableAmdLoraStackToWorkflow
+Export-ModuleMember -Function New-StableAmdWorkflow, Add-StableAmdLoraStackToWorkflow, Add-StableAmdModelOnlyLoraStackToWorkflow
