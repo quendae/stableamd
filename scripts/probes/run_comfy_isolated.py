@@ -36,7 +36,17 @@ def main() -> None:
         sys.path.remove(comfy_root)
     sys.path.insert(0, comfy_root)
 
-    forwarded_args = sys.argv[2:]
+    forwarded_args = list(sys.argv[2:])
+
+    # StableAMD's accepted Windows ROCm path keeps the VAE on CPU. Z-Image can
+    # leave the patched diffusion model almost fully resident on a 16 GiB GPU;
+    # asking ComfyUI to load the VAE on the GPU then forces a partial model
+    # unload during decode. That transition has produced native torch/c10
+    # access violations on gfx1030. CPU VAE avoids the dangerous residency
+    # transition while keeping the sampler itself on the Radeon GPU.
+    if "--cpu-vae" not in forwarded_args:
+        forwarded_args.append("--cpu-vae")
+
     sys.argv = [main_py, *forwarded_args]
     os.chdir(comfy_root)
 
