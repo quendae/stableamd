@@ -49,7 +49,10 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(flux["capabilities"]["txt2img"], "planned")
 
         krea = catalog["families"]["krea2"]
-        self.assertEqual(krea["capabilities"]["txt2img"], "planned")
+        self.assertEqual(krea["provider"], "krea2-bundle")
+        self.assertEqual(krea["assetMode"], "bundle")
+        self.assertEqual(krea["capabilities"]["txt2img"], "supported")
+        self.assertEqual(krea["capabilities"]["lora"], "planned")
 
     def test_support_resolution_never_upgrades_unknown_or_planned_models_to_supported(self):
         catalog = load_model_support_catalog(REPO_ROOT)
@@ -71,6 +74,7 @@ class StableAmdV03SupportTests(unittest.TestCase):
                 {"id": "mdl_sdxl", "family": "sdxl", "name": "sd_xl_base_1.0.safetensors"},
                 {"id": "mdl_zimage", "family": "z-image-turbo", "name": "Z-Image Turbo"},
                 {"id": "mdl_flux", "family": "flux", "name": "flux1-dev.safetensors"},
+                {"id": "mdl_krea", "family": "krea2", "name": "Krea 2 Turbo (FP8)"},
             ],
         )
 
@@ -84,6 +88,8 @@ class StableAmdV03SupportTests(unittest.TestCase):
         self.assertEqual(summary["models"][1]["capabilities"]["lora"], "supported")
         self.assertEqual(summary["models"][1]["loraPolicy"]["maxStack"], 8)
         self.assertEqual(summary["models"][2]["capabilities"]["txt2img"], "planned")
+        self.assertEqual(summary["models"][3]["provider"], "krea2-bundle")
+        self.assertEqual(summary["models"][3]["capabilities"]["txt2img"], "supported")
 
 
 if __name__ == "__main__":
