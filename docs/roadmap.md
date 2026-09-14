@@ -8,11 +8,9 @@ This file tracks larger product directions. Detailed implementation/acceptance s
 
 Primary goal: turn the proven Radeon/ComfyUI runtime into a practical multi-provider image workstation without destabilizing the accepted RX 6950 XT path.
 
-Accepted major gates now include SDXL editing, Z-Image Turbo + MultiLoRA, curated classic x2/x4 upscalers, Krea 2 Turbo FP8 generation and Krea upscale-after on the RX 6950 XT 16 GiB target.
-
 Current order:
 
-1. Provider-native editing where a real validated workflow exists.
+1. Target-test provider-native Z-Image inpaint/outpaint through the official Fun Control Union model patch; keep Krea 2 editing capability-gated until a validated local workflow exists.
 2. Optional reduced-memory SeedVR2 evaluation.
 3. Batch/queue generation with model residency preservation.
 4. ControlNet/OpenPose.
