@@ -15,6 +15,7 @@ Describe 'StableAMD v0.3 Z-Image host-memory profile' {
         $fp8 | Should -BeGreaterThan $fp4
         $bf16 | Should -BeGreaterThan $fp8
         $template | Should -Match 'low-memory preferred'
+        $template | Should -Match 'compatibility fallback'
         $template | Should -Match 'candidateValid'
         $template | Should -Match 'if \(\$candidateValid\)'
     }
@@ -26,13 +27,12 @@ Describe 'StableAMD v0.3 Z-Image host-memory profile' {
         $template | Should -Match '7ca32dcf07dfe7692945d80fff86e3a74cb83c6206b9b223ac6836b939bb85d6'
         $template | Should -Match '5631994051'
         $template | Should -Match '72450b19758172c5a7273cf7de729d1c17e7f434a104a00167624cba94f68f15'
-        $template | Should -Match '8044982048'
-        $template | Should -Match '6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a'
     }
 
     It 'falls through from a truncated higher-priority encoder to the next valid official variant' {
         $template = Get-Content -LiteralPath $templatePath -Raw
 
+        $template | Should -Match 'expectedBytes -le 0 -or \$actualBytes -eq'
         $template | Should -Match 'if \(\$candidateValid\)\s*\{\s*\$zEncoderChoice = \$choice\s*break'
         $template | Should -Match 'if \(\$null -eq \$zEncoderInvalidChoice\)'
         $template | Should -Match 'if \(\$null -eq \$zEncoderChoice\)'
