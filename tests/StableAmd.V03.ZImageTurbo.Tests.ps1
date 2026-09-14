@@ -19,7 +19,7 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         $family.loraPolicy.perEntryClipStrength | Should -BeFalse
     }
 
-    It 'builds the official ComfyUI Z-Image Turbo txt2img graph with bounded VAE decode' {
+    It 'builds the official ComfyUI Z-Image Turbo txt2img graph' {
         $modulePath = Join-Path $repoRoot 'scripts/StableAmd.ZImageTurbo.psm1'
         Test-Path $modulePath -PathType Leaf | Should -BeTrue
         Import-Module $modulePath -Force
@@ -51,11 +51,7 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         $workflow['3'].inputs.cfg | Should -Be 1
         $workflow['3'].inputs.sampler_name | Should -Be 'res_multistep'
         $workflow['3'].inputs.scheduler | Should -Be 'simple'
-        $workflow['8'].class_type | Should -Be 'VAEDecodeTiled'
-        $workflow['8'].inputs.tile_size | Should -Be 512
-        $workflow['8'].inputs.overlap | Should -Be 64
-        $workflow['8'].inputs.temporal_size | Should -Be 64
-        $workflow['8'].inputs.temporal_overlap | Should -Be 8
+        $workflow['8'].class_type | Should -Be 'VAEDecode'
         $workflow['9'].class_type | Should -Be 'SaveImage'
     }
 
@@ -140,7 +136,6 @@ Describe 'StableAMD v0.3 Z-Image Turbo provider' {
         $workflow['30'].class_type | Should -Be 'CLIPLoader'
         $workflow['30'].inputs.device | Should -Be 'cpu'
         $workflow['3'].inputs.steps | Should -Be 8
-        $workflow['8'].class_type | Should -Be 'VAEDecodeTiled'
     }
 
     It 'ships a generation profile matching the official 8-step template' {
