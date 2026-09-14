@@ -219,6 +219,7 @@ class PowerShellBridge(v03.PowerShellBridge):
             return result
 
         margins = dict(edit_context.get("margins") or {})
+        blend_overlap = int(edit_context.get("blendOverlap") or 0)
         source_prompt_id = str(edit_context.get("sourcePromptId") or "").strip()
         source_image_path = str(edit_context.get("sourceImagePath") or "").strip()
         history_root = (self.repo_root / ".runtime" / "stableamd" / "history").resolve()
@@ -234,6 +235,7 @@ class PowerShellBridge(v03.PowerShellBridge):
                         record["sourcePromptId"] = source_prompt_id
                         record["sourceImagePath"] = source_image_path
                         record["outpaintMargins"] = margins
+                        record["outpaintBlendOverlap"] = blend_overlap
                         temporary = history_path.with_suffix(history_path.suffix + f".tmp-{uuid.uuid4().hex}")
                         temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
                         temporary.replace(history_path)
@@ -245,6 +247,7 @@ class PowerShellBridge(v03.PowerShellBridge):
         result["SourcePromptId"] = source_prompt_id
         result["SourceImagePath"] = source_image_path
         result["OutpaintMargins"] = margins
+        result["OutpaintBlendOverlap"] = blend_overlap
         return result
 
     def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
@@ -281,7 +284,7 @@ class StableAmdApi(v03.StableAmdApi):
     def _validate_edit_context(value: Any) -> None:
         if not isinstance(value, dict):
             raise ValueError("editContext must be an object.")
-        unsupported = sorted(set(value) - {"kind", "sourcePromptId", "sourceImagePath", "margins"})
+        unsupported = sorted(set(value) - {"kind", "sourcePromptId", "sourceImagePath", "margins", "blendOverlap"})
         if unsupported:
             raise ValueError("Unsupported editContext field(s): " + ", ".join(unsupported))
         if value.get("kind") != "outpaint":
@@ -289,6 +292,12 @@ class StableAmdApi(v03.StableAmdApi):
         for field in ("sourcePromptId", "sourceImagePath"):
             if field in value and not isinstance(value[field], str):
                 raise ValueError(f"editContext {field} must be a string.")
+
+        blend = value.get("blendOverlap", 0)
+        if isinstance(blend, bool) or not isinstance(blend, (int, float)) or not math.isfinite(float(blend)):
+            raise ValueError("Outpaint blendOverlap must be numeric.")
+        if blend < 0 or blend > 256 or int(blend) != blend or int(blend) % 8 != 0:
+            raise ValueError("Outpaint blendOverlap must be an integer from 0 to 256 divisible by 8.")
 
         margins = value.get("margins")
         if not isinstance(margins, dict):
