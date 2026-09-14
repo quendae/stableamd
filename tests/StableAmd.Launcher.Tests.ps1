@@ -55,7 +55,8 @@ Describe 'StableAMD one-click launcher' {
         $script = Get-Content $launcherPath -Raw
 
         $script | Should -Match 'Startup failed; cleaning up only StableAMD-managed processes'
-        $script | Should -Match "Stop-StableAMD\.ps1'\) -RepoRoot \$RepoRoot"
+        $script | Should -Match 'Stop-StableAMD\.ps1'
+        $script | Should -Match '-RepoRoot\s+\$RepoRoot'
         $script | Should -Match 'failed-start cleanup'
     }
 
