@@ -130,6 +130,48 @@ class PowerShellBridge(v03.PowerShellBridge):
             record["loraClipStrength"] = 0.0 if len(enabled) == 1 else None
         return super()._save_zimage_history(record)
 
+    def delete_history(self, prompt_id: str) -> dict[str, Any]:
+        """Delete current and legacy Gallery records without depending on JSON key casing."""
+        prompt_id = str(prompt_id or "").strip()
+        if not prompt_id:
+            raise base.StableAmdBridgeError("History prompt id is required.")
+
+        history_root = (self.repo_root / ".runtime" / "stableamd" / "history").resolve()
+        if not history_root.is_dir():
+            return {"deleted": False, "promptId": prompt_id, "imageDeleted": False}
+
+        for record_path in history_root.glob("*.json"):
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+
+            record_prompt_id = str(record.get("promptId") or record.get("PromptId") or "").strip()
+            if record_prompt_id != prompt_id:
+                continue
+
+            image_deleted = False
+            raw_image = str(record.get("imagePath") or record.get("ImagePath") or "").strip()
+            if raw_image:
+                try:
+                    image = base.resolve_output_image(self.repo_root, raw_image)
+                    image.unlink(missing_ok=True)
+                    image_deleted = not image.exists()
+                except (ValueError, OSError):
+                    # A stale or already missing image must not make its history
+                    # record impossible to remove from Gallery.
+                    image_deleted = False
+
+            try:
+                record_path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise base.StableAmdBridgeError(f"Could not delete Gallery history record: {exc}") from exc
+            return {"deleted": True, "promptId": prompt_id, "imageDeleted": image_deleted}
+
+        return {"deleted": False, "promptId": prompt_id, "imageDeleted": False}
+
     def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
         stack = self._resolve_zimage_loras(request)
         clean_request = dict(request)
