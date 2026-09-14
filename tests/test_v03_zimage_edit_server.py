@@ -22,16 +22,21 @@ ZIMAGE = {
 
 
 class FakeBridge(edit_server.PowerShellBridge):
-    def __init__(self, patch_ready: bool):
+    def __init__(self, patch_ready: bool = False, legacy_patch: bool = False):
         super().__init__(REPO_ROOT, powershell=sys.executable)
         self.patch_ready = patch_ready
+        self.legacy_patch = legacy_patch
 
     def models(self):
         return [dict(ZIMAGE)]
 
     def _comfy_json(self, relative_path):
         if relative_path == "object_info/ModelPatchLoader":
-            options = [edit_server.ZIMAGE_FUN_PATCH] if self.patch_ready else []
+            options = []
+            if self.patch_ready:
+                options.append(edit_server.ZIMAGE_FUN_PATCH)
+            if self.legacy_patch:
+                options.append(edit_server.ZIMAGE_FUN_LEGACY_PATCH)
             return {
                 "ModelPatchLoader": {
                     "input": {
@@ -45,19 +50,35 @@ class FakeBridge(edit_server.PowerShellBridge):
 
 
 class StableAmdV03ZImageEditTests(unittest.TestCase):
-    def test_patch_discovery_enables_inpaint_capability_only_when_asset_is_exposed(self):
-        ready = FakeBridge(True).model_support()
+    def test_patch_discovery_enables_inpaint_capability_only_for_inpaint_capable_union_21(self):
+        ready = FakeBridge(patch_ready=True).model_support()
         ready_model = ready["models"][0]
         self.assertEqual(ready_model["family"], "z-image-turbo")
         self.assertEqual(ready_model["capabilities"]["inpaint"], "supported")
         self.assertEqual(ready_model["capabilities"]["img2img"], "planned")
         self.assertEqual(ready_model["capabilities"]["controlnet"], "planned")
 
-        missing = FakeBridge(False).model_support()
+        missing = FakeBridge().model_support()
         self.assertEqual(missing["models"][0]["capabilities"]["inpaint"], "planned")
 
+        legacy = FakeBridge(legacy_patch=True).model_support()
+        self.assertEqual(legacy["models"][0]["capabilities"]["inpaint"], "planned")
+        with self.assertRaisesRegex(edit_server.base.StableAmdBridgeError, "older control-only patch"):
+            FakeBridge(legacy_patch=True)._zimage_fun_patch_name(required=True)
+
+    def test_native_edit_patch_is_pinned_to_16gib_friendly_distilled_union_21(self):
+        self.assertEqual(
+            edit_server.ZIMAGE_FUN_PATCH,
+            "Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+        )
+        self.assertEqual(edit_server.ZIMAGE_FUN_PATCH_BYTES, 2016627488)
+        self.assertEqual(
+            edit_server.ZIMAGE_FUN_PATCH_SHA256,
+            "3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35",
+        )
+
     def test_native_edit_graph_uses_pinned_fun_control_inpaint_nodes(self):
-        workflow = FakeBridge(True)._zimage_edit_workflow(
+        workflow = FakeBridge(patch_ready=True)._zimage_edit_workflow(
             diffusion_name="z_image_turbo_bf16.safetensors",
             encoder_name="qwen_3_4b.safetensors",
             vae_name="ae.safetensors",
