@@ -38,8 +38,13 @@
 
   document.addEventListener("stableamd:load-generated-image", (event) => {
     const detail = event.detail || {};
-    if (detail.action === "outpaint") outpaintRecord = detail.record || null;
-    else if (detail.action === "inpaint" || detail.action === "img2img") outpaintRecord = null;
+    if (detail.action === "outpaint") {
+      outpaintRecord = detail.record || null;
+    } else if (detail.action === "img2img") {
+      outpaintRecord = null;
+    }
+    // Outpaint deliberately reuses the inpaint handoff, which emits a second
+    // "inpaint" event. Do not clear the pending outpaint record on that event.
   });
 
   document.addEventListener("DOMContentLoaded", () => {
