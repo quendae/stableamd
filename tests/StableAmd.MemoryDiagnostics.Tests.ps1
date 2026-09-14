@@ -35,11 +35,13 @@ Describe 'StableAMD memory diagnostics' {
         $launcherScript | Should -Match 'classic cache enabled'
     }
 
-    It 'keeps VAE decode on CPU to avoid Windows ROCm partial-unload crashes' {
+    It 'uses conservative Windows ROCm host-memory guards for gfx1030' {
         $runner = Get-Content (Join-Path $PSScriptRoot '../scripts/probes/run_comfy_isolated.py') -Raw
 
         $runner | Should -Match '--cpu-vae'
-        $runner | Should -Match 'partial model'
-        $runner | Should -Match 'access violations'
+        $runner | Should -Match '--disable-mmap'
+        $runner | Should -Match '--disable-pinned-memory'
+        $runner | Should -Match '--disable-async-offload'
+        $runner | Should -Match '0xC0000005'
     }
 }
