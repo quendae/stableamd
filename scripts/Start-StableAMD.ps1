@@ -132,6 +132,19 @@ $diffusionModelRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAs
 $textEncoderRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.textEncoders.roots) -ManagedRoot $paths.TextEncodersRoot)
 $vaeRoots = @(Get-StableAmdExistingRoots -RawRoots @($config.bundleAssets.vae.roots) -ManagedRoot $paths.VaeRoot)
 
+# Model patches are optional bundle companions (for example Z-Image Fun
+# Control Union). Keep the managed root available even for existing v0.3
+# configs that predate the modelPatches section.
+$modelPatchManagedRoot = [IO.Path]::GetFullPath((Join-Path $paths.ModelsRoot 'model_patches'))
+New-Item -ItemType Directory -Path $modelPatchManagedRoot -Force | Out-Null
+$modelPatchRawRoots = @()
+if ($null -ne $config.bundleAssets.PSObject.Properties['modelPatches'] -and $null -ne $config.bundleAssets.modelPatches) {
+    if ($null -ne $config.bundleAssets.modelPatches.PSObject.Properties['roots'] -and $null -ne $config.bundleAssets.modelPatches.roots) {
+        $modelPatchRawRoots = @($config.bundleAssets.modelPatches.roots)
+    }
+}
+$modelPatchRoots = @(Get-StableAmdExistingRoots -RawRoots $modelPatchRawRoots -ManagedRoot $modelPatchManagedRoot)
+
 $modelConfigPath = Join-Path $paths.GeneratedConfigRoot 'extra_model_paths.yaml'
 $yaml = New-Object System.Collections.Generic.List[string]
 
@@ -158,6 +171,7 @@ Add-StableAmdExtraModelRoot -Prefix 'upscale_model' -FolderType 'upscale_models'
 Add-StableAmdExtraModelRoot -Prefix 'diffusion_model' -FolderType 'diffusion_models' -Roots $diffusionModelRoots
 Add-StableAmdExtraModelRoot -Prefix 'text_encoder' -FolderType 'text_encoders' -Roots $textEncoderRoots
 Add-StableAmdExtraModelRoot -Prefix 'vae' -FolderType 'vae' -Roots $vaeRoots
+Add-StableAmdExtraModelRoot -Prefix 'model_patch' -FolderType 'model_patches' -Roots $modelPatchRoots
 $yaml | Set-Content -Path $modelConfigPath -Encoding UTF8
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
