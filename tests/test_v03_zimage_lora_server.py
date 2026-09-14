@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -49,6 +50,18 @@ class FakeBridge(lora_server.PowerShellBridge):
 class StableAmdV03ZImageLoraServerTests(unittest.TestCase):
     def setUp(self):
         self.bridge = FakeBridge()
+
+    def test_wrapper_can_be_executed_directly_from_repo_root(self):
+        completed = subprocess.run(
+            [sys.executable, str(BACKEND_ROOT / "stableamd_v03_lora_server.py"), "--help"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("StableAMD v0.3", completed.stdout)
 
     def test_zimage_matching_lora_passes_product_capability_gate(self):
         request = {
