@@ -14,6 +14,12 @@
     return Math.max(0, Math.min(1024, Math.round(value / 8) * 8));
   }
 
+  function readBlendOverlap() {
+    const value = Number(document.querySelector("#outpaint-blend")?.value ?? 64);
+    if (!Number.isFinite(value)) return 64;
+    return Math.max(0, Math.min(256, Math.round(value / 8) * 8));
+  }
+
   function outpaintPrepared() {
     if (!outpaintRecord) return false;
     const controls = document.querySelector("#outpaint-controls");
@@ -27,6 +33,7 @@
       kind: "outpaint",
       sourcePromptId: String(getValue(outpaintRecord, "promptId", "PromptId") || ""),
       sourceImagePath: String(getValue(outpaintRecord, "imagePath", "ImagePath") || ""),
+      blendOverlap: readBlendOverlap(),
       margins: {
         left: readMargin("outpaint-left"),
         right: readMargin("outpaint-right"),
@@ -40,11 +47,9 @@
     const detail = event.detail || {};
     if (detail.action === "outpaint") {
       outpaintRecord = detail.record || null;
-    } else if (detail.action === "img2img") {
+    } else if (detail.action === "img2img" || detail.action === "inpaint") {
       outpaintRecord = null;
     }
-    // Outpaint deliberately reuses the inpaint handoff, which emits a second
-    // "inpaint" event. Do not clear the pending outpaint record on that event.
   });
 
   document.addEventListener("DOMContentLoaded", () => {
