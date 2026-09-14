@@ -2,6 +2,7 @@ BeforeAll {
     $repoRoot = Join-Path $PSScriptRoot '..'
     $modulePath = Join-Path $repoRoot 'scripts/StableAmd.Krea2.psm1'
     $workflowModule = Join-Path $repoRoot 'scripts/StableAmd.Workflows.psm1'
+    $profilesPath = Join-Path $repoRoot 'config/generation-profiles.v0.2.json'
 }
 
 Describe 'StableAMD v0.3 Krea 2 Turbo provider' {
@@ -55,6 +56,22 @@ Describe 'StableAMD v0.3 Krea 2 Turbo provider' {
                 -Prompt 'test' `
                 -LoraStack @([pscustomobject]@{ name = 'krea2_style.safetensors'; modelStrength = 1.0; enabled = $true })
         } | Should -Throw '*LoRA execution is not enabled*'
+    }
+
+    It 'publishes an official Turbo 8-step product preset for the first target test' {
+        $catalog = Get-Content -LiteralPath $profilesPath -Raw | ConvertFrom-Json
+        $profile = @($catalog.profiles | Where-Object family -eq 'krea2')[0]
+
+        $profile.id | Should -Be 'krea2-turbo'
+        $profile.workflowSupport | Should -Be 'supported'
+        $profile.defaults.width | Should -Be 1024
+        $profile.defaults.height | Should -Be 1024
+        $profile.defaults.steps | Should -Be 8
+        $profile.defaults.cfg | Should -Be 1
+        $profile.defaults.sampler | Should -Be 'euler'
+        $profile.defaults.scheduler | Should -Be 'simple'
+        @($profile.resolutionTiers).Count | Should -Be 1
+        $profile.resolutionTiers[0].recommended | Should -BeTrue
     }
 
     It 'requires dimensions divisible by 16' {
