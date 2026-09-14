@@ -67,10 +67,10 @@ Import-Module $runtimeModule -Force
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 Initialize-StableAmdRuntimeDirectories -Paths $paths
 
-# The v0.3 LoRA extension imports and reuses the proven stableamd_v03_server.py
-# implementation, adding Z-Image model-only LoRA execution without duplicating
-# the rest of the application server.
-$appServer = Join-Path $RepoRoot 'app/backend/stableamd_v03_lora_server.py'
+# The v0.3 edit extension layers native Z-Image Fun Control editing on top of
+# the accepted Krea/upscale/Z-Image-LoRA application server without changing
+# those proven execution paths.
+$appServer = Join-Path $RepoRoot 'app/backend/stableamd_v03_edit_server.py'
 if (-not (Test-Path $appServer -PathType Leaf)) {
     throw "StableAMD application server is missing: '$appServer'."
 }
