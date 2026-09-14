@@ -1,4 +1,10 @@
 (() => {
+  const modeSupportState = {
+    loaded: false,
+    models: [],
+    syncing: false,
+  };
+
   function ensureCompactStylesheet() {
     if (document.querySelector('link[data-stableamd-compact-generate]')) return;
     const link = document.createElement('link');
@@ -83,6 +89,96 @@
     submenu.hidden = !expanded;
   }
 
+  function supportForSelectedModel() {
+    const modelId = String(document.querySelector('#model-select')?.value || '');
+    if (!modelId) return null;
+    return modeSupportState.models.find((entry) => String(entry?.id || '') === modelId) || null;
+  }
+
+  function ensureModePlaceholder(select) {
+    let placeholder = select.querySelector('option[data-stableamd-mode-placeholder]');
+    if (placeholder) return placeholder;
+    placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.dataset.stableamdModePlaceholder = 'true';
+    select.prepend(placeholder);
+    return placeholder;
+  }
+
+  function syncSidebarModeChoices() {
+    if (modeSupportState.syncing) return;
+    const select = document.querySelector('#generation-mode');
+    if (!select) return;
+
+    modeSupportState.syncing = true;
+    try {
+      const placeholder = ensureModePlaceholder(select);
+      const modelId = String(document.querySelector('#model-select')?.value || '');
+      const support = supportForSelectedModel();
+      const capabilities = support?.capabilities || {};
+      const knownModes = ['txt2img', 'img2img', 'inpaint'];
+
+      let supportedOptions = [];
+      for (const option of Array.from(select.options)) {
+        if (option === placeholder) continue;
+        if (!knownModes.includes(option.value)) continue;
+        const supported = Boolean(modelId && modeSupportState.loaded && capabilities[option.value] === 'supported');
+        option.hidden = !supported;
+        option.disabled = !supported;
+        if (supported) supportedOptions.push(option);
+      }
+
+      if (!modelId || !modeSupportState.loaded || !support) {
+        placeholder.hidden = false;
+        placeholder.disabled = false;
+        placeholder.textContent = !modelId
+          ? 'Select a model first'
+          : modeSupportState.loaded
+            ? 'No capability data for this model'
+            : 'Loading model capabilities…';
+        select.disabled = true;
+        select.value = '';
+        return;
+      }
+
+      if (!supportedOptions.length) {
+        placeholder.hidden = false;
+        placeholder.disabled = false;
+        placeholder.textContent = 'No supported generation modes';
+        select.disabled = true;
+        select.value = '';
+        return;
+      }
+
+      placeholder.hidden = true;
+      placeholder.disabled = true;
+      select.disabled = false;
+      const currentSupported = supportedOptions.some((option) => option.value === select.value);
+      if (!currentSupported) {
+        const preferred = supportedOptions.find((option) => option.value === 'txt2img') || supportedOptions[0];
+        const changed = select.value !== preferred.value;
+        select.value = preferred.value;
+        if (changed) select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    } finally {
+      modeSupportState.syncing = false;
+    }
+  }
+
+  async function refreshModeSupport() {
+    modeSupportState.loaded = false;
+    syncSidebarModeChoices();
+    try {
+      const payload = await api('/api/model-support');
+      modeSupportState.models = Array.isArray(payload?.models) ? payload.models : [];
+      modeSupportState.loaded = true;
+    } catch {
+      modeSupportState.models = [];
+      modeSupportState.loaded = true;
+    }
+    syncSidebarModeChoices();
+  }
+
   function ensureGenerateSidebarMode() {
     const nav = document.querySelector('.nav-list');
     const generateButton = nav?.querySelector('.nav-item[data-page="generate"]');
@@ -117,6 +213,7 @@
     if (!generateButton.hasAttribute('aria-expanded')) {
       setGenerateMenuOpen(document.querySelector('#page-generate')?.classList.contains('is-visible'));
     }
+    syncSidebarModeChoices();
     return field;
   }
 
@@ -200,9 +297,18 @@
     const toolbar = panel.querySelector('.section-toolbar');
     toolbar?.classList.add('compact-lora-heading');
     const headingText = toolbar?.querySelector('p');
-    const compactHelp = 'Stack adapters in order; one strength controls model + CLIP unless you override CLIP.';
+    const compactHelp = modelFamily().includes('z-image')
+      ? 'Z-Image LoRAs patch the diffusion model only; CLIP is left unchanged.'
+      : 'Stack adapters in order; one strength controls model + CLIP unless you override CLIP.';
     if (headingText && headingText.textContent !== compactHelp) headingText.textContent = compactHelp;
-    for (const row of panel.querySelectorAll('[data-lora-stack-row]')) compactifyLoraRow(row);
+    const zImage = modelFamily().includes('z-image');
+    for (const row of panel.querySelectorAll('[data-lora-stack-row]')) {
+      compactifyLoraRow(row);
+      const clipAdvanced = row.querySelector('.lora-clip-advanced');
+      const clipInput = row.querySelector('[data-lora-clip-strength]');
+      if (clipAdvanced) clipAdvanced.hidden = zImage;
+      if (clipInput && zImage) clipInput.value = '0';
+    }
   }
 
   function createSection(id, className) {
@@ -286,6 +392,7 @@
     compactifyLoraStack();
     syncNegativePromptVisibility();
     syncCustomSizeVisibility();
+    syncSidebarModeChoices();
   }
 
   function installObservers() {
@@ -300,14 +407,23 @@
       }).observe(form, { childList: true, subtree: true });
     }
 
+    const mode = document.querySelector('#generation-mode');
+    if (mode && !mode.dataset.capabilityObserver) {
+      mode.dataset.capabilityObserver = 'true';
+      new MutationObserver(() => queueMicrotask(syncSidebarModeChoices)).observe(mode, { childList: true });
+    }
+
     document.querySelector('#model-select')?.addEventListener('change', () => {
       queueMicrotask(() => {
         hideModelSupportHint();
         syncNegativePromptVisibility();
         syncCustomSizeVisibility();
+        compactifyLoraStack();
+        syncSidebarModeChoices();
       });
     });
     document.querySelector('#resolution-tier')?.addEventListener('change', () => queueMicrotask(syncCustomSizeVisibility));
+    document.querySelector('#refresh-button')?.addEventListener('click', () => setTimeout(() => void refreshModeSupport(), 0));
   }
 
   ensureCompactStylesheet();
@@ -315,6 +431,7 @@
     makeGenerateCopyGeneric();
     compactifyGenerateLayout();
     installObservers();
+    void refreshModeSupport();
     setTimeout(compactifyGenerateLayout, 50);
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
