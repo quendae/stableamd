@@ -2,6 +2,7 @@ Describe 'StableAMD one-click launcher' {
     BeforeAll {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         $cmdPath = Join-Path $repoRoot 'Start-StableAMD.cmd'
+        $stopCmdPath = Join-Path $repoRoot 'Stop-StableAMD.cmd'
         $launcherPath = Join-Path $repoRoot 'scripts/Launch-StableAMD.ps1'
         $startPath = Join-Path $repoRoot 'scripts/Start-StableAMD.ps1'
         $stopPath = Join-Path $repoRoot 'scripts/Stop-StableAMD.ps1'
@@ -10,14 +11,31 @@ Describe 'StableAMD one-click launcher' {
         $acceptancePath = Join-Path $repoRoot 'scripts/Test-StableAMDPackage.ps1'
     }
 
-    It 'ships a double-clickable Windows entry point' {
+    It 'ships double-clickable Windows start and stop entry points' {
         Test-Path $cmdPath | Should -BeTrue
+        Test-Path $stopCmdPath | Should -BeTrue
         $cmd = Get-Content $cmdPath -Raw
+        $stopCmd = Get-Content $stopCmdPath -Raw
 
         $cmd | Should -Match 'powershell\.exe'
         $cmd | Should -Match '-ExecutionPolicy\s+Bypass'
         $cmd | Should -Match 'scripts\\Launch-StableAMD\.ps1'
         $cmd | Should -Match '%\*'
+        $stopCmd | Should -Match 'scripts\\Stop-StableAMD\.ps1'
+        $stopCmd | Should -Match '%\*'
+    }
+
+    It 'uses the accepted RX 6950 XT memory profile by default while preserving explicit overrides' {
+        $script = Get-Content $launcherPath -Raw
+
+        $script | Should -Match 'hasExplicitMemoryProfile'
+        $script | Should -Match 'PSBoundParameters\.ContainsKey'
+        $script | Should -Match 'resolvedDisableDynamicVram\s*=\s*\$true'
+        $script | Should -Match 'resolvedLowVram\s*=\s*\$true'
+        $script | Should -Match 'resolvedCacheClassic\s*=\s*\$true'
+        $script | Should -Match 'RX 6950 XT / 16 GiB profile'
+        $script | Should -Match 'LowVram and HighVram cannot be enabled together'
+        $script | Should -Match 'CacheClassic and CacheNone cannot be enabled together'
     }
 
     It 'starts the managed compute backend before the application server' {
@@ -31,6 +49,14 @@ Describe 'StableAMD one-click launcher' {
         $script | Should -Match '/api/health'
         $script | Should -Match 'service'
         $script | Should -Match 'StableAMD'
+    }
+
+    It 'cleans the backend and application if application startup fails' {
+        $script = Get-Content $launcherPath -Raw
+
+        $script | Should -Match 'Startup failed; cleaning up only StableAMD-managed processes'
+        $script | Should -Match "Stop-StableAMD\.ps1'\) -RepoRoot \$RepoRoot"
+        $script | Should -Match 'failed-start cleanup'
     }
 
     It 'reuses an existing healthy application server and optionally opens the browser' {
@@ -52,6 +78,9 @@ Describe 'StableAMD one-click launcher' {
         $launcher | Should -Match "role = 'application-server'"
         $launcher | Should -Match 'WindowStyle\s+Hidden'
         $launcher | Should -Match '"-u -s'
+        $launcher | Should -Match 'BackendPid'
+        $launcher | Should -Match 'AppPid'
+        $launcher | Should -Match 'Managed PIDs:'
         $start | Should -Match "role = 'compute-backend'"
         $start | Should -Match 'WindowStyle\s+Hidden'
         $start | Should -Match '"-u -s'
@@ -66,6 +95,7 @@ Describe 'StableAMD one-click launcher' {
         $launcher | Should -Match 'AssignProcessToJobObject'
         $launcher | Should -Match 'Watch-StableAMD\.ps1'
         $launcher | Should -Match 'Ctrl\+C.*releases VRAM'
+        $launcher | Should -Match 'Stop-StableAMD\.cmd'
         $acceptance | Should -Match 'Launch-StableAMD\.ps1'
         $acceptance | Should -Match '-Detached'
     }
