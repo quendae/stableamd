@@ -38,13 +38,11 @@ def main() -> None:
 
     forwarded_args = list(sys.argv[2:])
 
-    # Keep the guard that was already proven useful on the target gfx1030
-    # machine. The additional host-memory flags introduced in 6a15f6b,
-    # especially --disable-mmap, regressed Z-Image before sampling by moving
-    # the multi-GB diffusion model load through CPU allocation/copy paths. The
-    # attached target log then crashed natively in load_torch_file / UNETLoader.
-    # CPU VAE stays enabled; StableAMD's Z-Image workflow separately uses tiled
-    # VAE decode to reduce decode-time peak pressure.
+    # Keep only the guard that produced a successful Z-Image + LoRA render on
+    # the target gfx1030 machine. The additional host-memory flags introduced
+    # later, especially --disable-mmap, regressed diffusion-model loading before
+    # sampling. VAE remains on CPU; the workflow itself is kept identical to the
+    # previously proven official Z-Image graph.
     if "--cpu-vae" not in forwarded_args:
         forwarded_args.append("--cpu-vae")
 
