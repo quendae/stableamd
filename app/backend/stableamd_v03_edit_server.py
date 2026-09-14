@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from pathlib import Path
 from threading import local
 from typing import Any
+
+# The managed Windows runtime uses the embeddable Python distribution with a
+# restricted module search path. stableamd_v03_server and the native-edit base
+# already bootstrap their sibling backend modules explicitly; the final wrapper
+# must do the same before importing the renamed edit base.
+BACKEND_ROOT = Path(__file__).resolve().parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_v03_edit_server_base as editing
 from curated_model_patches import (
