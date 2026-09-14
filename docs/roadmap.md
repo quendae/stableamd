@@ -8,13 +8,15 @@ This file tracks larger product directions. Detailed implementation/acceptance s
 
 Primary goal: turn the proven Radeon/ComfyUI runtime into a practical multi-provider image workstation without destabilizing the accepted RX 6950 XT path.
 
+Accepted major gates now include SDXL editing, Z-Image Turbo + MultiLoRA, curated classic x2/x4 upscalers, Krea 2 Turbo FP8 generation and Krea upscale-after on the RX 6950 XT 16 GiB target.
+
 Current order:
 
-1. Krea 2 Turbo local provider on the 16 GiB Radeon profile.
-2. Provider-native editing where a real validated workflow exists.
-3. Optional reduced-memory SeedVR2 evaluation.
-4. Batch/queue generation with model residency preservation.
-5. ControlNet/OpenPose and remaining UX/polish work, including deferred outpaint seam compositing.
+1. Provider-native editing where a real validated workflow exists.
+2. Optional reduced-memory SeedVR2 evaluation.
+3. Batch/queue generation with model residency preservation.
+4. ControlNet/OpenPose.
+5. Remaining UX/polish work, including deferred outpaint seam compositing.
 
 ## v0.4 candidate — Image(s) to Gaussian Splat
 
