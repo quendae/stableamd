@@ -35,6 +35,7 @@
       .history-card-upscale .history-model { color: var(--accent, #ef6c45); }
       .outpaint-controls { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border, #303844); }
       .outpaint-margin-grid { display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 8px; }
+      .outpaint-blend-field { max-width: 240px; }
       @media (max-width: 760px) { .outpaint-margin-grid { grid-template-columns: repeat(2, minmax(90px, 1fr)); } }
     `;
     document.head.append(style);
@@ -80,18 +81,38 @@
     return String(getValue(model, "family", "Family") || "").toLowerCase();
   }
 
-  function selectEditingModel(record) {
+  function modelId(model) {
+    return String(getValue(model, "id", "Id") || "");
+  }
+
+  async function selectEditingModel(record, capability) {
     const modelSelect = document.querySelector("#model-select");
     if (!modelSelect || !Array.isArray(state.models)) throw new Error("Model selection is not available.");
+
+    let supportModels = [];
+    try {
+      const support = await api("/api/model-support");
+      supportModels = Array.isArray(support?.models) ? support.models : [];
+    } catch { }
+    const capabilitySupported = (id) => supportModels.some((item) => String(item?.id || "") === id && item?.capabilities?.[capability] === "supported");
+
     const recordId = String(getValue(record, "modelId", "ModelId") || "");
-    let model = state.models.find((item) => String(getValue(item, "id", "Id") || "") === recordId && modelFamily(item).includes("sdxl"));
-    if (!model) model = state.models.find((item) => modelFamily(item).includes("sdxl"));
-    if (!model) throw new Error("Img2Img, inpaint and outpaint currently require an installed SDXL model.");
-    const id = String(getValue(model, "id", "Id") || "");
-    if (!Array.from(modelSelect.options).some((option) => option.value === id)) throw new Error("The SDXL editing model is not currently selectable.");
+    const sourceModel = state.models.find((item) => modelId(item) === recordId) || null;
+    let model = sourceModel && capabilitySupported(recordId) ? sourceModel : null;
+
+    if (!model) {
+      const supported = state.models.filter((item) => capabilitySupported(modelId(item)));
+      model = supported.find((item) => modelFamily(item).includes("sdxl")) || supported[0] || null;
+    }
+    if (!model && sourceModel && modelFamily(sourceModel).includes("sdxl")) model = sourceModel;
+    if (!model) model = state.models.find((item) => modelFamily(item).includes("sdxl")) || null;
+    if (!model) throw new Error(`No installed model currently supports ${capability}.`);
+
+    const id = modelId(model);
+    if (!Array.from(modelSelect.options).some((option) => option.value === id)) throw new Error("The editing model is not currently selectable.");
     modelSelect.value = id;
     modelSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    return model;
+    return { model, usedSourceModel: Boolean(sourceModel && id === recordId) };
   }
 
   function restoreSourcePrompt(record) {
@@ -101,7 +122,7 @@
 
   async function handoffToImg2Img(record) {
     postActionEvent("img2img", record);
-    selectEditingModel(record);
+    const selection = await selectEditingModel(record, "img2img");
     restoreSourcePrompt(record);
     setPage("generate");
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -112,12 +133,12 @@
     const file = await fetchGeneratedFile(record, "stableamd-img2img");
     assignFileInput(document.querySelector("#input-image"), file);
     document.querySelector("#prompt")?.focus();
-    showToast("Image sent to Img2Img.", "success");
+    showToast(selection.usedSourceModel ? "Image sent to Img2Img with its source model." : "Image sent to Img2Img using a compatible editing model.", "success");
   }
 
-  async function handoffToInpaint(record) {
-    postActionEvent("inpaint", record);
-    selectEditingModel(record);
+  async function handoffToInpaint(record, action = "inpaint") {
+    postActionEvent(action, record);
+    const selection = await selectEditingModel(record, "inpaint");
     restoreSourcePrompt(record);
     setPage("generate");
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -125,9 +146,15 @@
     if (!mode) throw new Error("Generation mode control is unavailable.");
     mode.value = "inpaint";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
-    const file = await fetchGeneratedFile(record, "stableamd-inpaint");
+    const file = await fetchGeneratedFile(record, action === "outpaint" ? "stableamd-outpaint-original" : "stableamd-inpaint");
     assignFileInput(document.querySelector("#inpaint-source-image"), file);
-    showToast("Image sent to Inpaint. Paint the region to replace.", "success");
+    if (action !== "outpaint") {
+      postState.outpaintRecord = null;
+      const controls = document.querySelector("#outpaint-controls");
+      if (controls) controls.hidden = true;
+      showToast(selection.usedSourceModel ? "Image sent to Inpaint with its source model." : "Image sent to Inpaint using a compatible editing model.", "success");
+    }
+    return selection;
   }
 
   function ensureOutpaintControls() {
@@ -142,7 +169,7 @@
     controls.innerHTML = `
       <div>
         <strong>Outpaint expansion</strong>
-        <p class="history-model">Expand the canvas, then use the normal inpaint prompt to generate the new border areas.</p>
+        <p class="history-model">The source prompt is restored automatically. Expand the canvas and StableAMD blends the new area into the original image instead of using a hard border.</p>
       </div>
       <div class="outpaint-margin-grid">
         <label class="field"><span>Left</span><input id="outpaint-left" type="number" min="0" max="1024" step="64" value="256"></label>
@@ -150,6 +177,10 @@
         <label class="field"><span>Top</span><input id="outpaint-top" type="number" min="0" max="1024" step="64" value="0"></label>
         <label class="field"><span>Bottom</span><input id="outpaint-bottom" type="number" min="0" max="1024" step="64" value="0"></label>
       </div>
+      <label class="field outpaint-blend-field">
+        <span>Blend overlap <small>soft transition into source</small></span>
+        <input id="outpaint-blend" type="number" min="0" max="256" step="8" value="64">
+      </label>
       <button class="button button-secondary" id="outpaint-prepare" type="button">Prepare expanded canvas</button>`;
     inpaint.append(controls);
     controls.querySelector("#outpaint-prepare").addEventListener("click", () => {
@@ -180,6 +211,44 @@
     return Math.round(value / 8) * 8;
   }
 
+  function outpaintBlend() {
+    const value = Number(document.querySelector("#outpaint-blend")?.value ?? 64);
+    if (!Number.isFinite(value) || value < 0 || value > 256) throw new Error("Outpaint blend overlap must be between 0 and 256 pixels.");
+    return Math.round(value / 8) * 8;
+  }
+
+  function paintOutpaintMask(mask, left, right, top, bottom, imageWidth, imageHeight, blend) {
+    const ctx = mask.getContext("2d");
+    const width = mask.width;
+    const height = mask.height;
+    const x0 = left;
+    const y0 = top;
+    const x1 = left + imageWidth;
+    const y1 = top + imageHeight;
+    const feather = Math.min(blend, Math.floor(imageWidth / 2), Math.floor(imageHeight / 2));
+    const pixels = ctx.createImageData(width, height);
+    const data = pixels.data;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const offset = (y * width + x) * 4;
+        const outside = x < x0 || x >= x1 || y < y0 || y >= y1;
+        let alpha = outside ? 255 : 0;
+        if (!outside && feather > 0) {
+          if (left > 0 && x < x0 + feather) alpha = Math.max(alpha, 255 * (1 - (x - x0 + 0.5) / feather));
+          if (right > 0 && x >= x1 - feather) alpha = Math.max(alpha, 255 * (1 - (x1 - x - 0.5) / feather));
+          if (top > 0 && y < y0 + feather) alpha = Math.max(alpha, 255 * (1 - (y - y0 + 0.5) / feather));
+          if (bottom > 0 && y >= y1 - feather) alpha = Math.max(alpha, 255 * (1 - (y1 - y - 0.5) / feather));
+        }
+        data[offset] = 255;
+        data[offset + 1] = 55;
+        data[offset + 2] = 55;
+        data[offset + 3] = Math.max(0, Math.min(255, Math.round(alpha)));
+      }
+    }
+    ctx.putImageData(pixels, 0, 0);
+  }
+
   async function waitForInpaintCanvas(width, height) {
     const deadline = performance.now() + 5000;
     while (performance.now() < deadline) {
@@ -198,6 +267,7 @@
     const right = outpaintMargin("outpaint-right");
     const top = outpaintMargin("outpaint-top");
     const bottom = outpaintMargin("outpaint-bottom");
+    const blend = outpaintBlend();
     if (left + right + top + bottom <= 0) throw new Error("Set at least one outpaint margin above zero.");
 
     const width = image.naturalWidth + left + right;
@@ -215,28 +285,23 @@
     assignFileInput(document.querySelector("#inpaint-source-image"), expanded);
 
     const mask = await waitForInpaintCanvas(width, height);
-    const maskCtx = mask.getContext("2d");
-    maskCtx.clearRect(0, 0, width, height);
-    maskCtx.fillStyle = "rgba(255, 55, 55, 0.88)";
-    maskCtx.fillRect(0, 0, width, height);
-    maskCtx.clearRect(left, top, image.naturalWidth, image.naturalHeight);
+    paintOutpaintMask(mask, left, right, top, bottom, image.naturalWidth, image.naturalHeight, blend);
 
     const widthInput = document.querySelector("#width");
     const heightInput = document.querySelector("#height");
     if (widthInput) widthInput.value = width;
     if (heightInput) heightInput.value = height;
     const hint = document.querySelector("#inpaint-hint");
-    if (hint) hint.textContent = `Outpaint ${width} × ${height} · border areas are pre-masked; adjust with Brush/Eraser if needed.`;
-    showToast("Outpaint canvas prepared. Adjust the mask or generate when ready.", "success");
+    if (hint) hint.textContent = `Outpaint ${width} × ${height} · ${blend}px blend overlap softens the transition into the source; adjust with Brush/Eraser if needed.`;
+    showToast("Outpaint canvas prepared with a feathered blend zone.", "success");
   }
 
   async function handoffToOutpaint(record) {
-    postActionEvent("outpaint", record);
-    await handoffToInpaint(record);
+    const selection = await handoffToInpaint(record, "outpaint");
     postState.outpaintRecord = record;
     const controls = ensureOutpaintControls();
     if (controls) controls.hidden = false;
-    showToast("Outpaint ready. Choose expansion margins and prepare the canvas.", "success");
+    showToast(selection.usedSourceModel ? "Outpaint ready with the source model and prompt." : "Outpaint ready with the source prompt and a compatible editing model.", "success");
   }
 
   function handoffToUpscale(record) {
