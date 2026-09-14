@@ -5,7 +5,7 @@
     { id: "vae", label: "VAE", hint: "VAE / autoencoder assets used to encode or decode images." },
   ];
 
-  const packageState = { roots: {}, support: null };
+  const packageState = { roots: {}, support: null, modelPatches: { root: "", models: [] } };
   const baseRenderModels = renderModels;
 
   function normalizeModels(payload) {
@@ -211,6 +211,147 @@
     }
   }
 
+  function formatModelPatchBytes(value) {
+    const bytes = Number(value || 0);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "";
+    return bytes >= 1024 * 1024 * 1024
+      ? `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`
+      : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+
+  function ensureModelPatchUi() {
+    const ui = ensureModelPackageUi();
+    if (!ui) return null;
+    let section = ui.page.querySelector("#curated-model-patches");
+    if (section) return section;
+
+    section = document.createElement("section");
+    section.id = "curated-model-patches";
+    section.className = "v03-curated-model-patches";
+    section.innerHTML = `
+      <div class="section-toolbar">
+        <div>
+          <h3>Curated provider dependencies</h3>
+          <p>Verified model patches required by provider features. StableAMD pins the official source, exact size and SHA-256 before installing.</p>
+        </div>
+      </div>
+      <div id="model-patch-install-list" class="model-install-grid"><div class="history-model">Loading curated dependencies…</div></div>`;
+    ui.list.after(section);
+    return section;
+  }
+
+  function renderModelPatches() {
+    ensureModelPatchUi();
+    const root = document.querySelector("#model-patch-install-list");
+    if (!root) return;
+    root.replaceChildren();
+    const models = Array.isArray(packageState.modelPatches?.models) ? packageState.modelPatches.models : [];
+    if (!models.length) {
+      root.innerHTML = '<div class="empty-state compact"><strong>No curated dependencies available</strong><p>The provider dependency catalog could not be loaded.</p></div>';
+      return;
+    }
+
+    for (const model of models) {
+      const integrity = String(model.integrity || "missing");
+      const invalid = integrity === "size-mismatch";
+      const card = document.createElement("article");
+      card.className = `install-card model-patch-card ${model.ready ? "is-ready" : ""}`;
+
+      const heading = document.createElement("div");
+      heading.className = "install-card-heading";
+      const info = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = String(model.name || model.id || "Model patch");
+      const meta = document.createElement("span");
+      meta.textContent = [model.family, formatModelPatchBytes(model.sizeBytes), model.license].filter(Boolean).join(" · ");
+      info.append(title, meta);
+
+      const status = document.createElement("span");
+      status.className = `root-state ${model.ready ? "is-ready" : "is-missing"}`;
+      status.textContent = model.ready ? "Ready" : (invalid ? "Invalid file" : (model.installedOnDisk ? "Restart required" : "Not installed"));
+      heading.append(info, status);
+      card.append(heading);
+
+      const purpose = document.createElement("p");
+      purpose.className = "history-model";
+      purpose.textContent = String(model.purpose || "Provider dependency");
+      card.append(purpose);
+
+      if (invalid) {
+        const warning = document.createElement("p");
+        warning.className = "history-model";
+        warning.textContent = `Existing file size ${formatModelPatchBytes(model.actualBytes)} does not match the pinned ${formatModelPatchBytes(model.sizeBytes)}. Remove or rename the bad file before installing.`;
+        card.append(warning);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "model-root-actions";
+      if (model.homepage) {
+        const source = document.createElement("a");
+        source.href = model.homepage;
+        source.target = "_blank";
+        source.rel = "noreferrer noopener";
+        source.textContent = "Source / license";
+        actions.append(source);
+      }
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = model.ready ? "button button-quiet" : "button button-secondary";
+      button.disabled = Boolean(model.ready || invalid);
+      button.textContent = model.ready ? "Ready" : (model.installedOnDisk ? "Activate" : "Install & activate");
+      button.addEventListener("click", () => void installAndActivateModelPatch(model, button));
+      actions.append(button);
+      card.append(actions);
+      root.append(card);
+    }
+  }
+
+  async function refreshModelPatches() {
+    ensureModelPatchUi();
+    try {
+      packageState.modelPatches = await api("/api/model-patches/catalog");
+      renderModelPatches();
+    } catch (error) {
+      const root = document.querySelector("#model-patch-install-list");
+      if (root) root.innerHTML = `<div class="empty-state compact"><strong>Curated dependencies unavailable</strong><p>${error.message}</p></div>`;
+    }
+  }
+
+  async function installAndActivateModelPatch(model, button) {
+    const oldText = button.textContent;
+    button.disabled = true;
+    try {
+      let result = { restartRequired: Boolean(model.installedOnDisk && !model.ready), ready: Boolean(model.ready) };
+      if (!model.installedOnDisk) {
+        button.textContent = "Downloading & verifying…";
+        result = await api("/api/model-patches/install", {
+          method: "POST",
+          body: JSON.stringify({ id: model.id }),
+        });
+      }
+
+      if (result?.restartRequired || !result?.ready) {
+        button.textContent = "Activating…";
+        showToast(`${model.name} installed. Restarting the compute backend to activate it…`, "success");
+        const status = await api("/api/backend/restart", { method: "POST", body: "{}" });
+        renderStatus(status);
+      }
+
+      button.textContent = "Checking…";
+      await Promise.allSettled([refreshModelPatches(), refreshModelPackages(), refreshExecutionSupport()]);
+      const refreshed = (packageState.modelPatches?.models || []).find((item) => item.id === model.id);
+      if (refreshed?.ready) {
+        showToast(`${model.name} is installed and ready.`, "success");
+      } else {
+        throw new Error(`${model.name} is installed, but ComfyUI has not registered it yet.`);
+      }
+    } catch (error) {
+      showToast(`Provider dependency install failed: ${error.message}`, "error");
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+
   function ensureBundleRootUi() {
     const ui = ensureModelPackageUi();
     if (!ui?.content) return null;
@@ -358,7 +499,7 @@
     try {
       const status = await api("/api/backend/restart", { method: "POST", body: "{}" });
       renderStatus(status);
-      await Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
+      await Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport(), refreshModelPatches()]);
       showToast(message, "success");
     } catch (error) {
       showToast(`Bundle folder saved, but backend restart failed: ${error.message}`, "error");
@@ -444,15 +585,16 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     ensureModelPackageUi();
+    ensureModelPatchUi();
     ensureBundleRootUi();
     document.querySelector('[data-page="models"]')?.addEventListener("click", () => {
-      void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
+      void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport(), refreshModelPatches()]);
     });
     document.querySelector("#refresh-button")?.addEventListener("click", () => {
       if (document.querySelector("#page-models")?.classList.contains("is-visible")) {
-        void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
+        void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport(), refreshModelPatches()]);
       }
     });
-    void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport()]);
+    void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport(), refreshModelPatches()]);
   });
 })();
