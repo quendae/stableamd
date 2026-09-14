@@ -3,13 +3,10 @@ from __future__ import annotations
 import json
 import math
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock, local
+from threading import local
 from typing import Any
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 BACKEND_ROOT = Path(__file__).resolve().parent
 if str(BACKEND_ROOT) not in sys.path:
@@ -26,9 +23,6 @@ class PowerShellBridge(v03.PowerShellBridge):
     def __post_init__(self) -> None:
         super().__post_init__()
         self._zimage_lora_context = local()
-        self._zimage_generation_lock = RLock()
-        self._zimage_lora_signature: tuple[tuple[str, float], ...] | None = None
-        self._zimage_memory_dirty = False
 
     @staticmethod
     def _combo_choices(payload: Any, node_name: str, input_name: str) -> list[str]:
@@ -116,54 +110,6 @@ class PowerShellBridge(v03.PowerShellBridge):
     def _active_zimage_loras(self) -> list[dict[str, Any]]:
         stack = getattr(self._zimage_lora_context, "stack", None)
         return stack if isinstance(stack, list) else []
-
-    @staticmethod
-    def _zimage_stack_signature(stack: list[dict[str, Any]]) -> tuple[tuple[str, float], ...]:
-        return tuple(
-            (
-                str(entry.get("name") or "").replace("\\", "/").lower(),
-                float(entry.get("modelStrength", 1.0)),
-            )
-            for entry in stack
-            if entry.get("enabled", True) is not False
-        )
-
-    def _release_comfy_memory(self, reason: str) -> None:
-        url = self._backend_base_url() + "free"
-        body = json.dumps(
-            {"unload_models": True, "free_memory": True},
-            separators=(",", ":"),
-        ).encode("utf-8")
-        request = Request(
-            url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=10) as response:
-                response.read()
-        except (OSError, URLError) as exc:
-            raise base.StableAmdBridgeError(
-                f"Could not release ComfyUI model/cache memory before Z-Image transition: {exc}"
-            ) from exc
-        print(f"StableAMD Z-Image memory guard: released ComfyUI models/cache ({reason}).", flush=True)
-        # /free is serviced by ComfyUI's prompt worker. Give it a short window
-        # to consume the flags before a new large Lumina2 graph is submitted.
-        time.sleep(0.35)
-
-    def _prepare_zimage_memory(self, stack: list[dict[str, Any]]) -> None:
-        signature = self._zimage_stack_signature(stack)
-        changed = self._zimage_lora_signature is not None and signature != self._zimage_lora_signature
-        if self._zimage_memory_dirty or changed:
-            reasons: list[str] = []
-            if self._zimage_memory_dirty:
-                reasons.append("previous post-processing changed the resident graph")
-            if changed:
-                reasons.append("LoRA stack changed")
-            self._release_comfy_memory("; ".join(reasons))
-            self._zimage_memory_dirty = False
-        self._zimage_lora_signature = signature
 
     def _run_script(self, name: str, parameters: list[tuple[str, Any]] | None = None) -> Any:
         params = list(parameters or [])
@@ -253,8 +199,6 @@ class PowerShellBridge(v03.PowerShellBridge):
                     image.unlink(missing_ok=True)
                     image_deleted = not image.exists()
                 except (ValueError, OSError):
-                    # A stale or already missing image must not make its history
-                    # record impossible to remove from Gallery.
                     image_deleted = False
 
             try:
@@ -265,21 +209,12 @@ class PowerShellBridge(v03.PowerShellBridge):
 
         return {"deleted": False, "promptId": prompt_id, "imageDeleted": False}
 
-    def upscale(self, request: dict[str, Any]) -> dict[str, Any]:
-        try:
-            return super().upscale(request)
-        finally:
-            # The RRDB/ESRGAN workflow changes ComfyUI's resident graph. The
-            # next large Z-Image load should start from a clean model/cache state.
-            self._zimage_memory_dirty = True
-
-    def restart_backend(self) -> Any:
-        result = super().restart_backend()
-        self._zimage_lora_signature = None
-        self._zimage_memory_dirty = False
-        return result
-
     def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
+        # Keep the plain generation path identical to the target-machine-proven
+        # 985845e4 behavior. In particular, do not call ComfyUI /free or force a
+        # graph unload before a generation: after the first native Lumina crash,
+        # subsequent runs on the target machine became unstable even after the
+        # process was restarted.
         stack = self._resolve_zimage_loras(request)
         clean_request = dict(request)
         clean_request.pop("loraStack", None)
@@ -287,13 +222,11 @@ class PowerShellBridge(v03.PowerShellBridge):
         clean_request.pop("loraModelStrength", None)
         clean_request.pop("loraClipStrength", None)
 
-        with self._zimage_generation_lock:
-            self._prepare_zimage_memory(stack)
-            self._zimage_lora_context.stack = stack
-            try:
-                result = super()._generate_zimage_turbo(clean_request, model)
-            finally:
-                self._zimage_lora_context.stack = []
+        self._zimage_lora_context.stack = stack
+        try:
+            result = super()._generate_zimage_turbo(clean_request, model)
+        finally:
+            self._zimage_lora_context.stack = []
 
         enabled = [entry for entry in stack if entry.get("enabled", True)]
         result["LoraStack"] = stack
