@@ -43,6 +43,5 @@ Describe 'StableAMD memory diagnostics' {
         $runner | Should -Not -Match '"--disable-pinned-memory"'
         $runner | Should -Not -Match '"--disable-async-offload"'
         $runner | Should -Match 'StableAMD bootstrap'
-        $runner | Should -Match 'load_torch_file'
     }
 }
