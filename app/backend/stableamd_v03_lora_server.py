@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
@@ -209,6 +210,43 @@ class PowerShellBridge(v03.PowerShellBridge):
 
         return {"deleted": False, "promptId": prompt_id, "imageDeleted": False}
 
+    def _generate_inpaint(self, request: dict[str, Any]) -> Any:
+        edit_context = request.get("editContext") if isinstance(request.get("editContext"), dict) else None
+        clean_request = dict(request)
+        clean_request.pop("editContext", None)
+        result = super()._generate_inpaint(clean_request)
+        if not edit_context or edit_context.get("kind") != "outpaint":
+            return result
+
+        margins = dict(edit_context.get("margins") or {})
+        source_prompt_id = str(edit_context.get("sourcePromptId") or "").strip()
+        source_image_path = str(edit_context.get("sourceImagePath") or "").strip()
+        history_root = (self.repo_root / ".runtime" / "stableamd" / "history").resolve()
+        raw_history_path = str(result.get("HistoryPath") or "").strip()
+        if raw_history_path:
+            history_path = Path(raw_history_path).resolve()
+            if history_root in history_path.parents and history_path.is_file():
+                try:
+                    record = json.loads(history_path.read_text(encoding="utf-8-sig"))
+                    if isinstance(record, dict):
+                        record["mode"] = "outpaint"
+                        record["editOperation"] = "outpaint"
+                        record["sourcePromptId"] = source_prompt_id
+                        record["sourceImagePath"] = source_image_path
+                        record["outpaintMargins"] = margins
+                        temporary = history_path.with_suffix(history_path.suffix + f".tmp-{uuid.uuid4().hex}")
+                        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+                        temporary.replace(history_path)
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise base.StableAmdBridgeError(f"Outpaint completed, but its Gallery metadata could not be updated: {exc}") from exc
+
+        result["Mode"] = "outpaint"
+        result["EditOperation"] = "outpaint"
+        result["SourcePromptId"] = source_prompt_id
+        result["SourceImagePath"] = source_image_path
+        result["OutpaintMargins"] = margins
+        return result
+
     def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
         # Keep the plain generation path identical to the target-machine-proven
         # 985845e4 behavior. In particular, do not call ComfyUI /free or force a
@@ -236,11 +274,53 @@ class PowerShellBridge(v03.PowerShellBridge):
         return result
 
 
+class StableAmdApi(v03.StableAmdApi):
+    _generation_fields = set(v03.StableAmdApi._generation_fields) | {"editContext"}
+
+    @staticmethod
+    def _validate_edit_context(value: Any) -> None:
+        if not isinstance(value, dict):
+            raise ValueError("editContext must be an object.")
+        unsupported = sorted(set(value) - {"kind", "sourcePromptId", "sourceImagePath", "margins"})
+        if unsupported:
+            raise ValueError("Unsupported editContext field(s): " + ", ".join(unsupported))
+        if value.get("kind") != "outpaint":
+            raise ValueError("editContext kind must be 'outpaint'.")
+        for field in ("sourcePromptId", "sourceImagePath"):
+            if field in value and not isinstance(value[field], str):
+                raise ValueError(f"editContext {field} must be a string.")
+
+        margins = value.get("margins")
+        if not isinstance(margins, dict):
+            raise ValueError("Outpaint editContext requires margins.")
+        if set(margins) != {"left", "right", "top", "bottom"}:
+            raise ValueError("Outpaint margins must contain left, right, top and bottom.")
+        total = 0
+        for side in ("left", "right", "top", "bottom"):
+            amount = margins[side]
+            if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(float(amount)):
+                raise ValueError(f"Outpaint margin '{side}' must be numeric.")
+            if amount < 0 or amount > 1024 or int(amount) != amount or int(amount) % 8 != 0:
+                raise ValueError(f"Outpaint margin '{side}' must be an integer from 0 to 1024 divisible by 8.")
+            total += int(amount)
+        if total <= 0:
+            raise ValueError("Outpaint requires at least one non-zero margin.")
+
+    def _validate_generation(self, request: dict[str, Any]) -> dict[str, Any]:
+        validated = super()._validate_generation(request)
+        if "editContext" in validated:
+            if str(validated.get("mode") or "") != "inpaint":
+                raise ValueError("editContext is valid only for inpaint/outpaint generation.")
+            self._validate_edit_context(validated["editContext"])
+        return validated
+
+
 # stableamd_v03_server already installs its API extension into the proven base
-# server. Replace only the bridge class so all existing v0.3 routes and behavior
-# remain unchanged while Z-Image gains model-only LoRA execution.
+# server. Replace only the bridge/API extension points so all existing v0.3
+# routes remain unchanged while Z-Image gains model-only LoRA execution and
+# outpaint results keep their Gallery source relationship.
 base.PowerShellBridge = PowerShellBridge
-base.StableAmdApi = v03.StableAmdApi
+base.StableAmdApi = StableAmdApi
 
 
 def main() -> int:
