@@ -120,13 +120,75 @@ function Find-StableAmdTemplatePackages {
         [string[]]$VaeRoots = @()
     )
 
-    # Official ComfyUI template: image_z_image_turbo.json.
+    # Official ComfyUI Z-Image Turbo package. The compact mixed-precision text
+    # encoders are official alternatives and materially reduce Windows host
+    # commit/pagefile pressure during native edit workflows. Prefer FP4 mixed,
+    # then FP8 mixed, then the original BF16 encoder. If a higher-priority file
+    # is present but truncated, fall through to the next valid official variant
+    # instead of making an otherwise usable package incomplete.
     $zDiffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'z_image_turbo_bf16.safetensors'
-    $zEncoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen_3_4b.safetensors'
+    $zEncoderVariants = @(
+        [pscustomobject]@{
+            name = 'qwen_3_4b_fp4_mixed.safetensors'
+            label = 'Text encoder (FP4 mixed · low-memory preferred)'
+            expectedBytes = [Int64]3479416193
+            expectedSha256 = '7ca32dcf07dfe7692945d80fff86e3a74cb83c6206b9b223ac6836b939bb85d6'
+        },
+        [pscustomobject]@{
+            name = 'qwen_3_4b_fp8_mixed.safetensors'
+            label = 'Text encoder (FP8 mixed)'
+            expectedBytes = [Int64]5631994051
+            expectedSha256 = '72450b19758172c5a7273cf7de729d1c17e7f434a104a00167624cba94f68f15'
+        },
+        [pscustomobject]@{
+            name = 'qwen_3_4b.safetensors'
+            label = 'Text encoder (BF16)'
+            expectedBytes = [Int64]8044982048
+            expectedSha256 = '6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a'
+        }
+    )
+    $zEncoderChoice = $null
+    $zEncoderInvalidChoice = $null
+    foreach ($candidate in $zEncoderVariants) {
+        $candidatePath = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName ([string]$candidate.name)
+        if ([string]::IsNullOrWhiteSpace([string]$candidatePath)) { continue }
+        $candidateValid = $false
+        try {
+            $candidateValid = [Int64](Get-Item -LiteralPath $candidatePath -ErrorAction Stop).Length -eq [Int64]$candidate.expectedBytes
+        }
+        catch { $candidateValid = $false }
+        $choice = [pscustomobject]@{
+            name = [string]$candidate.name
+            label = [string]$candidate.label
+            expectedBytes = [Int64]$candidate.expectedBytes
+            expectedSha256 = [string]$candidate.expectedSha256
+            path = $candidatePath
+        }
+        if ($candidateValid) {
+            $zEncoderChoice = $choice
+            break
+        }
+        if ($null -eq $zEncoderInvalidChoice) { $zEncoderInvalidChoice = $choice }
+    }
+    if ($null -eq $zEncoderChoice) {
+        if ($null -ne $zEncoderInvalidChoice) {
+            $zEncoderChoice = $zEncoderInvalidChoice
+        }
+        else {
+            $preferred = $zEncoderVariants[0]
+            $zEncoderChoice = [pscustomobject]@{
+                name = [string]$preferred.name
+                label = [string]$preferred.label
+                expectedBytes = [Int64]$preferred.expectedBytes
+                expectedSha256 = [string]$preferred.expectedSha256
+                path = $null
+            }
+        }
+    }
     $zVae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'ae.safetensors'
     $zComponents = @(
         New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model' -ExpectedName 'z_image_turbo_bf16.safetensors' -Path $zDiffusion
-        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Text encoder' -ExpectedName 'qwen_3_4b.safetensors' -Path $zEncoder
+        New-StableAmdTemplateComponent -Role 'text_encoder' -Label $zEncoderChoice.label -ExpectedName $zEncoderChoice.name -Path $zEncoderChoice.path -ExpectedBytes $zEncoderChoice.expectedBytes -ExpectedSha256 $zEncoderChoice.expectedSha256
         New-StableAmdTemplateComponent -Role 'vae' -Label 'VAE' -ExpectedName 'ae.safetensors' -Path $zVae
     )
 
