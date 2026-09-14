@@ -55,7 +55,7 @@ Describe 'StableAMD v0.3 logical model packages' {
         }
     }
 
-    It 'discovers Krea 2 Turbo FP8 as a three-asset logical package' {
+    It 'discovers Krea 2 Turbo FP8 but rejects incomplete official asset files' {
         Import-Module (Join-Path $repoRoot 'scripts/StableAmd.TemplateBundles.psm1') -Force
 
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('stableamd-packages-krea-' + [guid]::NewGuid().ToString('N'))
@@ -72,14 +72,33 @@ Describe 'StableAMD v0.3 logical model packages' {
             $package = @($packages | Where-Object family -eq 'krea2')[0]
             $package.name | Should -Be 'Krea 2 Turbo (FP8)'
             $package.provider | Should -Be 'krea2-bundle'
-            $package.ready | Should -BeTrue
-            [IO.Path]::GetFileName([string]$package.assets.diffusion_model[0]) | Should -Be 'krea2_turbo_fp8_scaled.safetensors'
-            [IO.Path]::GetFileName([string]$package.assets.text_encoder[0]) | Should -Be 'qwen3vl_4b_fp8_scaled.safetensors'
-            [IO.Path]::GetFileName([string]$package.assets.vae[0]) | Should -Be 'qwen_image_vae.safetensors'
+            $package.ready | Should -BeFalse
+            $package.status | Should -Be 'incomplete'
+            @($package.assets.diffusion_model).Count | Should -Be 0
+            @($package.assets.text_encoder).Count | Should -Be 0
+            @($package.assets.vae).Count | Should -Be 0
+
+            $diffusion = @($package.components | Where-Object role -eq 'diffusion_model')[0]
+            $diffusion.found | Should -BeTrue
+            $diffusion.present | Should -BeFalse
+            $diffusion.integrity | Should -Be 'size-mismatch'
+            $diffusion.expectedBytes | Should -Be 13141730784
+            $diffusion.expectedSha256 | Should -Be 'eb4dd8c612cfd10f64f25b057e6e6bbcb5737c94a7372177e456dbf7579502f1'
+            $diffusion.problem | Should -Match 'Re-download krea2_turbo_fp8_scaled.safetensors'
         }
         finally {
             Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'pins the official Krea 2 Turbo package byte lengths and hashes' {
+        $template = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/StableAmd.TemplateBundles.psm1') -Raw
+        $template | Should -Match '13141730784'
+        $template | Should -Match '5242467968'
+        $template | Should -Match '253806246'
+        $template | Should -Match 'eb4dd8c612cfd10f64f25b057e6e6bbcb5737c94a7372177e456dbf7579502f1'
+        $template | Should -Match '54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094'
+        $template | Should -Match 'a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f'
     }
 
     It 'keeps package discovery on the existing product model API and persists only ready bundles for execution' {
