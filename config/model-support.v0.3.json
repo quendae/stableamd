@@ -133,12 +133,12 @@
       }
     },
     "krea2": {
-      "label": "Krea 2",
+      "label": "Krea 2 Turbo",
       "provider": "krea2-bundle",
       "assetMode": "bundle",
       "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
       "capabilities": {
-        "txt2img": "planned",
+        "txt2img": "supported",
         "img2img": "planned",
         "inpaint": "planned",
         "controlnet": "planned",
