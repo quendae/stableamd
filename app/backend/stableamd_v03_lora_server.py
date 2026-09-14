@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import secrets
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +22,7 @@ base = v03.base
 
 
 class PowerShellBridge(v03.PowerShellBridge):
-    """v0.3 extension that adds model-only LoRA execution to Z-Image Turbo."""
+    """v0.3 extensions for Z-Image LoRA, curated upscalers and Krea 2 Turbo."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -276,6 +278,205 @@ class PowerShellBridge(v03.PowerShellBridge):
         result["OutpaintBlendOverlap"] = blend_overlap
         return result
 
+    @staticmethod
+    def _bundle_asset_path_for(model: dict[str, Any], role: str, label: str) -> Path:
+        assets = model.get("assets")
+        if not isinstance(assets, dict):
+            raise base.StableAmdBridgeError(f"{label} is missing its '{role}' asset map.")
+        values = assets.get(role)
+        paths = values if isinstance(values, list) else ([values] if values else [])
+        paths = [str(value).strip() for value in paths if str(value).strip()]
+        if len(paths) != 1:
+            raise base.StableAmdBridgeError(f"{label} requires exactly one '{role}' asset.")
+        path = Path(paths[0]).expanduser().resolve()
+        if not path.is_file():
+            raise base.StableAmdBridgeError(f"{label} asset no longer exists: {path}")
+        return path
+
+    def _resolve_comfy_bundle_asset_for(self, node_name: str, input_name: str, path: Path, label: str) -> str:
+        info = self._comfy_json(f"object_info/{node_name}")
+        choices = self._combo_choices(info, node_name, input_name)
+        leaf = path.name.lower()
+        exact = [name for name in choices if Path(str(name).replace("\\", "/")).name.lower() == leaf]
+        if len(exact) != 1:
+            raise base.StableAmdBridgeError(
+                f"ComfyUI does not expose {label} asset '{path.name}' through {node_name}. "
+                "Restart StableAMD after changing bundle asset folders."
+            )
+        return str(exact[0])
+
+    def _resolve_bundle_output(self, label: str, prompt_id: str, history_entry: dict[str, Any]) -> Path:
+        output_root = (self.repo_root / ".runtime" / "stableamd" / "output").resolve()
+        images = history_entry.get("outputs", {}).get("9", {}).get("images", [])
+        for image in images if isinstance(images, list) else []:
+            if not isinstance(image, dict) or not image.get("filename"):
+                continue
+            candidate = (output_root / str(image.get("subfolder") or "") / str(image["filename"])).resolve()
+            if output_root in candidate.parents and candidate.is_file():
+                return candidate
+        raise base.StableAmdBridgeError(
+            f"ComfyUI completed {label} prompt '{prompt_id}', but StableAMD could not resolve its output image."
+        )
+
+    def _save_bundle_history(self, record: dict[str, Any]) -> Path:
+        history_root = self.repo_root / ".runtime" / "stableamd" / "history"
+        history_root.mkdir(parents=True, exist_ok=True)
+        created = datetime.now(timezone.utc)
+        prompt_id = str(record.get("promptId") or uuid.uuid4().hex)
+        destination = history_root / f"{created.strftime('%Y%m%dT%H%M%S%fZ')}_{prompt_id}.json"
+        temporary = destination.with_suffix(destination.suffix + f".tmp-{uuid.uuid4().hex}")
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        return destination.resolve()
+
+    def _generate_krea2_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
+        if request.get("loraStack") or str(request.get("loraName") or "").strip():
+            raise base.StableAmdBridgeError("Krea 2 LoRA execution is not enabled in StableAMD yet.")
+        if str(request.get("mode") or "txt2img").lower() != "txt2img":
+            raise base.StableAmdBridgeError("Krea 2 Turbo currently supports txt2img only.")
+
+        if request.get("startBackendIfNeeded"):
+            try:
+                backend_url = self._backend_base_url()
+            except base.StableAmdBridgeError:
+                self.start_backend()
+                backend_url = self._backend_base_url()
+        else:
+            backend_url = self._backend_base_url()
+
+        label = "Krea 2 Turbo"
+        diffusion_path = self._bundle_asset_path_for(model, "diffusion_model", label)
+        encoder_path = self._bundle_asset_path_for(model, "text_encoder", label)
+        vae_path = self._bundle_asset_path_for(model, "vae", label)
+        diffusion_name = self._resolve_comfy_bundle_asset_for("UNETLoader", "unet_name", diffusion_path, label)
+        encoder_name = self._resolve_comfy_bundle_asset_for("CLIPLoader", "clip_name", encoder_path, label)
+        vae_name = self._resolve_comfy_bundle_asset_for("VAELoader", "vae_name", vae_path, label)
+
+        seed = int(request["seed"]) if "seed" in request else secrets.randbits(63)
+        width = int(request.get("width", 1024))
+        height = int(request.get("height", 1024))
+        steps = int(request.get("steps", 8))
+        cfg = float(request.get("cfg", 1.0))
+        sampler = str(request.get("samplerName") or "euler")
+        scheduler = str(request.get("scheduler") or "simple")
+        filename_prefix = f"StableAMD_KREA2_TURBO_{uuid.uuid4().hex}"
+        started = time.monotonic()
+
+        workflow = self._run_script(
+            "Build-StableAmdWorkflow.ps1",
+            [
+                ("Family", "krea2"),
+                ("Mode", "txt2img"),
+                ("Prompt", request["prompt"]),
+                ("Width", width),
+                ("Height", height),
+                ("Steps", steps),
+                ("Cfg", cfg),
+                ("Seed", seed),
+                ("SamplerName", sampler),
+                ("Scheduler", scheduler),
+                ("FilenamePrefix", filename_prefix),
+                ("DiffusionModelName", diffusion_name),
+                ("TextEncoderName", encoder_name),
+                ("VaeName", vae_name),
+            ],
+        )
+        if not isinstance(workflow, dict):
+            raise base.StableAmdBridgeError("StableAMD Krea 2 workflow builder did not return a workflow object.")
+
+        client_id = uuid.uuid4().hex
+        queued = self._post_comfy_json("prompt", {"prompt": workflow, "client_id": client_id})
+        prompt_id = str(queued.get("prompt_id") or "") if isinstance(queued, dict) else ""
+        if not prompt_id:
+            raise base.StableAmdBridgeError("ComfyUI /prompt did not return a prompt_id for Krea 2.")
+        node_errors = queued.get("node_errors") if isinstance(queued, dict) else None
+        if isinstance(node_errors, dict) and node_errors:
+            raise base.StableAmdBridgeError(
+                "ComfyUI rejected the StableAMD Krea 2 workflow: " + json.dumps(node_errors, ensure_ascii=False)
+            )
+
+        deadline = time.monotonic() + 900
+        history_entry: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            history = self._comfy_json(f"history/{prompt_id}")
+            candidate = history.get(prompt_id) if isinstance(history, dict) else None
+            if isinstance(candidate, dict):
+                status = candidate.get("status") or {}
+                status_str = str(status.get("status_str") or "") if isinstance(status, dict) else ""
+                if status_str == "error":
+                    raise base.StableAmdBridgeError(
+                        "ComfyUI reported a Krea 2 execution error: " + json.dumps(status, ensure_ascii=False)
+                    )
+                if status_str == "success" or bool(status.get("completed")):
+                    history_entry = candidate
+                    break
+            time.sleep(0.25)
+        if history_entry is None:
+            raise base.StableAmdBridgeError(f"Krea 2 did not complete within 900 seconds. Prompt ID: {prompt_id}")
+
+        image_path = self._resolve_bundle_output(label, prompt_id, history_entry)
+        generation_seconds = round(time.monotonic() - started, 3)
+        model_id = str(model.get("id") or model.get("Id") or "")
+        model_name = str(model.get("name") or model.get("Name") or "Krea 2 Turbo (FP8)")
+        assets = {
+            "diffusion_model": [str(diffusion_path)],
+            "text_encoder": [str(encoder_path)],
+            "vae": [str(vae_path)],
+        }
+        record = {
+            "schemaVersion": 3,
+            "createdAtUtc": datetime.now(timezone.utc).isoformat(),
+            "promptId": prompt_id,
+            "mode": "txt2img",
+            "prompt": request["prompt"],
+            "negativePrompt": "",
+            "negativeConditioning": "zeroed-positive",
+            "modelId": model_id,
+            "modelName": model_name,
+            "modelPath": str(diffusion_path),
+            "family": "krea2",
+            "provider": "krea2-bundle",
+            "assetMode": "bundle",
+            "bundleAssets": assets,
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "cfg": cfg,
+            "seed": seed,
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "loraStack": [],
+            "generationSeconds": generation_seconds,
+            "imagePath": str(image_path),
+            "backendUrl": backend_url,
+        }
+        history_path = self._save_bundle_history(record)
+        return {
+            "PromptId": prompt_id,
+            "Mode": "txt2img",
+            "Prompt": record["prompt"],
+            "NegativePrompt": "",
+            "ModelId": model_id,
+            "ModelName": model_name,
+            "ModelPath": str(diffusion_path),
+            "Family": "krea2",
+            "Provider": "krea2-bundle",
+            "AssetMode": "bundle",
+            "BundleAssets": assets,
+            "Width": width,
+            "Height": height,
+            "Steps": steps,
+            "Cfg": cfg,
+            "Seed": seed,
+            "Sampler": sampler,
+            "Scheduler": scheduler,
+            "LoraStack": [],
+            "GenerationSeconds": generation_seconds,
+            "ImagePath": str(image_path),
+            "HistoryPath": str(history_path),
+            "BackendUrl": backend_url,
+        }
+
     def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
         # Keep the plain generation path identical to the target-machine-proven
         # 985845e4 behavior. In particular, do not call ComfyUI /free or force a
@@ -301,6 +502,15 @@ class PowerShellBridge(v03.PowerShellBridge):
         result["LoraModelStrength"] = enabled[0]["modelStrength"] if len(enabled) == 1 else None
         result["LoraClipStrength"] = 0.0 if len(enabled) == 1 else None
         return result
+
+    def generate(self, request: dict[str, Any]) -> Any:
+        selected = self._selected_product_model(request)
+        if selected is not None:
+            family = str(selected.get("family") or selected.get("Family") or "").lower()
+            asset_mode = str(selected.get("assetMode") or selected.get("AssetMode") or "checkpoint").lower()
+            if family == "krea2" and asset_mode == "bundle":
+                return self._generate_krea2_turbo(request, selected)
+        return super().generate(request)
 
 
 class StableAmdApi(v03.StableAmdApi):
@@ -373,9 +583,8 @@ class StableAmdApi(v03.StableAmdApi):
 
 
 # stableamd_v03_server already installs its API extension into the proven base
-# server. Replace only the bridge/API extension points so all existing v0.3
-# routes remain unchanged while Z-Image gains model-only LoRA execution and
-# outpaint results keep their Gallery source relationship.
+# server. Replace only the bridge/API extension points so existing v0.3 routes
+# remain unchanged while optional providers/features can be layered safely.
 base.PowerShellBridge = PowerShellBridge
 base.StableAmdApi = StableAmdApi
 
