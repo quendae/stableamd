@@ -2,6 +2,7 @@
   const upscaleState = {
     record: null,
     data: { root: "", models: [], diskModels: [], restartRecommended: false, recommendations: [] },
+    plan: null,
   };
 
   function installUpscaleStyles() {
@@ -14,10 +15,14 @@
       .upscale-card { width: min(620px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: auto; border: 1px solid var(--border, #303844); border-radius: 18px; background: var(--panel, #151b22); box-shadow: 0 24px 80px rgba(0,0,0,.45); padding: 20px; display: grid; gap: 16px; }
       .upscale-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
       .upscale-heading h2 { margin: 0; }
+      .upscale-choice-row { display:grid; grid-template-columns:110px minmax(0,1fr); gap:10px; }
+      .upscale-choice-row .field { margin:0; }
       .upscale-note { padding: 12px; border-radius: 12px; background: rgba(255,255,255,.035); }
       .upscale-note code { word-break: break-all; }
       .upscale-note ul { margin: 8px 0; padding-left: 22px; }
+      .upscale-note.is-error { color: var(--danger, #ef6f79); }
       .upscale-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+      @media (max-width:560px) { .upscale-choice-row { grid-template-columns:1fr; } }
     `;
     document.head.append(style);
   }
@@ -34,14 +39,24 @@
         <div class="upscale-heading">
           <div>
             <h2 id="upscale-title">Upscale image</h2>
-            <p class="history-model">Uses ComfyUI's stock model upscaler. No diffusion checkpoint is required.</p>
+            <p class="history-model">Classic local upscaling. StableAMD can chain small models to reach an exact target.</p>
           </div>
           <button class="button button-quiet" id="upscale-close" type="button" aria-label="Close upscale dialog">Close</button>
         </div>
-        <label class="field">
-          <span>Upscale model</span>
-          <select id="upscale-model"></select>
-        </label>
+        <div class="upscale-choice-row">
+          <label class="field">
+            <span>Target</span>
+            <select id="upscale-factor">
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+              <option value="8">8x</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Upscale model</span>
+            <select id="upscale-model"><option value="">Auto</option></select>
+          </label>
+        </div>
         <div class="upscale-note" id="upscale-model-note"></div>
         <div class="upscale-actions">
           <button class="button button-quiet" id="upscale-refresh-models" type="button">Check again</button>
@@ -53,6 +68,8 @@
     overlay.querySelector("#upscale-close").addEventListener("click", closeUpscale);
     overlay.querySelector("#upscale-cancel").addEventListener("click", closeUpscale);
     overlay.querySelector("#upscale-refresh-models").addEventListener("click", () => void refreshUpscaleModelsWithFeedback());
+    overlay.querySelector("#upscale-factor").addEventListener("change", () => void refreshUpscalePlan());
+    overlay.querySelector("#upscale-model").addEventListener("change", () => void refreshUpscalePlan());
     overlay.addEventListener("click", (event) => { if (event.target === overlay) closeUpscale(); });
     overlay.querySelector("#upscale-run").addEventListener("click", () => void runUpscale());
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !overlay.hidden) closeUpscale(); });
@@ -63,6 +80,35 @@
     const overlay = document.querySelector("#upscale-overlay");
     if (overlay) overlay.hidden = true;
     upscaleState.record = null;
+    upscaleState.plan = null;
+  }
+
+  async function refreshUpscalePlan() {
+    const note = document.querySelector("#upscale-model-note");
+    const run = document.querySelector("#upscale-run");
+    const models = Array.isArray(upscaleState.data?.models) ? upscaleState.data.models : [];
+    if (!note || !run || !models.length) return;
+    const factor = Number(document.querySelector("#upscale-factor")?.value || 2);
+    const modelName = document.querySelector("#upscale-model")?.value || "";
+    const payload = { factor };
+    if (modelName) payload.modelName = modelName;
+    note.classList.remove("is-error");
+    note.textContent = "Planning exact upscale chain…";
+    run.disabled = true;
+    try {
+      const plan = await api("/api/upscale/plan", { method: "POST", body: JSON.stringify(payload) });
+      upscaleState.plan = plan;
+      const chain = Array.isArray(plan?.chain) ? plan.chain : [];
+      const passes = Number(plan?.passes || chain.length || 0);
+      note.innerHTML = `<strong>${factor}x ready · ${passes} pass${passes === 1 ? "" : "es"}</strong><p></p>`;
+      note.querySelector("p").textContent = chain.join(" → ");
+      run.disabled = false;
+    } catch (error) {
+      upscaleState.plan = null;
+      note.classList.add("is-error");
+      note.textContent = error.message;
+      run.disabled = true;
+    }
   }
 
   function renderUpscaleModels() {
@@ -79,6 +125,7 @@
       empty.textContent = diskModels.length ? "Model file found, waiting for ComfyUI" : "No upscale models installed";
       select.append(empty);
       select.disabled = true;
+      document.querySelector("#upscale-factor").disabled = true;
       document.querySelector("#upscale-run").disabled = true;
       const root = String(upscaleState.data?.root || "");
 
@@ -97,20 +144,24 @@
         return;
       }
 
-      note.innerHTML = `<strong>No stock upscale model detected.</strong><p>Place a compatible model such as <b>4x-UltraSharp</b>, <b>RealESRGAN x4plus</b> or <b>RealESRGAN x2plus</b> in:</p><code></code><p>Then use Check again. SeedVR2 is a separate optional provider and is not enabled by this stock workflow.</p>`;
+      note.innerHTML = `<strong>No stock upscale model detected.</strong><p>Place a compatible model such as <b>4x-UltraSharp</b>, <b>RealESRGAN x4plus</b> or <b>RealESRGAN x2plus</b> in:</p><code></code><p>Then use Check again. SeedVR2 remains a separate optional provider.</p>`;
       note.querySelector("code").textContent = root || ".runtime/stableamd/models/upscale_models";
       return;
     }
 
     select.disabled = false;
-    document.querySelector("#upscale-run").disabled = false;
+    document.querySelector("#upscale-factor").disabled = false;
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = "Auto";
+    select.append(auto);
     for (const model of models) {
       const option = document.createElement("option");
       option.value = String(model);
       option.textContent = String(model);
       select.append(option);
     }
-    note.innerHTML = `<strong>${models.length} model${models.length === 1 ? "" : "s"} ready.</strong><p>The output scale is defined by the selected model (commonly x2 or x4). StableAMD saves the result as a new Gallery item.</p>`;
+    void refreshUpscalePlan();
   }
 
   async function refreshUpscaleModels() {
@@ -143,7 +194,9 @@
     installUpscaleStyles();
     const overlay = ensureUpscaleUi();
     upscaleState.record = record;
+    upscaleState.plan = null;
     overlay.hidden = false;
+    overlay.querySelector("#upscale-factor").value = "2";
     const select = overlay.querySelector("#upscale-model");
     select.disabled = true;
     select.replaceChildren(new Option("Loading models…", ""));
@@ -160,23 +213,27 @@
   async function runUpscale() {
     const record = upscaleState.record;
     const imagePath = String(getValue(record, "imagePath", "ImagePath") || "");
+    const factor = Number(document.querySelector("#upscale-factor")?.value || 2);
     const modelName = document.querySelector("#upscale-model")?.value || "";
-    if (!imagePath || !modelName) {
-      showToast("Choose an installed upscale model first.", "error");
+    if (!imagePath || ![2, 4, 8].includes(factor)) {
+      showToast("Choose a valid upscale target first.", "error");
       return;
     }
     const button = document.querySelector("#upscale-run");
     const oldText = button.textContent;
     button.disabled = true;
-    button.textContent = "Upscaling…";
+    button.textContent = `Upscaling ${factor}x…`;
     try {
+      const payload = { imagePath, factor };
+      if (modelName) payload.modelName = modelName;
       const result = await api("/api/upscale", {
         method: "POST",
-        body: JSON.stringify({ imagePath, modelName }),
+        body: JSON.stringify(payload),
       });
       closeUpscale();
-      showToast(`Upscale complete with ${getValue(result, "UpscaleModel", "upscaleModel") || modelName}.`, "success");
-      if (typeof refreshGallery === "function") await refreshGallery();
+      const passes = Number(getValue(result, "UpscalePasses", "upscalePasses") || 1);
+      showToast(`Upscale ${factor}x complete · ${passes} pass${passes === 1 ? "" : "es"}.`, "success");
+      if (typeof refreshHistory === "function") await refreshHistory();
       if (typeof setPage === "function") setPage("gallery");
     } catch (error) {
       showToast(`Upscale failed: ${error.message}`, "error");
