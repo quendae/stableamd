@@ -25,7 +25,7 @@ Describe 'StableAMD one-click launcher' {
         $script = Get-Content $launcherPath -Raw
 
         $script | Should -Match 'Start-StableAMD\.ps1'
-        $script | Should -Match 'stableamd_server\.py'
+        $script | Should -Match 'stableamd_v03_lora_server\.py'
         $script | Should -Match 'TheRockPython'
         $script | Should -Match '--host\s+127\.0\.0\.1'
         $script | Should -Match '/api/health'
@@ -88,6 +88,7 @@ Describe 'StableAMD one-click launcher' {
         $stop | Should -Match 'AppStatePath'
         $stop | Should -Match 'Get-CimInstance\s+Win32_Process'
         $stop | Should -Match 'stableamd_server'
+        $stop | Should -Match 'stableamd_v03_lora_server'
         $stop | Should -Match 'run_comfy_isolated'
         $stop | Should -Match 'taskkill\.exe'
         $stop | Should -Match '/T /F'
