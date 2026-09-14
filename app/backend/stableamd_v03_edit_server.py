@@ -17,7 +17,17 @@ import stableamd_v03_lora_server as features
 
 base = features.base
 
-ZIMAGE_FUN_PATCH = "Z-Image-Turbo-Fun-Controlnet-Union.safetensors"
+# The original Union patch is a control-only model. Although the pinned
+# ZImageFunControlnet node exposes optional inpaint_image/mask inputs, that old
+# model reports additional_in_dim == 0, so ComfyUI does not build an inpaint
+# latent and sampling eventually dereferences a None encoded image. Target the
+# official inpaint-capable 2.1 distilled Lite patch instead. The Lite build is
+# the deliberate RX 6950 XT / 16 GiB choice and keeps the same 8-step cadence
+# as the accepted Z-Image Turbo profile.
+ZIMAGE_FUN_PATCH = "Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors"
+ZIMAGE_FUN_LEGACY_PATCH = "Z-Image-Turbo-Fun-Controlnet-Union.safetensors"
+ZIMAGE_FUN_PATCH_SHA256 = "3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35"
+ZIMAGE_FUN_PATCH_BYTES = 2016627488
 
 
 class PowerShellBridge(features.PowerShellBridge):
@@ -25,7 +35,7 @@ class PowerShellBridge(features.PowerShellBridge):
 
     The base Z-Image txt2img/LoRA path remains in stableamd_v03_lora_server.
     Native Z-Image inpaint/outpaint is enabled only when ComfyUI actually
-    exposes the official Fun Control Union model patch.
+    exposes the official inpaint-capable Fun Control Union 2.1 model patch.
     """
 
     def _zimage_fun_patch_name(self, *, required: bool = False) -> str | None:
@@ -36,6 +46,7 @@ class PowerShellBridge(features.PowerShellBridge):
             choices = []
 
         target = ZIMAGE_FUN_PATCH.lower()
+        legacy = ZIMAGE_FUN_LEGACY_PATCH.lower()
         matches = [
             str(name)
             for name in choices
@@ -44,11 +55,20 @@ class PowerShellBridge(features.PowerShellBridge):
         if len(matches) == 1:
             return matches[0]
         if required:
+            legacy_present = any(
+                Path(str(name).replace("\\", "/")).name.lower() == legacy
+                for name in choices
+            )
             if not matches:
+                if legacy_present:
+                    raise base.StableAmdBridgeError(
+                        "The installed Z-Image-Turbo-Fun-Controlnet-Union.safetensors is the older control-only patch and cannot perform native inpaint. "
+                        f"Install '{ZIMAGE_FUN_PATCH}' from the official Alibaba PAI Union 2.1 repository and restart StableAMD."
+                    )
                 raise base.StableAmdBridgeError(
                     "Z-Image native inpaint/outpaint requires "
                     f"'{ZIMAGE_FUN_PATCH}' in a ComfyUI model_patches folder. "
-                    "Install the official Alibaba PAI Fun Control Union patch and restart StableAMD."
+                    "Install the official Alibaba PAI Fun Control Union 2.1 Lite 2602 8-step patch and restart StableAMD."
                 )
             raise base.StableAmdBridgeError(
                 f"ComfyUI exposes more than one '{ZIMAGE_FUN_PATCH}'. Keep a single unambiguous model patch."
@@ -98,8 +118,10 @@ class PowerShellBridge(features.PowerShellBridge):
     ) -> dict[str, Any]:
         # Pinned ComfyUI 40c4fcdf contains ModelPatchLoader +
         # ZImageFunControlnet with optional inpaint_image and mask inputs.
-        # LoadImage exposes PNG alpha as MASK (transparent -> 1). The native
-        # ZImageFunControlnet node performs the model-required mask inversion.
+        # The selected Union 2.1 patch is actually inpaint-capable
+        # (additional_in_dim > 0). LoadImage exposes PNG alpha as MASK
+        # (transparent -> 1); ZImageFunControlnet performs the model-required
+        # mask inversion internally.
         return {
             "28": {
                 "class_type": "UNETLoader",
