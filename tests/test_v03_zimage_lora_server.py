@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -117,6 +118,30 @@ class StableAmdV03ZImageLoraServerTests(unittest.TestCase):
         self.assertEqual(saved["loraName"], "z-image/style.safetensors")
         self.assertEqual(saved["loraModelStrength"], 0.8)
         self.assertEqual(saved["loraClipStrength"], 0.0)
+
+    def test_gallery_delete_accepts_legacy_pascal_case_history_records(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo_root = Path(temporary)
+            history_root = repo_root / ".runtime" / "stableamd" / "history"
+            output_root = repo_root / ".runtime" / "stableamd" / "output"
+            history_root.mkdir(parents=True)
+            output_root.mkdir(parents=True)
+
+            image = output_root / "legacy.png"
+            image.write_bytes(b"png")
+            record_path = history_root / "legacy.json"
+            record_path.write_text(
+                json.dumps({"PromptId": "legacy-prompt", "ImagePath": str(image)}),
+                encoding="utf-8",
+            )
+
+            bridge = lora_server.PowerShellBridge(repo_root, powershell=sys.executable)
+            result = bridge.delete_history("legacy-prompt")
+
+            self.assertTrue(result["deleted"])
+            self.assertTrue(result["imageDeleted"])
+            self.assertFalse(record_path.exists())
+            self.assertFalse(image.exists())
 
 
 if __name__ == "__main__":
