@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +18,7 @@ import stableamd_v03_edit_server as server
 
 class StableAmdV03Krea2LoraTests(unittest.TestCase):
     def test_official_model_only_chain_is_inserted_between_krea_unet_and_sampler(self):
-        bridge = server.PowerShellBridge(REPO_ROOT, powershell=sys.executable)
+        bridge = server.PowerShellBridge(REPO_ROOT, powershell="pwsh.exe")
         bridge._krea_lora_context.stack = [
             {"name": "krea2_darkbrush.safetensors", "modelStrength": 0.8, "clipStrength": 0.0, "enabled": True},
             {"name": "krea2_dotmatrix.safetensors", "modelStrength": 0.6, "clipStrength": 0.0, "enabled": True},
@@ -27,8 +28,13 @@ class StableAmdV03Krea2LoraTests(unittest.TestCase):
             "3": {"class_type": "KSampler", "inputs": {"model": ["10", 0]}},
         }
         parameters = [("Family", "krea2"), ("Mode", "txt2img")]
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout="__STABLEAMD_JSON__" + json.dumps(workflow, separators=(",", ":")) + "\n",
+            stderr="",
+        )
 
-        with patch.object(server.editing.PowerShellBridge, "_run_script", return_value=workflow):
+        with patch.object(server.subprocess, "run", return_value=completed):
             result = bridge._run_script("Build-StableAmdWorkflow.ps1", parameters)
 
         self.assertEqual(result["40"]["class_type"], "LoraLoaderModelOnly")
