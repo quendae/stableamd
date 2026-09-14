@@ -32,15 +32,35 @@ Describe 'StableAMD v0.3 post-generation gallery actions' {
         $frontend | Should -Match 'setPage\("generate"\)'
     }
 
-    It 'provides an outpaint expansion shell using the existing inpaint editor' {
+    It 'prefers the source model when it supports the requested editing capability' {
+        $frontend = Get-Content $frontendPath -Raw
+
+        $frontend | Should -Match '/api/model-support'
+        $frontend | Should -Match 'capabilitySupported'
+        $frontend | Should -Match 'usedSourceModel'
+        $frontend | Should -Match 'selectEditingModel\(record, "inpaint"\)'
+        $frontend | Should -Match 'selectEditingModel\(record, "img2img"\)'
+    }
+
+    It 'provides a feathered outpaint expansion mask using the existing inpaint editor' {
         $frontend = Get-Content $frontendPath -Raw
 
         $frontend | Should -Match 'outpaint-left'
         $frontend | Should -Match 'outpaint-right'
         $frontend | Should -Match 'outpaint-top'
         $frontend | Should -Match 'outpaint-bottom'
+        $frontend | Should -Match 'outpaint-blend'
+        $frontend | Should -Match 'Blend overlap'
+        $frontend | Should -Match 'paintOutpaintMask'
+        $frontend | Should -Match 'createImageData'
         $frontend | Should -Match 'prepareOutpaintSource'
-        $frontend | Should -Match 'canvas'
+        $frontend | Should -Match 'feathered blend zone'
+    }
+
+    It 'restores the source prompt before editing' {
+        $frontend = Get-Content $frontendPath -Raw
+        $frontend | Should -Match 'restoreSourcePrompt'
+        $frontend | Should -Match 'getValue\(record, "prompt", "Prompt"\)'
     }
 
     It 'dispatches a generated-image handoff event for extension points' {
