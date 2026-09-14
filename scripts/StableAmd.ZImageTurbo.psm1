@@ -41,11 +41,6 @@ function New-StableAmdZImageTurboWorkflow {
     # Z-Image Turbo uses Lumina2 text conditioning, an SD3 latent layout and
     # AuraFlow model sampling with shift=3. Keep the large text encoder on CPU
     # so the diffusion model can use the RX 6950 XT VRAM during sampling.
-    #
-    # The Windows ROCm/gfx1030 path uses tiled VAE decode as a stability guard.
-    # A full-frame CPU VAEDecode has intermittently crashed in ComfyUI's split
-    # attention torch.bmm path even after successful sampling. 512px tiles keep
-    # the same VAE and image dimensions while bounding the attention workspace.
     return [ordered]@{
         '28' = [ordered]@{
             class_type = 'UNETLoader'
@@ -112,14 +107,10 @@ function New-StableAmdZImageTurboWorkflow {
             }
         }
         '8' = [ordered]@{
-            class_type = 'VAEDecodeTiled'
+            class_type = 'VAEDecode'
             inputs = [ordered]@{
                 samples = @('3', 0)
                 vae = @('29', 0)
-                tile_size = 512
-                overlap = 64
-                temporal_size = 64
-                temporal_overlap = 8
             }
         }
         '9' = [ordered]@{
