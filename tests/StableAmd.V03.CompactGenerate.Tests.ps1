@@ -36,6 +36,17 @@ Describe 'StableAMD v0.3 compact Generate workspace' {
         $styles | Should -Match 'grid-template-columns'
     }
 
+    It 'does not advertise theoretical generation modes before model capabilities are known' {
+        $compact = Get-Content $compactPath -Raw
+        $compact | Should -Match '/api/model-support'
+        $compact | Should -Match 'data-stableamd-mode-placeholder'
+        $compact | Should -Match 'Select a model first'
+        $compact | Should -Match 'Loading model capabilities'
+        $compact | Should -Match "capabilities\[option\.value\] === 'supported'"
+        $compact | Should -Match 'option\.hidden = !supported'
+        $compact | Should -Match 'select\.disabled = true'
+    }
+
     It 'keeps Size and Ratio side by side and hides the model capability description in Generate' {
         $compact = Get-Content $compactPath -Raw
         $styles = Get-Content $compactStylesPath -Raw
@@ -53,6 +64,7 @@ Describe 'StableAMD v0.3 compact Generate workspace' {
         $compact | Should -Match 'data-lora-clip-override'
         $compact | Should -Match "'Strength'"
         $compact | Should -Match 'CLIP override'
+        $compact | Should -Match 'Z-Image LoRAs patch the diffusion model only'
     }
 
     It 'makes the negative prompt capability-aware and actually hides it outside SDXL' {
