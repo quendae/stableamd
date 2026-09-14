@@ -7,6 +7,7 @@ Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1')
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Img2Img.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Inpaint.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.ZImageTurbo.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Krea2.psm1') -Force
 
 function Get-StableAmdLoraValue {
     [CmdletBinding()]
@@ -278,6 +279,32 @@ function New-StableAmdWorkflow {
         }
 
         return Add-StableAmdModelOnlyLoraStackToWorkflow -Workflow $workflow -LoraStack $resolvedStack
+    }
+
+    if ($normalizedFamily -eq 'krea2' -and $normalizedMode -eq 'txt2img') {
+        if (@($LoraStack).Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($LoraName)) {
+            throw 'Krea 2 LoRA execution is not enabled in StableAMD yet.'
+        }
+
+        $kSteps = if ($PSBoundParameters.ContainsKey('Steps')) { $Steps } else { 8 }
+        $kCfg = if ($PSBoundParameters.ContainsKey('Cfg')) { $Cfg } else { 1.0 }
+        $kSampler = if ($PSBoundParameters.ContainsKey('SamplerName')) { $SamplerName } else { 'euler' }
+        $kScheduler = if ($PSBoundParameters.ContainsKey('Scheduler')) { $Scheduler } else { 'simple' }
+        $kPrefix = if ($PSBoundParameters.ContainsKey('FilenamePrefix')) { $FilenamePrefix } else { 'StableAMD_KREA2_TURBO' }
+
+        return New-StableAmdKrea2Workflow `
+            -DiffusionModelName $DiffusionModelName `
+            -TextEncoderName $TextEncoderName `
+            -VaeName $VaeName `
+            -Prompt $Prompt `
+            -Width $Width `
+            -Height $Height `
+            -Steps $kSteps `
+            -Cfg $kCfg `
+            -Seed $Seed `
+            -SamplerName $kSampler `
+            -Scheduler $kScheduler `
+            -FilenamePrefix $kPrefix
     }
 
     throw "StableAMD workflow provider is not implemented for family '$normalizedFamily' and mode '$normalizedMode'."
