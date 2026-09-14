@@ -2,6 +2,7 @@
   const upscaleState = {
     record: null,
     data: { root: "", models: [], diskModels: [], restartRecommended: false, recommendations: [] },
+    catalog: { root: "", models: [] },
     plan: null,
   };
 
@@ -12,7 +13,7 @@
     style.textContent = `
       .upscale-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 20px; background: rgba(4, 8, 12, .72); backdrop-filter: blur(6px); }
       .upscale-overlay[hidden] { display: none; }
-      .upscale-card { width: min(620px, 100%); max-height: min(760px, calc(100vh - 40px)); overflow: auto; border: 1px solid var(--border, #303844); border-radius: 18px; background: var(--panel, #151b22); box-shadow: 0 24px 80px rgba(0,0,0,.45); padding: 20px; display: grid; gap: 16px; }
+      .upscale-card { width: min(700px, 100%); max-height: min(820px, calc(100vh - 40px)); overflow: auto; border: 1px solid var(--border, #303844); border-radius: 18px; background: var(--panel, #151b22); box-shadow: 0 24px 80px rgba(0,0,0,.45); padding: 20px; display: grid; gap: 16px; }
       .upscale-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
       .upscale-heading h2 { margin: 0; }
       .upscale-choice-row { display:grid; grid-template-columns:110px minmax(0,1fr); gap:10px; }
@@ -22,7 +23,18 @@
       .upscale-note ul { margin: 8px 0; padding-left: 22px; }
       .upscale-note.is-error { color: var(--danger, #ef6f79); }
       .upscale-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-      @media (max-width:560px) { .upscale-choice-row { grid-template-columns:1fr; } }
+      .upscale-catalog { display:grid; gap:10px; padding-top:4px; }
+      .upscale-catalog-heading { display:flex; justify-content:space-between; gap:12px; align-items:end; }
+      .upscale-catalog-heading strong { font-size:14px; }
+      .upscale-catalog-heading small { color:#9da9b7; }
+      .upscale-install-list { display:grid; gap:8px; }
+      .upscale-install-card { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; border:1px solid var(--border, #303844); border-radius:12px; padding:11px 12px; background:rgba(255,255,255,.025); }
+      .upscale-install-name { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-weight:650; }
+      .upscale-install-meta { margin-top:3px; font-size:12px; color:#9da9b7; line-height:1.4; }
+      .upscale-license-warning { color:var(--warning, #e6b85c); font-weight:650; }
+      .upscale-ready { color:var(--success, #74c991); font-weight:650; }
+      .upscale-catalog-error { color:var(--danger, #ef6f79); }
+      @media (max-width:560px) { .upscale-choice-row { grid-template-columns:1fr; } .upscale-install-card { grid-template-columns:1fr; } }
     `;
     document.head.append(style);
   }
@@ -58,6 +70,12 @@
           </label>
         </div>
         <div class="upscale-note" id="upscale-model-note"></div>
+        <div class="upscale-catalog">
+          <div class="upscale-catalog-heading">
+            <div><strong>Curated models</strong><br><small>Verified download + checksum, installed into StableAMD's managed folder.</small></div>
+          </div>
+          <div class="upscale-install-list" id="upscale-install-list"><div class="history-model">Loading curated models…</div></div>
+        </div>
         <div class="upscale-actions">
           <button class="button button-quiet" id="upscale-refresh-models" type="button">Check again</button>
           <button class="button button-quiet" id="upscale-cancel" type="button">Cancel</button>
@@ -81,6 +99,12 @@
     if (overlay) overlay.hidden = true;
     upscaleState.record = null;
     upscaleState.plan = null;
+  }
+
+  function formatBytes(value) {
+    const bytes = Number(value || 0);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "";
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
   }
 
   async function refreshUpscalePlan() {
@@ -130,7 +154,7 @@
       const root = String(upscaleState.data?.root || "");
 
       if (diskModels.length) {
-        note.innerHTML = `<strong>Model file found on disk, but ComfyUI has not registered it yet.</strong><p>The file is in the correct StableAMD folder, so do not download or move it again.</p><ul></ul><p class="upscale-registration-hint"></p><code></code>`;
+        note.innerHTML = `<strong>Model file found on disk, but ComfyUI has not registered it yet.</strong><p>The file is in the correct StableAMD folder.</p><ul></ul><p class="upscale-registration-hint"></p><code></code>`;
         const list = note.querySelector("ul");
         for (const model of diskModels) {
           const item = document.createElement("li");
@@ -138,13 +162,13 @@
           list.append(item);
         }
         note.querySelector(".upscale-registration-hint").textContent = restartRecommended
-          ? "A full compute-backend restart is recommended so ComfyUI reloads the upscale_models search path. After restart, use Check again."
+          ? "Use Activate below or restart the compute backend so ComfyUI reloads the upscale_models search path."
           : "Use Check again after ComfyUI refreshes its model list.";
         note.querySelector("code").textContent = root || ".runtime/stableamd/models/upscale_models";
         return;
       }
 
-      note.innerHTML = `<strong>No stock upscale model detected.</strong><p>Place a compatible model such as <b>4x-UltraSharp</b>, <b>RealESRGAN x4plus</b> or <b>RealESRGAN x2plus</b> in:</p><code></code><p>Then use Check again. SeedVR2 remains a separate optional provider.</p>`;
+      note.innerHTML = `<strong>No classic upscale model is ready.</strong><p>Install a verified model below. StableAMD will place it in the managed folder and can restart the compute backend to activate it.</p><code></code>`;
       note.querySelector("code").textContent = root || ".runtime/stableamd/models/upscale_models";
       return;
     }
@@ -164,9 +188,87 @@
     void refreshUpscalePlan();
   }
 
+  function renderCuratedCatalog() {
+    const root = document.querySelector("#upscale-install-list");
+    if (!root) return;
+    root.replaceChildren();
+    const models = Array.isArray(upscaleState.catalog?.models) ? upscaleState.catalog.models : [];
+    if (!models.length) {
+      const empty = document.createElement("div");
+      empty.className = "upscale-catalog-error";
+      empty.textContent = "Curated model catalog is unavailable.";
+      root.append(empty);
+      return;
+    }
+
+    for (const model of models) {
+      const card = document.createElement("div");
+      card.className = "upscale-install-card";
+      const info = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "upscale-install-name";
+      name.textContent = `${model.name} · native ${model.nativeScale}x`;
+      if (model.ready) {
+        const ready = document.createElement("span");
+        ready.className = "upscale-ready";
+        ready.textContent = "Ready";
+        name.append(" ", ready);
+      }
+      const meta = document.createElement("div");
+      meta.className = "upscale-install-meta";
+      const details = [model.purpose, formatBytes(model.sizeBytes), model.license].filter(Boolean).join(" · ");
+      meta.textContent = details;
+      if (model.nonCommercial) {
+        const warning = document.createElement("div");
+        warning.className = "upscale-license-warning";
+        warning.textContent = "Non-commercial license — CC BY-NC-SA 4.0.";
+        meta.append(document.createElement("br"), warning);
+      }
+      if (model.homepage) {
+        const link = document.createElement("a");
+        link.href = model.homepage;
+        link.target = "_blank";
+        link.rel = "noreferrer noopener";
+        link.textContent = "Source / license";
+        meta.append(document.createTextNode(" · "), link);
+      }
+      info.append(name, meta);
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = model.ready ? "button button-quiet" : "button button-secondary";
+      button.disabled = Boolean(model.ready);
+      button.textContent = model.ready ? "Ready" : (model.installedOnDisk ? "Activate" : "Install & activate");
+      button.addEventListener("click", () => void installAndActivateCurated(model, button));
+      card.append(info, button);
+      root.append(card);
+    }
+  }
+
+  async function refreshCuratedCatalog() {
+    upscaleState.catalog = await api("/api/upscale-models/catalog");
+    renderCuratedCatalog();
+  }
+
   async function refreshUpscaleModels() {
     upscaleState.data = await api("/api/upscale-models");
     renderUpscaleModels();
+  }
+
+  async function refreshEverything() {
+    await refreshUpscaleModels();
+    try {
+      await refreshCuratedCatalog();
+    } catch (error) {
+      const root = document.querySelector("#upscale-install-list");
+      if (root) {
+        root.innerHTML = "";
+        const message = document.createElement("div");
+        message.className = "upscale-catalog-error";
+        message.textContent = `Curated model catalog unavailable: ${error.message}`;
+        root.append(message);
+      }
+    }
   }
 
   async function refreshUpscaleModelsWithFeedback() {
@@ -177,7 +279,7 @@
       button.textContent = "Checking…";
     }
     try {
-      await refreshUpscaleModels();
+      await refreshEverything();
       const ready = Array.isArray(upscaleState.data?.models) ? upscaleState.data.models.length : 0;
       if (ready) showToast(`${ready} upscale model${ready === 1 ? "" : "s"} ready.`, "success");
     } catch (error) {
@@ -187,6 +289,45 @@
         button.disabled = false;
         button.textContent = oldText;
       }
+    }
+  }
+
+  async function installAndActivateCurated(model, button) {
+    const oldText = button.textContent;
+    button.disabled = true;
+    try {
+      let result = { restartRequired: Boolean(model.installedOnDisk && !model.ready), filename: model.filename };
+      if (!model.installedOnDisk) {
+        button.textContent = "Downloading…";
+        result = await api("/api/upscale-models/install", {
+          method: "POST",
+          body: JSON.stringify({ id: model.id }),
+        });
+      }
+
+      if (result?.restartRequired || !result?.ready) {
+        button.textContent = "Activating…";
+        showToast(`${model.name} installed. Restarting the compute backend to activate it…`, "success");
+        await api("/api/backend/restart", { method: "POST", body: "{}" });
+      }
+
+      button.textContent = "Checking…";
+      await refreshEverything();
+      const refreshed = (upscaleState.catalog?.models || []).find((item) => item.id === model.id);
+      if (refreshed?.ready) {
+        const select = document.querySelector("#upscale-model");
+        if (select && Array.from(select.options).some((option) => option.value === refreshed.filename)) {
+          select.value = refreshed.filename;
+          await refreshUpscalePlan();
+        }
+        showToast(`${model.name} is ready.`, "success");
+      } else {
+        showToast(`${model.name} is installed, but ComfyUI has not registered it yet.`, "error");
+      }
+    } catch (error) {
+      showToast(`Upscaler install failed: ${error.message}`, "error");
+      button.disabled = false;
+      button.textContent = oldText;
     }
   }
 
@@ -202,8 +343,9 @@
     select.replaceChildren(new Option("Loading models…", ""));
     overlay.querySelector("#upscale-run").disabled = true;
     overlay.querySelector("#upscale-model-note").textContent = "Querying the managed ComfyUI backend…";
+    overlay.querySelector("#upscale-install-list").innerHTML = '<div class="history-model">Loading curated models…</div>';
     try {
-      await refreshUpscaleModels();
+      await refreshEverything();
     } catch (error) {
       overlay.querySelector("#upscale-model-note").textContent = `Upscale models unavailable: ${error.message}`;
       showToast(`Upscale models unavailable: ${error.message}`, "error");
