@@ -31,16 +31,52 @@ function New-StableAmdTemplateComponent {
         [Parameter(Mandatory = $true)][string]$Role,
         [Parameter(Mandatory = $true)][string]$Label,
         [Parameter(Mandatory = $true)][string]$ExpectedName,
-        [AllowNull()][string]$Path
+        [AllowNull()][string]$Path,
+        [Int64]$ExpectedBytes = 0,
+        [string]$ExpectedSha256 = ''
     )
 
-    $present = -not [string]::IsNullOrWhiteSpace($Path)
+    $found = -not [string]::IsNullOrWhiteSpace($Path)
+    $resolvedPath = if ($found) { [IO.Path]::GetFullPath($Path) } else { $null }
+    $actualBytes = $null
+    $sizeValid = $true
+    if ($found) {
+        try {
+            $actualBytes = [Int64](Get-Item -LiteralPath $resolvedPath -ErrorAction Stop).Length
+        }
+        catch {
+            $found = $false
+            $resolvedPath = $null
+        }
+    }
+    if ($found -and $ExpectedBytes -gt 0) {
+        $sizeValid = $actualBytes -eq $ExpectedBytes
+    }
+
+    # For official very-large packages, a byte-length mismatch is a cheap and
+    # reliable signal that a browser/Xet/LFS download is incomplete. Do not hash
+    # multi-gigabyte assets on every model refresh; the pinned SHA is exposed as
+    # metadata for explicit/manual verification when needed.
+    $usable = $found -and $sizeValid
+    $displayLabel = $Label
+    $problem = $null
+    if ($found -and -not $sizeValid) {
+        $displayLabel = "$Label · incomplete/corrupt file"
+        $problem = "Found $actualBytes bytes; expected $ExpectedBytes bytes. Re-download $ExpectedName."
+    }
+
     return [pscustomobject]@{
         role = $Role
-        label = $Label
+        label = $displayLabel
         expectedName = $ExpectedName
-        path = if ($present) { [IO.Path]::GetFullPath($Path) } else { $null }
-        present = $present
+        path = $resolvedPath
+        present = $usable
+        found = $found
+        actualBytes = $actualBytes
+        expectedBytes = if ($ExpectedBytes -gt 0) { $ExpectedBytes } else { $null }
+        expectedSha256 = if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) { $null } else { $ExpectedSha256.ToLowerInvariant() }
+        integrity = if (-not $found) { 'missing' } elseif ($sizeValid) { 'size-ok' } else { 'size-mismatch' }
+        problem = $problem
     }
 }
 
@@ -97,13 +133,16 @@ function Find-StableAmdTemplatePackages {
     # Official ComfyUI Krea-2 Turbo package. FP8 is the first StableAMD target
     # because it is the realistic fit for a 16 GiB Radeon. RAW/BF16 can be
     # added as separate logical packages after the Turbo path is target-tested.
+    # Byte lengths and SHA-256 values are pinned from Comfy-Org/Krea-2. The
+    # scanner checks length immediately, while SHA remains available for an
+    # explicit integrity check without re-hashing ~18.6 GB on every refresh.
     $kDiffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'krea2_turbo_fp8_scaled.safetensors'
     $kEncoder = Find-StableAmdTemplateAsset -Roots $TextEncoderRoots -FileName 'qwen3vl_4b_fp8_scaled.safetensors'
     $kVae = Find-StableAmdTemplateAsset -Roots $VaeRoots -FileName 'qwen_image_vae.safetensors'
     $kComponents = @(
-        New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model (FP8)' -ExpectedName 'krea2_turbo_fp8_scaled.safetensors' -Path $kDiffusion
-        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Qwen3-VL text encoder (FP8)' -ExpectedName 'qwen3vl_4b_fp8_scaled.safetensors' -Path $kEncoder
-        New-StableAmdTemplateComponent -Role 'vae' -Label 'Qwen Image VAE' -ExpectedName 'qwen_image_vae.safetensors' -Path $kVae
+        New-StableAmdTemplateComponent -Role 'diffusion_model' -Label 'Diffusion model (FP8)' -ExpectedName 'krea2_turbo_fp8_scaled.safetensors' -Path $kDiffusion -ExpectedBytes 13141730784 -ExpectedSha256 'eb4dd8c612cfd10f64f25b057e6e6bbcb5737c94a7372177e456dbf7579502f1'
+        New-StableAmdTemplateComponent -Role 'text_encoder' -Label 'Qwen3-VL text encoder (FP8)' -ExpectedName 'qwen3vl_4b_fp8_scaled.safetensors' -Path $kEncoder -ExpectedBytes 5242467968 -ExpectedSha256 '54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094'
+        New-StableAmdTemplateComponent -Role 'vae' -Label 'Qwen Image VAE' -ExpectedName 'qwen_image_vae.safetensors' -Path $kVae -ExpectedBytes 253806246 -ExpectedSha256 'a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f'
     )
 
     return @(
