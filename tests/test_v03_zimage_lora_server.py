@@ -119,39 +119,15 @@ class StableAmdV03ZImageLoraServerTests(unittest.TestCase):
         self.assertEqual(saved["loraModelStrength"], 0.8)
         self.assertEqual(saved["loraClipStrength"], 0.0)
 
-    def test_changed_lora_stack_requests_full_comfy_memory_release(self):
-        first = [{"name": "z-image/style.safetensors", "modelStrength": 0.8, "enabled": True}]
-        second = [
-            {"name": "z-image/style.safetensors", "modelStrength": 0.8, "enabled": True},
-            {"name": "z-image/detail.safetensors", "modelStrength": 0.6, "enabled": True},
-        ]
+    def test_plain_zimage_generation_delegates_without_memory_guard(self):
+        request = {"modelId": "bnd_zimage", "prompt": "test", "loraStack": []}
+        with patch.object(v03.PowerShellBridge, "_generate_zimage_turbo", return_value={"ok": True}) as delegated:
+            result = self.bridge._generate_zimage_turbo(request, ZIMAGE)
 
-        with patch.object(self.bridge, "_release_comfy_memory") as release:
-            self.bridge._prepare_zimage_memory(first)
-            release.assert_not_called()
-            self.bridge._prepare_zimage_memory(second)
-
-        release.assert_called_once()
-        self.assertIn("LoRA stack changed", release.call_args.args[0])
-
-    def test_postprocessing_marks_resident_graph_dirty_for_next_zimage(self):
-        with patch.object(v03.PowerShellBridge, "upscale", return_value={"ok": True}) as delegated:
-            result = self.bridge.upscale({"imagePath": "x", "factor": 2})
-        self.assertEqual(result, {"ok": True})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["LoraStack"], [])
+        self.assertEqual(result["LoraName"], "")
         delegated.assert_called_once()
-        self.assertTrue(self.bridge._zimage_memory_dirty)
-
-    def test_dirty_graph_releases_memory_even_when_lora_stack_is_unchanged(self):
-        stack = [{"name": "z-image/style.safetensors", "modelStrength": 0.8, "enabled": True}]
-        self.bridge._prepare_zimage_memory(stack)
-        self.bridge._zimage_memory_dirty = True
-
-        with patch.object(self.bridge, "_release_comfy_memory") as release:
-            self.bridge._prepare_zimage_memory(stack)
-
-        release.assert_called_once()
-        self.assertIn("post-processing", release.call_args.args[0])
-        self.assertFalse(self.bridge._zimage_memory_dirty)
 
     def test_gallery_history_is_read_directly_and_skips_broken_records(self):
         with tempfile.TemporaryDirectory() as temporary:
