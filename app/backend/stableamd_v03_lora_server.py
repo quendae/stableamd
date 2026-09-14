@@ -14,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_v03_server as v03
+from curated_upscalers import CuratedUpscalerError, install_curated_upscaler, public_catalog
 
 base = v03.base
 
@@ -43,6 +44,31 @@ class PowerShellBridge(v03.PowerShellBridge):
         if not isinstance(options, list):
             return []
         return [str(value) for value in options if str(value).strip()]
+
+    def _registered_upscale_models(self) -> list[str]:
+        try:
+            info = self._comfy_json("object_info/UpscaleModelLoader")
+        except base.StableAmdBridgeError:
+            return []
+        return self._combo_choices(info, "UpscaleModelLoader", "model_name")
+
+    def curated_upscalers(self) -> dict[str, Any]:
+        root = (self.repo_root / ".runtime" / "stableamd" / "models" / "upscale_models").resolve()
+        try:
+            models = public_catalog(self.repo_root, self._registered_upscale_models())
+        except CuratedUpscalerError as exc:
+            raise base.StableAmdBridgeError(str(exc)) from exc
+        return {"root": str(root), "models": models}
+
+    def install_curated_upscaler(self, model_id: str) -> dict[str, Any]:
+        try:
+            return install_curated_upscaler(
+                self.repo_root,
+                model_id,
+                registered_models=self._registered_upscale_models(),
+            )
+        except CuratedUpscalerError as exc:
+            raise base.StableAmdBridgeError(str(exc)) from exc
 
     def _resolve_zimage_loras(self, request: dict[str, Any]) -> list[dict[str, Any]]:
         stack = request.get("loraStack")
@@ -279,6 +305,7 @@ class PowerShellBridge(v03.PowerShellBridge):
 
 class StableAmdApi(v03.StableAmdApi):
     _generation_fields = set(v03.StableAmdApi._generation_fields) | {"editContext"}
+    _curated_upscaler_install_fields = {"id"}
 
     @staticmethod
     def _validate_edit_context(value: Any) -> None:
@@ -322,6 +349,27 @@ class StableAmdApi(v03.StableAmdApi):
                 raise ValueError("editContext is valid only for inpaint/outpaint generation.")
             self._validate_edit_context(validated["editContext"])
         return validated
+
+    def _validate_curated_upscaler_install(self, request: dict[str, Any]) -> str:
+        unsupported = sorted(set(request) - self._curated_upscaler_install_fields)
+        if unsupported:
+            raise ValueError("Unsupported curated upscaler install field(s): " + ", ".join(unsupported))
+        model_id = request.get("id")
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("Curated upscaler id is required.")
+        return model_id.strip()
+
+    def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
+        path = target.split("?", 1)[0]
+        try:
+            if method == "GET" and path == "/api/upscale-models/catalog":
+                return 200, self.bridge.curated_upscalers()
+            if method == "POST" and path == "/api/upscale-models/install":
+                model_id = self._validate_curated_upscaler_install(self._decode_json(body))
+                return 200, self.bridge.install_curated_upscaler(model_id)
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        return super().dispatch(method, target, body)
 
 
 # stableamd_v03_server already installs its API extension into the proven base
