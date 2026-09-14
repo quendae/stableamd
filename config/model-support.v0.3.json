@@ -105,12 +105,18 @@
       "provider": "z-image-turbo-bundle",
       "assetMode": "bundle",
       "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "loraPolicy": {
+        "orderedStack": true,
+        "maxStack": 8,
+        "perEntryModelStrength": true,
+        "perEntryClipStrength": false
+      },
       "capabilities": {
         "txt2img": "supported",
         "img2img": "planned",
         "inpaint": "planned",
         "controlnet": "planned",
-        "lora": "planned"
+        "lora": "supported"
       }
     },
     "flux": {
