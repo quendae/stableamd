@@ -24,4 +24,14 @@ Describe 'StableAMD v0.3 outpaint source context' {
         }
         $frontend | Should -Match 'stableamd-outpaint\\\.png'
     }
+
+    It 'uses full outpaint denoise and a blurred source-derived latent seed instead of a blank neutral canvas' {
+        $frontend = Get-Content $contextPath -Raw
+        $frontend | Should -Match 'inpaint-denoise'
+        $frontend | Should -Match 'denoise\.value\s*=\s*"1"'
+        $frontend | Should -Match 'outpaintLatentSeed'
+        $frontend | Should -Match 'blurred-edge'
+        $frontend | Should -Match 'ctx\.filter\s*=\s*`blur\('
+        $frontend | Should -Match 'ctx\.drawImage\(source, left, top\)'
+    }
 }
