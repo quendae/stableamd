@@ -31,6 +31,33 @@ if ($AppStartupTimeoutSeconds -lt 5) {
     throw 'Application startup timeout must be at least 5 seconds.'
 }
 
+# The accepted RX 6950 XT / 16 GiB profile is now the normal desktop default.
+# Any explicit memory/cache switch opts out of these defaults so diagnostic
+# launch combinations remain available from the command line.
+$hasExplicitMemoryProfile = $false
+foreach ($parameterName in @('DisableDynamicVram', 'LowVram', 'HighVram', 'CacheClassic', 'CacheNone')) {
+    if ($PSBoundParameters.ContainsKey($parameterName)) {
+        $hasExplicitMemoryProfile = $true
+        break
+    }
+}
+$resolvedDisableDynamicVram = [bool]$DisableDynamicVram
+$resolvedLowVram = [bool]$LowVram
+$resolvedHighVram = [bool]$HighVram
+$resolvedCacheClassic = [bool]$CacheClassic
+$resolvedCacheNone = [bool]$CacheNone
+if (-not $hasExplicitMemoryProfile) {
+    $resolvedDisableDynamicVram = $true
+    $resolvedLowVram = $true
+    $resolvedCacheClassic = $true
+}
+if ($resolvedLowVram -and $resolvedHighVram) {
+    throw 'LowVram and HighVram cannot be enabled together.'
+}
+if ($resolvedCacheClassic -and $resolvedCacheNone) {
+    throw 'CacheClassic and CacheNone cannot be enabled together.'
+}
+
 $runtimeModule = Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1'
 if (-not (Test-Path $runtimeModule -PathType Leaf)) {
     throw "StableAMD runtime module is missing: '$runtimeModule'."
@@ -184,26 +211,29 @@ namespace StableAmd {
 
 Write-Host ''
 Write-Host 'StableAMD v0.3' -ForegroundColor Cyan
+if (-not $hasExplicitMemoryProfile) {
+    Write-Host 'Using default RX 6950 XT / 16 GiB profile: DisableDynamicVRAM + LowVRAM + CacheClassic.' -ForegroundColor DarkCyan
+}
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
 $backendParams = @{ RepoRoot = $RepoRoot }
-if ($DisableDynamicVram) {
-    Write-Host 'Diagnostic memory mode: ComfyUI DynamicVRAM disabled.' -ForegroundColor Yellow
+if ($resolvedDisableDynamicVram) {
+    Write-Host 'Memory mode: ComfyUI DynamicVRAM disabled.' -ForegroundColor Yellow
     $backendParams.DisableDynamicVram = $true
 }
-if ($LowVram) {
-    Write-Host 'Diagnostic memory mode: ComfyUI lowvram enabled.' -ForegroundColor Yellow
+if ($resolvedLowVram) {
+    Write-Host 'Memory mode: ComfyUI lowvram enabled.' -ForegroundColor Yellow
     $backendParams.LowVram = $true
 }
-if ($HighVram) {
-    Write-Host 'Diagnostic memory mode: ComfyUI highvram enabled.' -ForegroundColor Yellow
+if ($resolvedHighVram) {
+    Write-Host 'Memory mode: ComfyUI highvram enabled.' -ForegroundColor Yellow
     $backendParams.HighVram = $true
 }
-if ($CacheClassic) {
-    Write-Host 'Diagnostic memory mode: ComfyUI classic cache enabled.' -ForegroundColor Yellow
+if ($resolvedCacheClassic) {
+    Write-Host 'Memory mode: ComfyUI classic cache enabled.' -ForegroundColor Yellow
     $backendParams.CacheClassic = $true
 }
-if ($CacheNone) {
-    Write-Host 'Diagnostic memory mode: ComfyUI RAM pressure cache disabled.' -ForegroundColor Yellow
+if ($resolvedCacheNone) {
+    Write-Host 'Memory mode: ComfyUI RAM pressure cache disabled.' -ForegroundColor Yellow
     $backendParams.CacheNone = $true
 }
 $backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') @backendParams
@@ -250,6 +280,7 @@ else {
         -RedirectStandardError $stderrPath `
         -WindowStyle Hidden `
         -PassThru
+    Write-Host "Application process started with managed PID $($appProcess.Id)." -ForegroundColor DarkCyan
 
     $deadline = (Get-Date).AddSeconds($AppStartupTimeoutSeconds)
     $health = $null
@@ -274,6 +305,13 @@ else {
 
         if ($null -ne $appProcess -and -not $appProcess.HasExited) {
             Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host 'Startup failed; cleaning up only StableAMD-managed processes and releasing VRAM...' -ForegroundColor Yellow
+        try {
+            & (Join-Path $PSScriptRoot 'Stop-StableAMD.ps1') -RepoRoot $RepoRoot | Out-Null
+        }
+        catch {
+            Write-Warning "StableAMD failed-start cleanup reported: $($_.Exception.Message)"
         }
         throw "StableAMD application did not become healthy at '$healthUrl' within $AppStartupTimeoutSeconds seconds."
     }
@@ -304,6 +342,8 @@ $result = [pscustomobject]@{
     Url = $appUrl
     HealthUrl = $healthUrl
     ProcessId = if ($null -ne $appProcess) { $appProcess.Id } elseif ($null -ne $appState) { $appState.pid } else { $null }
+    BackendPid = [int]$backendStatus.Pid
+    AppPid = if ($null -ne $appProcess) { [int]$appProcess.Id } elseif ($null -ne $appState -and $null -ne $appState.pid) { [int]$appState.pid } else { $null }
     AppStatePath = $paths.AppStatePath
     StdoutLog = if ($null -ne $appProcess) { $stdoutPath } elseif ($null -ne $appState) { $appState.stdoutLog } else { $null }
     StderrLog = if ($null -ne $appProcess) { $stderrPath } elseif ($null -ne $appState) { $appState.stderrLog } else { $null }
@@ -315,7 +355,7 @@ if (-not $NoBrowser) {
 }
 
 if ($Detached) {
-    Write-Host 'StableAMD is running detached. Use Stop-StableAMD.ps1 for full teardown.' -ForegroundColor DarkCyan
+    Write-Host 'StableAMD is running detached. Use Stop-StableAMD.cmd (or scripts/Stop-StableAMD.ps1) for exact managed teardown.' -ForegroundColor DarkCyan
     return $result
 }
 
@@ -326,6 +366,7 @@ try {
     [StableAmd.NativeJob]::Assign($supervisorJob, [int]$result.ProcessId)
     Write-Host ''
     Write-Host 'StableAMD supervisor is active.' -ForegroundColor Green
+    Write-Host "Managed PIDs: backend $($result.BackendPid), application $($result.AppPid)." -ForegroundColor DarkCyan
     Write-Host 'This terminal now owns the StableAMD processes. Ctrl+C or closing this terminal stops StableAMD and releases VRAM.' -ForegroundColor Cyan
     Write-Host 'Live backend/application logs follow below:' -ForegroundColor DarkCyan
     Write-Host ''
