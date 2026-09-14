@@ -38,20 +38,23 @@ def main() -> None:
 
     forwarded_args = list(sys.argv[2:])
 
-    # StableAMD's Windows ROCm/gfx1030 runtime deliberately uses conservative
-    # host-memory behavior. The target machine has shown native 0xC0000005
-    # crashes both while switching large Z-Image model graphs and inside CPU
-    # VAE decode. Keep VAE on CPU, avoid mmap-backed multi-GB safetensors and
-    # disable pinned/async host offload paths. The sampler still runs on Radeon.
-    stableamd_windows_rocm_guards = (
-        "--cpu-vae",
-        "--disable-mmap",
-        "--disable-pinned-memory",
-        "--disable-async-offload",
+    # Keep the guard that was already proven useful on the target gfx1030
+    # machine. The additional host-memory flags introduced in 6a15f6b,
+    # especially --disable-mmap, regressed Z-Image before sampling by moving
+    # the multi-GB diffusion model load through CPU allocation/copy paths. The
+    # attached target log then crashed natively in load_torch_file / UNETLoader.
+    # CPU VAE stays enabled; StableAMD's Z-Image workflow separately uses tiled
+    # VAE decode to reduce decode-time peak pressure.
+    if "--cpu-vae" not in forwarded_args:
+        forwarded_args.append("--cpu-vae")
+
+    # Make the effective runtime arguments visible in the normal backend log so
+    # a native crash can be correlated with the exact launch profile next time.
+    print(
+        "[StableAMD bootstrap] ComfyUI args: " + " ".join(forwarded_args),
+        file=sys.stderr,
+        flush=True,
     )
-    for flag in stableamd_windows_rocm_guards:
-        if flag not in forwarded_args:
-            forwarded_args.append(flag)
 
     sys.argv = [main_py, *forwarded_args]
     os.chdir(comfy_root)
