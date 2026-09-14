@@ -38,14 +38,20 @@ def main() -> None:
 
     forwarded_args = list(sys.argv[2:])
 
-    # StableAMD's accepted Windows ROCm path keeps the VAE on CPU. Z-Image can
-    # leave the patched diffusion model almost fully resident on a 16 GiB GPU;
-    # asking ComfyUI to load the VAE on the GPU then forces a partial model
-    # unload during decode. That transition has produced native torch/c10
-    # access violations on gfx1030. CPU VAE avoids the dangerous residency
-    # transition while keeping the sampler itself on the Radeon GPU.
-    if "--cpu-vae" not in forwarded_args:
-        forwarded_args.append("--cpu-vae")
+    # StableAMD's Windows ROCm/gfx1030 runtime deliberately uses conservative
+    # host-memory behavior. The target machine has shown native 0xC0000005
+    # crashes both while switching large Z-Image model graphs and inside CPU
+    # VAE decode. Keep VAE on CPU, avoid mmap-backed multi-GB safetensors and
+    # disable pinned/async host offload paths. The sampler still runs on Radeon.
+    stableamd_windows_rocm_guards = (
+        "--cpu-vae",
+        "--disable-mmap",
+        "--disable-pinned-memory",
+        "--disable-async-offload",
+    )
+    for flag in stableamd_windows_rocm_guards:
+        if flag not in forwarded_args:
+            forwarded_args.append(flag)
 
     sys.argv = [main_py, *forwarded_args]
     os.chdir(comfy_root)
