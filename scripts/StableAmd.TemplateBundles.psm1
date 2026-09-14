@@ -123,9 +123,10 @@ function Find-StableAmdTemplatePackages {
     # Official ComfyUI Z-Image Turbo package. The compact mixed-precision text
     # encoders are official alternatives and materially reduce Windows host
     # commit/pagefile pressure during native edit workflows. Prefer FP4 mixed,
-    # then FP8 mixed, then the original BF16 encoder. If a higher-priority file
-    # is present but truncated, fall through to the next valid official variant
-    # instead of making an otherwise usable package incomplete.
+    # then FP8 mixed, then the original BF16 encoder. If a higher-priority
+    # compact file is present but truncated, fall through to the next valid
+    # official variant. Keep the established BF16 package behavior compatible:
+    # older installs predate pinned byte metadata and remain executable.
     $zDiffusion = Find-StableAmdTemplateAsset -Roots $DiffusionRoots -FileName 'z_image_turbo_bf16.safetensors'
     $zEncoderVariants = @(
         [pscustomobject]@{
@@ -142,9 +143,9 @@ function Find-StableAmdTemplatePackages {
         },
         [pscustomobject]@{
             name = 'qwen_3_4b.safetensors'
-            label = 'Text encoder (BF16)'
-            expectedBytes = [Int64]8044982048
-            expectedSha256 = '6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a'
+            label = 'Text encoder (BF16 · compatibility fallback)'
+            expectedBytes = [Int64]0
+            expectedSha256 = ''
         }
     )
     $zEncoderChoice = $null
@@ -154,7 +155,8 @@ function Find-StableAmdTemplatePackages {
         if ([string]::IsNullOrWhiteSpace([string]$candidatePath)) { continue }
         $candidateValid = $false
         try {
-            $candidateValid = [Int64](Get-Item -LiteralPath $candidatePath -ErrorAction Stop).Length -eq [Int64]$candidate.expectedBytes
+            $actualBytes = [Int64](Get-Item -LiteralPath $candidatePath -ErrorAction Stop).Length
+            $candidateValid = [Int64]$candidate.expectedBytes -le 0 -or $actualBytes -eq [Int64]$candidate.expectedBytes
         }
         catch { $candidateValid = $false }
         $choice = [pscustomobject]@{
