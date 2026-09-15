@@ -5,6 +5,7 @@ from __future__ import annotations
 # Z-Image edit and hardened PowerShell transport paths unchanged.
 from stableamd_v03_product_server import *  # noqa: F401,F403
 import stableamd_v03_product_server as product
+import stableamd_v03_controlnet as controlnet
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin
 
 # Explicit compatibility exports used by the regression suite.
@@ -18,6 +19,12 @@ ZIMAGE_FUN_PATCH = product.ZIMAGE_FUN_PATCH
 ZIMAGE_FUN_LEGACY_PATCH = product.ZIMAGE_FUN_LEGACY_PATCH
 ZIMAGE_FUN_PATCH_SHA256 = product.ZIMAGE_FUN_PATCH_SHA256
 ZIMAGE_FUN_PATCH_BYTES = product.ZIMAGE_FUN_PATCH_BYTES
+KREA_OPENPOSE_PLUGIN_REPO = controlnet.KREA_OPENPOSE_PLUGIN_REPO
+KREA_OPENPOSE_PLUGIN_COMMIT = controlnet.KREA_OPENPOSE_PLUGIN_COMMIT
+KREA_OPENPOSE_LORA = controlnet.KREA_OPENPOSE_LORA
+KREA_OPENPOSE_LORA_URL = controlnet.KREA_OPENPOSE_LORA_URL
+KREA_OPENPOSE_LORA_BYTES = controlnet.KREA_OPENPOSE_LORA_BYTES
+KREA_OPENPOSE_LORA_SHA256 = controlnet.KREA_OPENPOSE_LORA_SHA256
 
 
 class PowerShellBridge(ControlNetBridgeMixin, product.PowerShellBridge):
