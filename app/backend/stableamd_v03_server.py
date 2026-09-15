@@ -1,0 +1,650 @@
+from __future__ import annotations
+
+import json
+import secrets
+import sys
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import RLock
+from typing import Any
+from urllib.request import Request, urlopen
+
+BACKEND_ROOT = Path(__file__).resolve().parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+import stableamd_server as base
+from lora_catalog import families_compatible, normalize_model_family, scan_lora_catalog
+
+
+def _value(record: dict[str, Any], *names: str, default: Any = None) -> Any:
+    for name in names:
+        if name in record:
+            return record[name]
+    return default
+
+
+class PowerShellBridge(base.PowerShellBridge):
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._model_scan_lock = RLock()
+
+    def models(self) -> Any:
+        # ThreadingHTTPServer may service /api/models, /api/model-support and
+        # generation model lookup concurrently. Both discovery scripts update
+        # small JSON registries on Windows, so serialize the complete logical
+        # model scan to avoid readers racing a Set-Content writer.
+        with self._model_scan_lock:
+            checkpoints = list(super().models())
+            bundles = self._normalize_model_payload(self._run_script("List-BundleModels.ps1"))
+            merged: list[Any] = []
+            seen: set[str] = set()
+            for model in [*checkpoints, *bundles]:
+                if not isinstance(model, dict):
+                    merged.append(model)
+                    continue
+                model_id = str(_value(model, "id", "Id", default="")).strip()
+                key = model_id.lower() if model_id else json.dumps(model, sort_keys=True, default=str)
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(model)
+            return merged
+
+    def lora_catalog(self) -> list[dict[str, Any]]:
+        roots: list[Path] = []
+        for record in self.lora_roots():
+            raw_path = _value(record, "path", "Path", default="") if isinstance(record, dict) else record
+            if str(raw_path or "").strip():
+                roots.append(Path(str(raw_path)).expanduser())
+        return scan_lora_catalog(roots)
+
+    @staticmethod
+    def _enabled_lora_names(request: dict[str, Any]) -> list[str]:
+        stack = request.get("loraStack")
+        if isinstance(stack, list):
+            return [
+                str(entry.get("name") or "").strip()
+                for entry in stack
+                if isinstance(entry, dict)
+                and entry.get("enabled", True) is not False
+                and str(entry.get("name") or "").strip()
+            ]
+        legacy = str(request.get("loraName") or "").strip()
+        return [legacy] if legacy else []
+
+    def lora_compatibility_error(self, request: dict[str, Any]) -> str | None:
+        names = self._enabled_lora_names(request)
+        if not names:
+            return None
+
+        selected = self._selected_product_model(request)
+        if selected is None:
+            return None
+        model_family_raw = str(_value(selected, "family", "Family", default=""))
+        model_family = normalize_model_family(model_family_raw)
+
+        # Families whose StableAMD capability is not implemented must never
+        # silently accept an adapter merely because ComfyUI can instantiate a
+        # loader node.
+        support = self.model_support()
+        support_models = support.get("models", []) if isinstance(support, dict) else []
+        support_entry = next(
+            (
+                item
+                for item in support_models
+                if isinstance(item, dict)
+                and str(item.get("id") or "") == str(_value(selected, "id", "Id", default=""))
+            ),
+            None,
+        )
+        if isinstance(support_entry, dict):
+            capability = str((support_entry.get("capabilities") or {}).get("lora") or "unsupported").lower()
+            if capability != "supported":
+                return f"LoRA is not supported for selected model family '{model_family_raw or model_family}'."
+
+        catalog = self.lora_catalog()
+        exact: dict[str, dict[str, Any]] = {}
+        by_basename: dict[str, list[dict[str, Any]]] = {}
+        for item in catalog:
+            name = str(item.get("name") or "").replace("\\", "/").lower()
+            if name:
+                exact[name] = item
+                by_basename.setdefault(Path(name).name.lower(), []).append(item)
+
+        for requested_name in names:
+            normalized = requested_name.replace("\\", "/").lower()
+            item = exact.get(normalized)
+            if item is None:
+                matches = by_basename.get(Path(normalized).name.lower(), [])
+                if len(matches) == 1:
+                    item = matches[0]
+            if item is None:
+                continue
+            lora_family = str(item.get("family") or "unknown")
+            if not families_compatible(model_family, lora_family):
+                return (
+                    f"LoRA '{requested_name}' targets family '{lora_family}' and is incompatible with "
+                    f"selected model family '{model_family_raw or model_family}'."
+                )
+        return None
+
+    def _selected_product_model(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        model_id = str(request.get("modelId") or "").strip()
+        if not model_id:
+            return None
+        for model in self.models():
+            if isinstance(model, dict) and str(_value(model, "id", "Id", default="")) == model_id:
+                return model
+        return None
+
+    def _post_comfy_json(self, relative_path: str, payload: dict[str, Any], timeout: int = 60) -> Any:
+        url = self._backend_base_url() + relative_path.lstrip("/")
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _resolve_inpaint_model(self, request: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        models = [item for item in self.models() if isinstance(item, dict)]
+        model_id = str(request.get("modelId") or "")
+        model = next((item for item in models if str(_value(item, "id", "Id", default="")) == model_id), None)
+        if model is None:
+            model = next((item for item in models if str(_value(item, "family", "Family", default="")).lower() == "sdxl"), None)
+        if model is None:
+            raise base.StableAmdBridgeError("No registered SDXL model is available for inpainting.")
+        if str(_value(model, "family", "Family", default="")).lower() != "sdxl":
+            raise base.StableAmdBridgeError("StableAMD inpainting currently supports SDXL models only.")
+
+        model_path = Path(str(_value(model, "path", "Path", default=""))).expanduser().resolve()
+        if not model_path.is_file():
+            raise base.StableAmdBridgeError(f"Selected model no longer exists: {model_path}")
+
+        loader = self._comfy_json("object_info/CheckpointLoaderSimple")
+        choices = self._comfy_choice_list(loader, "CheckpointLoaderSimple", "ckpt_name")
+        leaf = model_path.name.lower()
+        exact = [name for name in choices if Path(str(name).replace("\\", "/")).name.lower() == leaf]
+        if len(exact) != 1:
+            raise base.StableAmdBridgeError(
+                f"ComfyUI does not expose the selected model '{model_path}'. Restart StableAMD after changing model roots."
+            )
+        return model, str(exact[0])
+
+    def _resolve_inpaint_loras(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        stack = request.get("loraStack")
+        if not isinstance(stack, list):
+            legacy = str(request.get("loraName") or "").strip()
+            stack = [] if not legacy else [
+                {
+                    "name": legacy,
+                    "modelStrength": request.get("loraModelStrength", 1.0),
+                    "clipStrength": request.get("loraClipStrength", 1.0),
+                    "enabled": True,
+                }
+            ]
+        if not stack:
+            return []
+
+        info = self._comfy_json("object_info/LoraLoader")
+        choices = self._comfy_choice_list(info, "LoraLoader", "lora_name")
+        by_lower = {str(name).lower(): str(name) for name in choices}
+        resolved: list[dict[str, Any]] = []
+        for entry in stack:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            enabled = entry.get("enabled", True) is not False
+            resolved_name = name
+            if enabled:
+                resolved_name = by_lower.get(name.lower(), "")
+                if not resolved_name:
+                    raise base.StableAmdBridgeError(
+                        f"ComfyUI does not expose LoRA '{name}'. Restart StableAMD after changing LoRA roots."
+                    )
+            resolved.append(
+                {
+                    "name": resolved_name or name,
+                    "modelStrength": float(entry.get("modelStrength", 1.0)),
+                    "clipStrength": float(entry.get("clipStrength", 1.0)),
+                    "enabled": enabled,
+                }
+            )
+        return resolved
+
+    def _resolve_inpaint_output(self, prompt_id: str, history_entry: dict[str, Any]) -> Path:
+        output_root = (self.repo_root / ".runtime" / "stableamd" / "output").resolve()
+        images = history_entry.get("outputs", {}).get("9", {}).get("images", [])
+        for image in images if isinstance(images, list) else []:
+            if not isinstance(image, dict) or not image.get("filename"):
+                continue
+            candidate = (output_root / str(image.get("subfolder") or "") / str(image["filename"])).resolve()
+            if output_root in candidate.parents and candidate.is_file():
+                return candidate
+        raise base.StableAmdBridgeError(f"ComfyUI completed inpaint prompt '{prompt_id}', but StableAMD could not resolve its output image.")
+
+    def _save_inpaint_history(self, record: dict[str, Any]) -> Path:
+        history_root = self.repo_root / ".runtime" / "stableamd" / "history"
+        history_root.mkdir(parents=True, exist_ok=True)
+        created = datetime.now(timezone.utc)
+        prompt_id = str(record.get("promptId") or uuid.uuid4().hex)
+        destination = history_root / f"{created.strftime('%Y%m%dT%H%M%S%fZ')}_{prompt_id}.json"
+        temporary = destination.with_suffix(destination.suffix + f".tmp-{uuid.uuid4().hex}")
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        return destination.resolve()
+
+    def _generate_inpaint(self, request: dict[str, Any]) -> Any:
+        staged_input = base.stage_input_image(self.repo_root, request["inputImage"])
+        started = time.monotonic()
+        try:
+            if request.get("startBackendIfNeeded"):
+                try:
+                    self._backend_base_url()
+                except base.StableAmdBridgeError:
+                    self.start_backend()
+
+            model, checkpoint_name = self._resolve_inpaint_model(request)
+            lora_stack = self._resolve_inpaint_loras(request)
+            seed = int(request["seed"]) if "seed" in request else secrets.randbits(63)
+            width = int(request.get("width", 1024))
+            height = int(request.get("height", 1024))
+            steps = int(request.get("steps", 20))
+            cfg = float(request.get("cfg", 7.0))
+            sampler = str(request.get("samplerName") or "euler")
+            scheduler = str(request.get("scheduler") or "normal")
+            denoise = float(request.get("denoise", 0.8))
+            token = uuid.uuid4().hex
+            filename_prefix = f"StableAMD_SDXL_INPAINT_{token}"
+
+            workflow = self._run_script(
+                "Build-StableAmdWorkflow.ps1",
+                [
+                    ("Family", "sdxl"),
+                    ("Mode", "inpaint"),
+                    ("CheckpointName", checkpoint_name),
+                    ("Prompt", request["prompt"]),
+                    ("NegativePrompt", request.get("negativePrompt") or "low quality, blurry, distorted, artifacts, watermark, text"),
+                    ("Width", width),
+                    ("Height", height),
+                    ("Steps", steps),
+                    ("Cfg", cfg),
+                    ("Seed", seed),
+                    ("SamplerName", sampler),
+                    ("Scheduler", scheduler),
+                    ("FilenamePrefix", filename_prefix),
+                    ("InputImageName", staged_input.name),
+                    ("Denoise", denoise),
+                    ("LoraStackJson", json.dumps(lora_stack, ensure_ascii=False, separators=(",", ":"))),
+                ],
+            )
+            if not isinstance(workflow, dict):
+                raise base.StableAmdBridgeError("StableAMD inpaint workflow builder did not return a workflow object.")
+
+            client_id = uuid.uuid4().hex
+            queued = self._post_comfy_json("prompt", {"prompt": workflow, "client_id": client_id})
+            prompt_id = str(queued.get("prompt_id") or "") if isinstance(queued, dict) else ""
+            if not prompt_id:
+                raise base.StableAmdBridgeError("ComfyUI /prompt did not return a prompt_id for inpainting.")
+            node_errors = queued.get("node_errors") if isinstance(queued, dict) else None
+            if isinstance(node_errors, dict) and node_errors:
+                raise base.StableAmdBridgeError("ComfyUI rejected the StableAMD inpaint workflow: " + json.dumps(node_errors, ensure_ascii=False))
+
+            deadline = time.monotonic() + 900
+            history_entry: dict[str, Any] | None = None
+            while time.monotonic() < deadline:
+                history = self._comfy_json(f"history/{prompt_id}")
+                candidate = history.get(prompt_id) if isinstance(history, dict) else None
+                if isinstance(candidate, dict):
+                    status = candidate.get("status") or {}
+                    status_str = str(status.get("status_str") or "") if isinstance(status, dict) else ""
+                    if status_str == "error":
+                        raise base.StableAmdBridgeError("ComfyUI reported an SDXL inpaint execution error: " + json.dumps(status, ensure_ascii=False))
+                    if status_str == "success" or bool(status.get("completed")):
+                        history_entry = candidate
+                        break
+                time.sleep(0.25)
+            if history_entry is None:
+                raise base.StableAmdBridgeError(f"SDXL inpainting did not complete within 900 seconds. Prompt ID: {prompt_id}")
+
+            image_path = self._resolve_inpaint_output(prompt_id, history_entry)
+            generation_seconds = round(time.monotonic() - started, 3)
+            created_at = datetime.now(timezone.utc).isoformat()
+            enabled_loras = [entry for entry in lora_stack if entry.get("enabled", True)]
+            legacy_name = enabled_loras[0]["name"] if len(enabled_loras) == 1 else ""
+            legacy_model = enabled_loras[0]["modelStrength"] if len(enabled_loras) == 1 else None
+            legacy_clip = enabled_loras[0]["clipStrength"] if len(enabled_loras) == 1 else None
+            model_id = str(_value(model, "id", "Id", default=""))
+            model_name = str(_value(model, "name", "Name", default=Path(str(_value(model, "path", "Path", default=""))).name))
+            model_path = str(Path(str(_value(model, "path", "Path", default=""))).resolve())
+            record = {
+                "schemaVersion": 3,
+                "createdAtUtc": created_at,
+                "promptId": prompt_id,
+                "mode": "inpaint",
+                "prompt": request["prompt"],
+                "negativePrompt": request.get("negativePrompt") or "low quality, blurry, distorted, artifacts, watermark, text",
+                "modelId": model_id,
+                "modelName": model_name,
+                "modelPath": model_path,
+                "checkpointName": checkpoint_name,
+                "inputImagePath": str(staged_input),
+                "maskMode": "embedded-alpha",
+                "denoise": denoise,
+                "width": width,
+                "height": height,
+                "steps": steps,
+                "cfg": cfg,
+                "seed": seed,
+                "sampler": sampler,
+                "scheduler": scheduler,
+                "loraStack": lora_stack,
+                "loraName": legacy_name,
+                "loraModelStrength": legacy_model,
+                "loraClipStrength": legacy_clip,
+                "generationSeconds": generation_seconds,
+                "imagePath": str(image_path),
+                "backendUrl": self._backend_base_url(),
+            }
+            history_path = self._save_inpaint_history(record)
+            return {
+                "PromptId": prompt_id,
+                "Mode": "inpaint",
+                "Prompt": record["prompt"],
+                "NegativePrompt": record["negativePrompt"],
+                "ModelId": model_id,
+                "ModelName": model_name,
+                "ModelPath": model_path,
+                "CheckpointName": checkpoint_name,
+                "InputImagePath": str(staged_input),
+                "MaskMode": "embedded-alpha",
+                "Denoise": denoise,
+                "Width": width,
+                "Height": height,
+                "Steps": steps,
+                "Cfg": cfg,
+                "Seed": seed,
+                "Sampler": sampler,
+                "Scheduler": scheduler,
+                "LoraStack": lora_stack,
+                "LoraName": legacy_name,
+                "LoraModelStrength": legacy_model,
+                "LoraClipStrength": legacy_clip,
+                "GenerationSeconds": generation_seconds,
+                "ImagePath": str(image_path),
+                "HistoryPath": str(history_path),
+                "BackendUrl": record["backendUrl"],
+            }
+        except Exception:
+            try:
+                staged_input.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _bundle_asset_path(model: dict[str, Any], role: str) -> Path:
+        assets = model.get("assets")
+        if not isinstance(assets, dict):
+            raise base.StableAmdBridgeError(f"Bundle model is missing its '{role}' asset map.")
+        values = assets.get(role)
+        paths = values if isinstance(values, list) else ([values] if values else [])
+        paths = [str(value).strip() for value in paths if str(value).strip()]
+        if len(paths) != 1:
+            raise base.StableAmdBridgeError(f"Z-Image Turbo requires exactly one '{role}' asset.")
+        path = Path(paths[0]).expanduser().resolve()
+        if not path.is_file():
+            raise base.StableAmdBridgeError(f"Z-Image Turbo asset no longer exists: {path}")
+        return path
+
+    def _resolve_comfy_bundle_asset(self, node_name: str, input_name: str, path: Path) -> str:
+        info = self._comfy_json(f"object_info/{node_name}")
+        choices = self._comfy_choice_list(info, node_name, input_name)
+        leaf = path.name.lower()
+        exact = [name for name in choices if Path(str(name).replace("\\", "/")).name.lower() == leaf]
+        if len(exact) != 1:
+            raise base.StableAmdBridgeError(
+                f"ComfyUI does not expose Z-Image Turbo asset '{path.name}' through {node_name}. "
+                "Restart StableAMD after changing bundle asset folders."
+            )
+        return str(exact[0])
+
+    def _resolve_zimage_output(self, prompt_id: str, history_entry: dict[str, Any]) -> Path:
+        output_root = (self.repo_root / ".runtime" / "stableamd" / "output").resolve()
+        images = history_entry.get("outputs", {}).get("9", {}).get("images", [])
+        for image in images if isinstance(images, list) else []:
+            if not isinstance(image, dict) or not image.get("filename"):
+                continue
+            candidate = (output_root / str(image.get("subfolder") or "") / str(image["filename"])).resolve()
+            if output_root in candidate.parents and candidate.is_file():
+                return candidate
+        raise base.StableAmdBridgeError(f"ComfyUI completed Z-Image Turbo prompt '{prompt_id}', but StableAMD could not resolve its output image.")
+
+    def _save_zimage_history(self, record: dict[str, Any]) -> Path:
+        history_root = self.repo_root / ".runtime" / "stableamd" / "history"
+        history_root.mkdir(parents=True, exist_ok=True)
+        created = datetime.now(timezone.utc)
+        prompt_id = str(record.get("promptId") or uuid.uuid4().hex)
+        destination = history_root / f"{created.strftime('%Y%m%dT%H%M%S%fZ')}_{prompt_id}.json"
+        temporary = destination.with_suffix(destination.suffix + f".tmp-{uuid.uuid4().hex}")
+        temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(destination)
+        return destination.resolve()
+
+    def _generate_zimage_turbo(self, request: dict[str, Any], model: dict[str, Any]) -> Any:
+        if request.get("loraStack") or str(request.get("loraName") or "").strip():
+            raise base.StableAmdBridgeError("LoRA execution is not implemented for Z-Image Turbo yet.")
+        if request.get("mode", "txt2img") != "txt2img":
+            raise base.StableAmdBridgeError("Z-Image Turbo currently supports txt2img only.")
+
+        if request.get("startBackendIfNeeded"):
+            try:
+                backend_url = self._backend_base_url()
+            except base.StableAmdBridgeError:
+                self.start_backend()
+                backend_url = self._backend_base_url()
+        else:
+            backend_url = self._backend_base_url()
+
+        diffusion_path = self._bundle_asset_path(model, "diffusion_model")
+        encoder_path = self._bundle_asset_path(model, "text_encoder")
+        vae_path = self._bundle_asset_path(model, "vae")
+        diffusion_name = self._resolve_comfy_bundle_asset("UNETLoader", "unet_name", diffusion_path)
+        encoder_name = self._resolve_comfy_bundle_asset("CLIPLoader", "clip_name", encoder_path)
+        vae_name = self._resolve_comfy_bundle_asset("VAELoader", "vae_name", vae_path)
+
+        seed = int(request["seed"]) if "seed" in request else secrets.randbits(63)
+        width = int(request.get("width", 1024))
+        height = int(request.get("height", 1024))
+        steps = int(request.get("steps", 8))
+        cfg = float(request.get("cfg", 1.0))
+        sampler = str(request.get("samplerName") or "res_multistep")
+        scheduler = str(request.get("scheduler") or "simple")
+        filename_prefix = f"StableAMD_ZIMAGE_TURBO_{uuid.uuid4().hex}"
+        started = time.monotonic()
+
+        workflow = self._run_script(
+            "Build-StableAmdWorkflow.ps1",
+            [
+                ("Family", "z-image-turbo"),
+                ("Mode", "txt2img"),
+                ("Prompt", request["prompt"]),
+                ("Width", width),
+                ("Height", height),
+                ("Steps", steps),
+                ("Cfg", cfg),
+                ("Seed", seed),
+                ("SamplerName", sampler),
+                ("Scheduler", scheduler),
+                ("FilenamePrefix", filename_prefix),
+                ("DiffusionModelName", diffusion_name),
+                ("TextEncoderName", encoder_name),
+                ("VaeName", vae_name),
+            ],
+        )
+        if not isinstance(workflow, dict):
+            raise base.StableAmdBridgeError("StableAMD Z-Image Turbo workflow builder did not return a workflow object.")
+
+        client_id = uuid.uuid4().hex
+        queued = self._post_comfy_json("prompt", {"prompt": workflow, "client_id": client_id})
+        prompt_id = str(queued.get("prompt_id") or "") if isinstance(queued, dict) else ""
+        if not prompt_id:
+            raise base.StableAmdBridgeError("ComfyUI /prompt did not return a prompt_id for Z-Image Turbo.")
+        node_errors = queued.get("node_errors") if isinstance(queued, dict) else None
+        if isinstance(node_errors, dict) and node_errors:
+            raise base.StableAmdBridgeError(
+                "ComfyUI rejected the StableAMD Z-Image Turbo workflow: " + json.dumps(node_errors, ensure_ascii=False)
+            )
+
+        deadline = time.monotonic() + 900
+        history_entry: dict[str, Any] | None = None
+        while time.monotonic() < deadline:
+            history = self._comfy_json(f"history/{prompt_id}")
+            candidate = history.get(prompt_id) if isinstance(history, dict) else None
+            if isinstance(candidate, dict):
+                status = candidate.get("status") or {}
+                status_str = str(status.get("status_str") or "") if isinstance(status, dict) else ""
+                if status_str == "error":
+                    raise base.StableAmdBridgeError(
+                        "ComfyUI reported a Z-Image Turbo execution error: " + json.dumps(status, ensure_ascii=False)
+                    )
+                if status_str == "success" or bool(status.get("completed")):
+                    history_entry = candidate
+                    break
+            time.sleep(0.25)
+        if history_entry is None:
+            raise base.StableAmdBridgeError(f"Z-Image Turbo did not complete within 900 seconds. Prompt ID: {prompt_id}")
+
+        image_path = self._resolve_zimage_output(prompt_id, history_entry)
+        generation_seconds = round(time.monotonic() - started, 3)
+        model_id = str(_value(model, "id", "Id", default=""))
+        model_name = str(_value(model, "name", "Name", default="Z-Image Turbo"))
+        assets = {
+            "diffusion_model": [str(diffusion_path)],
+            "text_encoder": [str(encoder_path)],
+            "vae": [str(vae_path)],
+        }
+        record = {
+            "schemaVersion": 3,
+            "createdAtUtc": datetime.now(timezone.utc).isoformat(),
+            "promptId": prompt_id,
+            "mode": "txt2img",
+            "prompt": request["prompt"],
+            "negativePrompt": "",
+            "negativeConditioning": "zeroed-positive",
+            "modelId": model_id,
+            "modelName": model_name,
+            "modelPath": str(diffusion_path),
+            "family": "z-image-turbo",
+            "provider": "z-image-turbo-bundle",
+            "assetMode": "bundle",
+            "bundleAssets": assets,
+            "width": width,
+            "height": height,
+            "steps": steps,
+            "cfg": cfg,
+            "seed": seed,
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "loraStack": [],
+            "generationSeconds": generation_seconds,
+            "imagePath": str(image_path),
+            "backendUrl": backend_url,
+        }
+        history_path = self._save_zimage_history(record)
+        return {
+            "PromptId": prompt_id,
+            "Mode": "txt2img",
+            "Prompt": record["prompt"],
+            "NegativePrompt": "",
+            "ModelId": model_id,
+            "ModelName": model_name,
+            "ModelPath": str(diffusion_path),
+            "Family": "z-image-turbo",
+            "Provider": "z-image-turbo-bundle",
+            "AssetMode": "bundle",
+            "BundleAssets": assets,
+            "Width": width,
+            "Height": height,
+            "Steps": steps,
+            "Cfg": cfg,
+            "Seed": seed,
+            "Sampler": sampler,
+            "Scheduler": scheduler,
+            "LoraStack": [],
+            "GenerationSeconds": generation_seconds,
+            "ImagePath": str(image_path),
+            "HistoryPath": str(history_path),
+            "BackendUrl": backend_url,
+        }
+
+    def generate(self, request: dict[str, Any]) -> Any:
+        mode = str(request.get("mode", "txt2img")).lower()
+        if mode == "inpaint":
+            return self._generate_inpaint(request)
+
+        selected = self._selected_product_model(request)
+        if selected is not None:
+            family = str(_value(selected, "family", "Family", default="")).lower()
+            asset_mode = str(_value(selected, "assetMode", "AssetMode", default="checkpoint")).lower()
+            if family == "z-image-turbo" and asset_mode == "bundle":
+                return self._generate_zimage_turbo(request, selected)
+            if asset_mode == "bundle":
+                raise base.StableAmdBridgeError(
+                    f"StableAMD execution is not implemented for bundle model family '{family or 'unknown'}'."
+                )
+
+        return super().generate(request)
+
+
+class StableAmdApi(base.StableAmdApi):
+    def _validate_generation(self, request: dict[str, Any]) -> dict[str, Any]:
+        mode = request.get("mode", "txt2img")
+        if mode != "inpaint":
+            validated = super()._validate_generation(request)
+        else:
+            unsupported = sorted(set(request) - self._generation_fields)
+            if unsupported:
+                raise ValueError("Unsupported generation field(s): " + ", ".join(unsupported))
+
+            # Reuse the proven img2img validation for prompt, image payload,
+            # denoise, LoRA and numeric generation fields, then enforce the
+            # inpaint-specific PNG contract used to carry the painted mask in alpha.
+            proxy = dict(request)
+            proxy["mode"] = "img2img"
+            super()._validate_generation(proxy)
+
+            image = request.get("inputImage")
+            if not isinstance(image, dict):
+                raise ValueError("inpaint requires inputImage.")
+            if image.get("mimeType") != "image/png" or Path(str(image.get("name", ""))).suffix.lower() != ".png":
+                raise ValueError("inpaint requires a PNG input with the mask embedded in its alpha channel.")
+            validated = request
+
+        checker = getattr(self.bridge, "lora_compatibility_error", None)
+        if callable(checker):
+            error = checker(validated)
+            if error:
+                raise ValueError(error)
+        return validated
+
+    def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
+        if (method or "").upper() == "GET" and target.split("?", 1)[0] == "/api/lora-catalog":
+            return 200, self.bridge.lora_catalog()
+        return super().dispatch(method, target, body)
+
+
+# The shared server creates these classes through module globals at runtime.
+# Patch only the v0.3 extension points and keep the proven loopback server,
+# static-file handling and lifecycle implementation untouched.
+base.PowerShellBridge = PowerShellBridge
+base.StableAmdApi = StableAmdApi
+
+
+def main() -> int:
+    return base.main()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

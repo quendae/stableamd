@@ -40,6 +40,7 @@ Describe 'StableAMD v0.1 release packaging' {
         Test-Path $result.ZipPath | Should -BeTrue
         Test-Path $result.PackageRoot | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'Start-StableAMD.cmd') | Should -BeTrue
+        Test-Path (Join-Path $result.PackageRoot 'Stop-StableAMD.cmd') | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_server.py') | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'app/frontend/index.html') | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'config/stableamd.default.json') | Should -BeTrue

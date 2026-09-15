@@ -32,6 +32,20 @@ function New-StableAmdDefaultConfig {
                 '.runtime/SwarmUI/Models/Lora'
             )
         }
+        upscaleModels = [pscustomobject]@{
+            roots = @('.runtime/stableamd/models/upscale_models')
+        }
+        bundleAssets = [pscustomobject]@{
+            diffusionModels = [pscustomobject]@{
+                roots = @('.runtime/stableamd/models/diffusion_models')
+            }
+            textEncoders = [pscustomobject]@{
+                roots = @('.runtime/stableamd/models/text_encoders')
+            }
+            vae = [pscustomobject]@{
+                roots = @('.runtime/stableamd/models/vae')
+            }
+        }
     }
 }
 
@@ -71,9 +85,15 @@ function Get-StableAmdRuntimePaths {
         BackendStatePath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'backend-state.json'))
         AppStatePath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'app-state.json'))
         ModelsRegistryPath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models.json'))
+        BundlesRegistryPath = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'bundles.json'))
         ModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models'))
         CheckpointsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/checkpoints'))
         LorasRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/loras'))
+        UpscaleModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/upscale_models'))
+        DiffusionModelsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/diffusion_models'))
+        TextEncodersRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/text_encoders'))
+        VaeRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'models/vae'))
+        InputRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'input'))
         OutputRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'output'))
         HistoryRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'history'))
         LogsRoot = [IO.Path]::GetFullPath((Join-Path $stableAmdRoot 'logs'))
@@ -98,12 +118,44 @@ function Initialize-StableAmdRuntimeDirectories {
         $Paths.ModelsRoot,
         $Paths.CheckpointsRoot,
         $Paths.LorasRoot,
+        (Join-Path $Paths.LorasRoot 'shared'),
+        (Join-Path $Paths.LorasRoot 'sd15'),
+        (Join-Path $Paths.LorasRoot 'sdxl'),
+        (Join-Path $Paths.LorasRoot 'sd3'),
+        (Join-Path $Paths.LorasRoot 'z-image'),
+        (Join-Path $Paths.LorasRoot 'flux'),
+        (Join-Path $Paths.LorasRoot 'krea'),
+        $Paths.UpscaleModelsRoot,
+        $Paths.DiffusionModelsRoot,
+        $Paths.TextEncodersRoot,
+        $Paths.VaeRoot,
+        $Paths.InputRoot,
         $Paths.OutputRoot,
         $Paths.HistoryRoot,
         $Paths.LogsRoot,
         $Paths.GeneratedConfigRoot
     )) {
         New-Item -ItemType Directory -Path $path -Force | Out-Null
+    }
+}
+
+function Add-StableAmdMissingRootSection {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][psobject]$Parent,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string[]]$DefaultRoots
+    )
+
+    $property = $Parent.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        $Parent | Add-Member -MemberType NoteProperty -Name $Name -Value ([pscustomobject]@{ roots = @($DefaultRoots) }) -Force
+        return
+    }
+
+    $section = $property.Value
+    if ($null -eq $section.PSObject.Properties['roots'] -or $null -eq $section.roots) {
+        $section | Add-Member -MemberType NoteProperty -Name roots -Value @($DefaultRoots) -Force
     }
 }
 
@@ -125,6 +177,22 @@ function Add-StableAmdMissingConfigDefaults {
     elseif ($null -eq $Config.loras.PSObject.Properties['roots'] -or $null -eq $Config.loras.roots) {
         $Config.loras | Add-Member -MemberType NoteProperty -Name roots -Value @('.runtime/stableamd/models/loras') -Force
     }
+
+    if ($null -eq $Config.PSObject.Properties['upscaleModels'] -or $null -eq $Config.upscaleModels) {
+        $Config | Add-Member -MemberType NoteProperty -Name upscaleModels -Value ([pscustomobject]@{
+            roots = @('.runtime/stableamd/models/upscale_models')
+        }) -Force
+    }
+    elseif ($null -eq $Config.upscaleModels.PSObject.Properties['roots'] -or $null -eq $Config.upscaleModels.roots) {
+        $Config.upscaleModels | Add-Member -MemberType NoteProperty -Name roots -Value @('.runtime/stableamd/models/upscale_models') -Force
+    }
+
+    if ($null -eq $Config.PSObject.Properties['bundleAssets'] -or $null -eq $Config.bundleAssets) {
+        $Config | Add-Member -MemberType NoteProperty -Name bundleAssets -Value ([pscustomobject]@{}) -Force
+    }
+    Add-StableAmdMissingRootSection -Parent $Config.bundleAssets -Name 'diffusionModels' -DefaultRoots @('.runtime/stableamd/models/diffusion_models')
+    Add-StableAmdMissingRootSection -Parent $Config.bundleAssets -Name 'textEncoders' -DefaultRoots @('.runtime/stableamd/models/text_encoders')
+    Add-StableAmdMissingRootSection -Parent $Config.bundleAssets -Name 'vae' -DefaultRoots @('.runtime/stableamd/models/vae')
 
     return $Config
 }
@@ -170,7 +238,7 @@ function Write-StableAmdConfig {
         New-Item -ItemType Directory -Path $parent -Force | Out-Null
     }
 
-    $Config | ConvertTo-Json -Depth 12 | Set-Content -Path $Path -Encoding UTF8
+    $Config | ConvertTo-Json -Depth 16 | Set-Content -Path $Path -Encoding UTF8
 }
 
 function Write-StableAmdBackendState {

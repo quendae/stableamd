@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "0.3",
+  "modes": ["txt2img", "img2img", "inpaint", "controlnet", "lora"],
+  "families": {
+    "sd15": {
+      "label": "Stable Diffusion 1.x",
+      "provider": "sd15-checkpoint",
+      "assetMode": "checkpoint",
+      "requiredAssetRoles": ["checkpoint"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "sd21": {
+      "label": "Stable Diffusion 2.x",
+      "provider": "sd21-checkpoint",
+      "assetMode": "checkpoint",
+      "requiredAssetRoles": ["checkpoint"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "sdxl": {
+      "label": "Stable Diffusion XL",
+      "provider": "sdxl-checkpoint",
+      "assetMode": "checkpoint",
+      "requiredAssetRoles": ["checkpoint"],
+      "loraPolicy": {
+        "orderedStack": true,
+        "maxStack": 8,
+        "perEntryModelStrength": true,
+        "perEntryClipStrength": true
+      },
+      "capabilities": {
+        "txt2img": "supported",
+        "img2img": "supported",
+        "inpaint": "supported",
+        "controlnet": "planned",
+        "lora": "supported"
+      }
+    },
+    "sdxl-turbo": {
+      "label": "Stable Diffusion XL Turbo",
+      "provider": "sdxl-checkpoint",
+      "assetMode": "checkpoint",
+      "requiredAssetRoles": ["checkpoint"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "sd3": {
+      "label": "Stable Diffusion 3",
+      "provider": "sd3-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "sd35-medium": {
+      "label": "Stable Diffusion 3.5 Medium",
+      "provider": "sd35-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "sd35-large": {
+      "label": "Stable Diffusion 3.5 Large",
+      "provider": "sd35-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "z-image-turbo": {
+      "label": "Z-Image Turbo",
+      "provider": "z-image-turbo-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "loraPolicy": {
+        "orderedStack": true,
+        "maxStack": 8,
+        "perEntryModelStrength": true,
+        "perEntryClipStrength": false
+      },
+      "capabilities": {
+        "txt2img": "supported",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "supported"
+      }
+    },
+    "flux": {
+      "label": "FLUX",
+      "provider": "flux-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "capabilities": {
+        "txt2img": "planned",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "planned"
+      }
+    },
+    "krea2": {
+      "label": "Krea 2 Turbo",
+      "provider": "krea2-bundle",
+      "assetMode": "bundle",
+      "requiredAssetRoles": ["diffusion_model", "text_encoder", "vae"],
+      "loraPolicy": {
+        "orderedStack": true,
+        "maxStack": 8,
+        "perEntryModelStrength": true,
+        "perEntryClipStrength": false
+      },
+      "capabilities": {
+        "txt2img": "supported",
+        "img2img": "planned",
+        "inpaint": "planned",
+        "controlnet": "planned",
+        "lora": "supported"
+      }
+    }
+  }
+}

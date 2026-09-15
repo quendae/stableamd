@@ -1,47 +1,113 @@
 # StableAMD
 
-StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. It keeps ComfyUI as an internal inference engine while the normal user experience stays product-level: **Generate, Models, Gallery, Settings and Diagnostics**.
+StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. ComfyUI stays an internal inference engine while the normal user experience remains product-level: **Generate, Models, Gallery, Settings and Diagnostics**.
 
 ## Current status
 
-StableAMD v0.1 is **hardware-accepted on AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)**. The target-machine acceptance completed on 2026-09-11 covered a fresh source-package runtime bootstrap, native Radeon FP16 compute, managed ComfyUI and application startup, recursive external model discovery, SDXL 1024x1024 generation through StableAMD, output persistence and Gallery display.
+The active development line is **StableAMD v0.3** on `feat/stableamd-v0.3` / draft PR #4.
+
+The original v0.1 runtime is hardware-accepted on an AMD Radeon RX 6950 XT 16 GiB (`gfx1030`). v0.3 extends that accepted native-Windows AMD stack with SDXL img2img/inpaint, model packages, Z-Image Turbo, model-aware LoRA handling and post-generation tools.
+
+Current detailed status and roadmap: [`docs/v0.3-status.md`](docs/v0.3-status.md).
+
+### Accepted target hardware
 
 ```text
-RX 6950 XT -> TheRock multi-arch ROCm -> PyTorch -> ComfyUI -> StableAMD -> SDXL 1024x1024
+RX 6950 XT -> TheRock multi-arch ROCm -> PyTorch -> ComfyUI -> StableAMD
 ```
 
-The accepted locked stack is:
+Locked runtime:
 
 - private CPython `3.12.10` from the CPython NuGet x64 package;
 - `device-gfx1030`;
 - PyTorch `2.13.0+rocm10.1.0a20260822`;
 - torchvision `0.28.0+rocm10.1.0a20260822`;
 - torchaudio `2.11.0+rocm10.1.0a20260822`;
-- ComfyUI `0.35.0`, pinned to commit `40c4fcdf513a4523e39d54a9d391908af8df8171`;
-- Stable Diffusion XL 1.0 base as the compatibility reference.
+- ComfyUI `0.35.0` pinned to `40c4fcdf513a4523e39d54a9d391908af8df8171`.
 
-The earlier feasibility reference run at 1024x1024 / 20 steps used about 102 seconds and about 14 GiB peak VRAM on the tested RX 6950 XT. The machine-readable runtime lock and acceptance state are in [`config/runtime-lock.v0.1.json`](config/runtime-lock.v0.1.json).
+Other Radeon GPUs are not implicitly validated by the RX 6950 XT result; each target still needs its own runtime/generation acceptance.
 
-Other Radeon GPUs are not implicitly validated by this result; each target needs its own runtime/generation acceptance.
+## Working model flows
 
-## What v0.1 contains
+### SDXL
 
-- managed loopback-only ComfyUI backend lifecycle;
-- RX 6950 XT / `gfx1030` detection and diagnostics;
-- StableAMD product API instead of arbitrary ComfyUI workflow execution;
-- SDXL txt2img generation with prompt, negative prompt, model, size, steps, CFG and seed;
-- recursive model-folder discovery that uses existing checkpoints in place without copying them;
-- optional single-file local import plus Hugging Face checkpoint download;
-- safetensors structural validation and optional SHA-256 verification;
-- generation history and Gallery metadata;
-- responsive local web UI;
-- one-click Windows launcher;
-- automatic first-launch bootstrap of private CPython + the pinned TheRock ROCm/PyTorch stack + pinned ComfyUI;
-- real FP16 Radeon compute verification before a bootstrapped runtime is accepted;
-- source-only ZIP packaging that deliberately excludes runtimes, models and generated data;
-- isolated clean-package acceptance that does not touch the development runtime.
+StableAMD currently supports:
 
-All services bind to `127.0.0.1`; v0.1 does not expose remote access, telemetry or cloud upload.
+- txt2img;
+- img2img;
+- inpainting execution;
+- sampler/scheduler metadata and presets;
+- ordered MultiLoRA;
+- external checkpoint and LoRA folders;
+- Gallery history/reuse.
+
+### Z-Image Turbo
+
+Z-Image Turbo is implemented as a dedicated official-style ComfyUI package using:
+
+- `z_image_turbo_bf16.safetensors`;
+- `qwen_3_4b.safetensors`;
+- `ae.safetensors`.
+
+The RX 6950 XT 16 GiB target has completed repeated generation tests. The recommended target profile is:
+
+```powershell
+.\Start-StableAMD.cmd -DisableDynamicVram -LowVram -CacheClassic
+```
+
+In the stable warm state, the tested 1024-class / 8-step profile runs at roughly `2.36-2.38 s/it`, with repeated same-prompt generations around `25-26 s` and a changed prompt around `32 s`. The Qwen text encoder stays on CPU and Lumina2 is partially resident in VRAM. `HighVram` is intentionally not the recommended 16 GiB path because full model residency was much slower in repeated target tests.
+
+Z-Image now exposes four resolution tiers (`Small`, `1024`, `1280`, `1536`), common aspect-ratio presets and fast/recommended/quality step presets while keeping the proven `res_multistep + simple + CFG 1` path.
+
+## LoRA compatibility
+
+StableAMD no longer assumes that every discovered LoRA fits every model family.
+
+Managed LoRA folders are grouped by family:
+
+```text
+.runtime\stableamd\models\loras\
+├─ shared
+├─ sd15
+├─ sdxl
+├─ sd3
+├─ z-image
+├─ flux
+└─ krea
+```
+
+The application reads safetensors metadata without loading tensor payloads, then falls back to managed-folder and filename hints. Known cross-family mismatches are blocked server-side; unknown adapters remain explicitly unknown rather than being guessed compatible.
+
+Actual LoRA execution remains workflow-specific. SDXL LoRA/MultiLoRA is implemented; Z-Image LoRA execution is still planned.
+
+## Post-generation tools
+
+Gallery items expose:
+
+- **Upscale**
+- **Img2Img**
+- **Inpaint**
+- **Outpaint**
+
+Img2Img and Inpaint hand off the generated image to the existing editors. Outpaint currently has the handoff/editor shell and still needs the final expanded-canvas geometry/execution pass.
+
+### Classic upscale
+
+The first upscaler is intentionally simple and independent of the diffusion family:
+
+```text
+LoadImage -> UpscaleModelLoader -> ImageUpscaleWithModel -> SaveImage
+```
+
+Put compatible models in:
+
+```text
+.runtime\stableamd\models\upscale_models\
+```
+
+The current implementation supports the stock ComfyUI `UpscaleModelLoader` contract and common ESRGAN-family model files such as RealESRGAN and 4x-UltraSharp. `RealESRGAN_x2plus.pth` is now discovered correctly on the RX 6950 XT target. The next target gate is the first successful end-to-end upscale after the latest workflow-service parameter fix.
+
+SeedVR2 is planned as a separate optional/experimental provider, not as a dependency of the stable classic upscaler.
 
 ## Start StableAMD
 
@@ -57,25 +123,27 @@ or run:
 powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1
 ```
 
-If the managed runtime is missing, the launcher invokes `Install-StableAMDRuntime.ps1`. First launch downloads the private CPython 3.12.10 NuGet runtime, the locked TheRock `gfx1030` package set and pinned ComfyUI source, installs ComfyUI dependencies without allowing PyPI to replace the locked AMD torch family, then runs the Radeon FP16 compute probe. This can download more than 1 GB.
+If the managed runtime is missing, the launcher invokes `Install-StableAMDRuntime.ps1`. First launch downloads the private Python runtime, the locked TheRock `gfx1030` package set and pinned ComfyUI source, then verifies real Radeon FP16 compute before accepting the runtime.
 
-If the runtime already exists, StableAMD reuses it. The launcher then starts or reuses the managed compute backend, starts the application server, waits for `/api/health`, writes logs under `.runtime\stableamd\logs`, and opens the local UI.
+The managed backend and application bind to loopback only. Logs are written under `.runtime\stableamd\logs` and the supervisor owns the process lifecycle so Ctrl+C/close can release the backend and VRAM cleanly.
 
-To prevent automatic runtime installation while diagnosing a machine:
+For the currently proven Z-Image/RX 6950 XT memory profile:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1 -SkipRuntimeInstall
+.\Start-StableAMD.cmd -DisableDynamicVram -LowVram -CacheClassic
 ```
 
-## Models
+## Model packages and folders
 
-The recommended local workflow is **Models -> Add folder -> Scan models**. StableAMD stores selected Windows folders in its local configuration, scans them recursively for `.safetensors` checkpoints and passes them directly to ComfyUI through generated `extra_model_paths.yaml`. Multi-gigabyte checkpoints stay in their original location and are not copied.
+The Models page is package-first:
 
-Use **Browse folder...** to open the native Windows folder picker, or paste a path such as `D:\AI\Models`. Adding or removing a folder refreshes the managed backend when needed so ComfyUI sees the new search path. Existing SwarmUI Stable Diffusion folders are also discovered when present.
+- single-file checkpoints appear as logical model packages;
+- modern multi-file models such as Z-Image appear as one package with component readiness;
+- incomplete known packages stay visible with Found/Missing status;
+- only ready + supported models are offered for generation;
+- raw checkpoint / diffusion model / text encoder / VAE / LoRA roots remain under advanced controls.
 
-Single-file copy/move import and resumable Hugging Face download remain available under **Other ways to add models**.
-
-The official SDXL 1.0 base checkpoint is the v0.1 compatibility reference. LoRA, ControlNet, inpainting, Flux and video generation are intentionally deferred.
+Existing model libraries can be referenced without copying multi-gigabyte files. StableAMD writes generated `extra_model_paths.yaml` entries for configured roots and managed asset folders.
 
 ## Useful commands
 
@@ -89,48 +157,40 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Install-StableAMDRuntime.ps1
 # Runtime status
 powershell -ExecutionPolicy Bypass -File .\scripts\Get-StableAMDStatus.ps1
 
-# Stop the managed backend
+# Stop StableAMD managed processes
 powershell -ExecutionPolicy Bypass -File .\scripts\Stop-StableAMD.ps1
 
-# List/discover models
+# List/discover checkpoint models
 powershell -ExecutionPolicy Bypass -File .\scripts\List-Models.ps1
 
-# List configured model folders
-powershell -ExecutionPolicy Bypass -File .\scripts\Get-ModelRoots.ps1
+# List logical multi-file model packages
+powershell -ExecutionPolicy Bypass -File .\scripts\List-BundleModels.ps1
 
-# Add an existing model library without copying it
-powershell -ExecutionPolicy Bypass -File .\scripts\Add-ModelRoot.ps1 -Path 'D:\AI\Models'
-
-# Build the source-only v0.1 package
+# Build the source package
 powershell -ExecutionPolicy Bypass -File .\scripts\Build-StableAMDPackage.ps1
 
 # Resolve a clean package install plan without downloading runtime files
 powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1 -PlanOnly
-
-# Repeat the full isolated clean-package GPU/runtime acceptance
-powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1
 ```
-
-The package builder produces:
-
-```text
-dist\StableAMD-0.1.0\
-dist\StableAMD-0.1.0.zip
-```
-
-`.runtime`, model checkpoints, generated images, diagnostics, tests and Git metadata are not shipped inside that ZIP. The full package acceptance harness builds a fresh copy under `diagnostics\acceptance-package-*`, gives it separate local ports, installs its own runtime, verifies FP16 compute plus application/backend health, then removes the successful isolated runtime unless `-KeepRuntime` is supplied. Failed acceptance directories are kept for diagnosis.
 
 ## Development and validation
 
-The automated CI suite covers PowerShell parsing, Python API contracts, runtime/model/generation/frontend contracts, Windows PowerShell 5.1 compatibility, external model-folder configuration, launcher behavior, generated-output correlation, packaging, the exact no-network runtime plan and a real plan-only package build. GPU/runtime downloads are intentionally not performed on GitHub-hosted runners.
+CI covers PowerShell parsing, Python API contracts, Pester unit/regression tests, Windows PowerShell compatibility, workflow construction, model/root handling, frontend contracts, package build and artifact upload. GPU/runtime execution is still validated on the physical RX 6950 XT target rather than GitHub-hosted runners.
 
-Target-machine evidence and repeatable acceptance commands are in [`docs/v0.1-validation.md`](docs/v0.1-validation.md). The earlier feasibility work remains in [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md).
+Useful project documents:
 
-Product design and implementation plan:
+- [`docs/v0.3-status.md`](docs/v0.3-status.md) — current accepted/pending v0.3 status and roadmap;
+- [`docs/v0.1-validation.md`](docs/v0.1-validation.md) — original clean-runtime RX 6950 XT acceptance;
+- [`docs/superpowers/plans/2026-09-13-lora-upscale-edit-handoff.md`](docs/superpowers/plans/2026-09-13-lora-upscale-edit-handoff.md) — current post-generation implementation plan;
+- [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md) — early feasibility work.
 
-- [`docs/superpowers/specs/2026-09-11-stableamd-v0.1-product-design.md`](docs/superpowers/specs/2026-09-11-stableamd-v0.1-product-design.md)
-- [`docs/superpowers/plans/2026-09-11-stableamd-v0.1.md`](docs/superpowers/plans/2026-09-11-stableamd-v0.1.md)
+## Near-term roadmap
 
-## Scope after v0.1
+1. finish RealESRGAN/stock upscale target acceptance and output/history integration;
+2. complete Outpaint geometry and execution;
+3. add curated one-click classic upscale model installation;
+4. probe and benchmark optional SeedVR2 on 16 GiB AMD;
+5. implement **Krea2** as the next major model family using the same package-first/provider architecture;
+6. after Krea2, add batch/queue generation while preserving model residency, then revisit ControlNet/OpenPose and other useful families.
 
-Later work can add more Radeon GPU targets, LoRA/ControlNet, additional model families and potentially WSL2/Linux backends. DirectML and ZLUDA remain explicit fallback investigations rather than silent defaults.
+SageAttention/Triton-style attention optimizations are optional later experiments only. The stable path is prioritized over replacing a working configuration for marginal throughput gains.

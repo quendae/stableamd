@@ -6,6 +6,9 @@ param(
     [string]$NegativePrompt = 'low quality, blurry, distorted, artifacts, watermark, text',
     [string]$ModelId = '',
     [string]$ModelPath = '',
+    [ValidateSet('txt2img', 'img2img')][string]$Mode = 'txt2img',
+    [string]$InputImagePath = '',
+    [double]$Denoise = 0.55,
     [int]$Width = 0,
     [int]$Height = 0,
     [int]$Steps = 0,
@@ -16,6 +19,7 @@ param(
     [string]$LoraName = '',
     [double]$LoraModelStrength = 1.0,
     [double]$LoraClipStrength = 1.0,
+    [string]$LoraStackJson = '',
     [int]$GenerationTimeoutSeconds = 900,
     [string]$RepoRoot = '',
     [switch]$StartBackendIfNeeded
@@ -31,6 +35,7 @@ $RepoRoot = [IO.Path]::GetFullPath($RepoRoot)
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Models.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Generation.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Workflows.psm1') -Force
 
 function Write-StableAmdProgressEvent {
     param(
@@ -94,9 +99,88 @@ function Open-StableAmdProgressSocket {
     }
 }
 
+function ConvertFrom-StableAmdLoraStackJson {
+    param([string]$Json)
+
+    if ([string]::IsNullOrWhiteSpace($Json)) { return @() }
+    try {
+        $parsed = $Json | ConvertFrom-Json
+    }
+    catch {
+        throw "LoraStackJson must contain valid JSON: $($_.Exception.Message)"
+    }
+
+    $entries = if ($null -eq $parsed) { @() } else { @($parsed) }
+    if ($entries.Count -gt 8) {
+        throw 'StableAMD supports at most 8 LoRAs in one stack.'
+    }
+
+    $result = @()
+    for ($index = 0; $index -lt $entries.Count; $index++) {
+        $entry = $entries[$index]
+        if ($null -eq $entry) { throw "LoRA stack entry $($index + 1) cannot be null." }
+        $nameProperty = $entry.PSObject.Properties['name']
+        $name = if ($null -ne $nameProperty) { [string]$nameProperty.Value } else { '' }
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            throw "LoRA stack entry $($index + 1) must contain a non-empty name."
+        }
+
+        $enabledProperty = $entry.PSObject.Properties['enabled']
+        $enabled = if ($null -ne $enabledProperty) { [bool]$enabledProperty.Value } else { $true }
+        try {
+            $modelProperty = $entry.PSObject.Properties['modelStrength']
+            $clipProperty = $entry.PSObject.Properties['clipStrength']
+            $modelStrength = if ($null -ne $modelProperty) { [double]$modelProperty.Value } else { 1.0 }
+            $clipStrength = if ($null -ne $clipProperty) { [double]$clipProperty.Value } else { 1.0 }
+        }
+        catch {
+            throw "LoRA stack entry $($index + 1) strengths must be numeric."
+        }
+        foreach ($strength in @($modelStrength, $clipStrength)) {
+            if ([double]::IsNaN($strength) -or [double]::IsInfinity($strength) -or $strength -lt -100 -or $strength -gt 100) {
+                throw "LoRA stack entry $($index + 1) strengths must be between -100 and 100."
+            }
+        }
+
+        $result += [pscustomobject]@{
+            name = $name.Trim()
+            modelStrength = $modelStrength
+            clipStrength = $clipStrength
+            enabled = $enabled
+        }
+    }
+    return @($result)
+}
+
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 $config = Read-StableAmdConfig -RepoRoot $RepoRoot
 Initialize-StableAmdRuntimeDirectories -Paths $paths
+
+$normalizedMode = $Mode.Trim().ToLowerInvariant()
+$resolvedInputImagePath = ''
+$inputImageName = ''
+if ($normalizedMode -eq 'img2img') {
+    if ([string]::IsNullOrWhiteSpace($InputImagePath)) {
+        throw 'SDXL img2img requires an input image path.'
+    }
+    if ([double]::IsNaN($Denoise) -or [double]::IsInfinity($Denoise) -or $Denoise -lt 0 -or $Denoise -gt 1) {
+        throw 'Denoise must be between 0 and 1.'
+    }
+
+    $inputRootFull = [IO.Path]::GetFullPath($paths.InputRoot)
+    $inputRootPrefix = $inputRootFull.TrimEnd([char[]]@('\', '/')) + [IO.Path]::DirectorySeparatorChar
+    $resolvedInputImagePath = [IO.Path]::GetFullPath($InputImagePath)
+    if (-not $resolvedInputImagePath.StartsWith($inputRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "SDXL img2img input image must be inside the StableAMD managed input directory '$inputRootFull'."
+    }
+    if (-not (Test-Path $resolvedInputImagePath -PathType Leaf)) {
+        throw "SDXL img2img input image was not found: '$resolvedInputImagePath'."
+    }
+    $inputImageName = [IO.Path]::GetFileName($resolvedInputImagePath)
+}
+elseif (-not [string]::IsNullOrWhiteSpace($InputImagePath)) {
+    throw 'InputImagePath is valid only when Mode is img2img.'
+}
 
 $statusScript = Join-Path $PSScriptRoot 'Get-StableAMDStatus.ps1'
 $startScript = Join-Path $PSScriptRoot 'Start-StableAMD.ps1'
@@ -122,6 +206,9 @@ if ($null -eq $status -or -not $status.Healthy) {
 
 if (-not [string]::IsNullOrWhiteSpace($ModelId) -and -not [string]::IsNullOrWhiteSpace($ModelPath)) {
     throw 'Specify ModelId or ModelPath, not both.'
+}
+if (-not [string]::IsNullOrWhiteSpace($LoraStackJson) -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
+    throw 'Specify LoraStackJson or legacy single LoRA parameters, not both.'
 }
 
 $registry = Read-StableAmdModelRegistry -Path $paths.ModelsRegistryPath
@@ -159,7 +246,7 @@ if (-not (Test-Path $selectedModelPath -PathType Leaf)) {
     throw "Selected model no longer exists: '$selectedModelPath'."
 }
 if ([string]$model.family -ne 'sdxl') {
-    throw "StableAMD txt2img currently supports SDXL models only. Selected model family: '$($model.family)'."
+    throw "StableAMD generation currently supports SDXL models only. Selected model family: '$($model.family)'."
 }
 
 $resolvedWidth = if ($Width -gt 0) { $Width } else { [int]$config.generation.defaultWidth }
@@ -174,7 +261,7 @@ $baseUrl = [string]$status.Url
 if ([string]::IsNullOrWhiteSpace($baseUrl)) { throw 'Managed backend status did not include a URL.' }
 if (-not $baseUrl.EndsWith('/')) { $baseUrl += '/' }
 
-Write-StableAmdProgressEvent -Stage 'preparing' -Message "Preparing $([IO.Path]::GetFileName($selectedModelPath))..."
+Write-StableAmdProgressEvent -Stage 'preparing' -Message "Preparing $normalizedMode with $([IO.Path]::GetFileName($selectedModelPath))..."
 $objectInfoUrl = "${baseUrl}object_info/CheckpointLoaderSimple"
 $loaderInfo = Invoke-RestMethod -Uri $objectInfoUrl -Method Get -TimeoutSec 30
 $checkpointNode = $loaderInfo.PSObject.Properties['CheckpointLoaderSimple']
@@ -187,25 +274,52 @@ if ([string]::IsNullOrWhiteSpace([string]$checkpointName)) {
     throw "ComfyUI does not expose the selected model '$selectedModelPath'. Restart StableAMD after changing model roots."
 }
 
-$resolvedLoraName = ''
-if (-not [string]::IsNullOrWhiteSpace($LoraName)) {
+$requestedLoraStack = @(ConvertFrom-StableAmdLoraStackJson -Json $LoraStackJson)
+if ($requestedLoraStack.Count -eq 0 -and -not [string]::IsNullOrWhiteSpace($LoraName)) {
+    $requestedLoraStack = @(
+        [pscustomobject]@{
+            name = $LoraName
+            modelStrength = $LoraModelStrength
+            clipStrength = $LoraClipStrength
+            enabled = $true
+        }
+    )
+}
+
+$resolvedLoraStack = @()
+if ($requestedLoraStack.Count -gt 0) {
     $loraInfo = Invoke-RestMethod -Uri "${baseUrl}object_info/LoraLoader" -Method Get -TimeoutSec 30
     $loraNode = $loraInfo.PSObject.Properties['LoraLoader']
     if ($null -eq $loraNode) {
         throw 'ComfyUI object_info did not return LoraLoader metadata.'
     }
     $loraChoices = @($loraNode.Value.input.required.lora_name[0])
-    $matches = @($loraChoices | Where-Object { [string]$_ -ieq $LoraName })
-    if ($matches.Count -ne 1) {
-        throw "ComfyUI does not expose LoRA '$LoraName'. Restart StableAMD after changing LoRA roots."
+
+    foreach ($entry in $requestedLoraStack) {
+        $resolvedName = [string]$entry.name
+        if ([bool]$entry.enabled) {
+            $nameMatches = @($loraChoices | Where-Object { [string]$_ -ieq [string]$entry.name })
+            if ($nameMatches.Count -ne 1) {
+                throw "ComfyUI does not expose LoRA '$($entry.name)'. Restart StableAMD after changing LoRA roots."
+            }
+            $resolvedName = [string]$nameMatches[0]
+        }
+        $resolvedLoraStack += [pscustomobject]@{
+            name = $resolvedName
+            modelStrength = [double]$entry.modelStrength
+            clipStrength = [double]$entry.clipStrength
+            enabled = [bool]$entry.enabled
+        }
     }
-    $resolvedLoraName = [string]$matches[0]
 }
 
 $generationToken = [guid]::NewGuid().ToString('N')
-$filenamePrefix = "StableAMD_SDXL_$generationToken"
+$modeToken = if ($normalizedMode -eq 'img2img') { 'IMG2IMG' } else { 'TXT2IMG' }
+$filenamePrefix = "StableAMD_SDXL_${modeToken}_$generationToken"
 
 $workflowParameters = @{
+    Family = [string]$model.family
+    Mode = $normalizedMode
     CheckpointName = $checkpointName
     Prompt = $Prompt
     NegativePrompt = $NegativePrompt
@@ -217,16 +331,16 @@ $workflowParameters = @{
     SamplerName = $resolvedSampler
     Scheduler = $resolvedScheduler
     FilenamePrefix = $filenamePrefix
+    LoraStack = $resolvedLoraStack
 }
-if (-not [string]::IsNullOrWhiteSpace($resolvedLoraName)) {
-    $workflowParameters.LoraName = $resolvedLoraName
-    $workflowParameters.LoraModelStrength = $LoraModelStrength
-    $workflowParameters.LoraClipStrength = $LoraClipStrength
+if ($normalizedMode -eq 'img2img') {
+    $workflowParameters.InputImageName = $inputImageName
+    $workflowParameters.Denoise = $Denoise
 }
-$workflow = New-StableAmdSdxlWorkflow @workflowParameters
+$workflow = New-StableAmdWorkflow @workflowParameters
 
-# StableAMD owns the graph shape. v0.2 optionally inserts LoraLoader between
-# CheckpointLoaderSimple and the CLIP/KSampler consumers.
+# StableAMD owns the graph shape. The v0.3 provider dispatcher supports SDXL
+# txt2img and img2img while preserving ordered and legacy LoRA contracts.
 $clientId = [guid]::NewGuid().ToString('N')
 $payload = [ordered]@{
     prompt = $workflow
@@ -256,13 +370,22 @@ Write-StableAmdProgressEvent -Stage 'queued' -Message "Queued as $promptId" -Pro
 
 $nodeStages = @{
     '4' = @('loading-model', 'Loading checkpoint into GPU memory...')
-    '10' = @('loading-lora', 'Applying LoRA...')
     '6' = @('encoding', 'Encoding prompt...')
     '7' = @('encoding', 'Encoding negative prompt...')
-    '5' = @('latent', 'Preparing latent image...')
+    '5' = if ($normalizedMode -eq 'img2img') { @('input', 'Loading input image...') } else { @('latent', 'Preparing latent image...') }
     '3' = @('sampling', 'Starting sampler...')
     '8' = @('decoding', 'Decoding image with VAE...')
     '9' = @('saving', 'Saving generated image...')
+}
+if ($normalizedMode -eq 'img2img') {
+    $nodeStages['18'] = @('input', 'Resizing input image...')
+    $nodeStages['19'] = @('latent', 'Encoding input image to latent space...')
+}
+for ($index = 0; $index -lt $resolvedLoraStack.Count; $index++) {
+    $entry = $resolvedLoraStack[$index]
+    if (-not [bool]$entry.enabled) { continue }
+    $nodeId = [string](10 + $index)
+    $nodeStages[$nodeId] = @('loading-lora', "Applying LoRA $($index + 1)/$($resolvedLoraStack.Count): $($entry.name)")
 }
 
 $deadline = (Get-Date).AddSeconds([Math]::Max(5, $GenerationTimeoutSeconds))
@@ -405,19 +528,26 @@ if ([string]::IsNullOrWhiteSpace([string]$imagePath)) {
 
 $generationSeconds = [Math]::Round($watch.Elapsed.TotalSeconds, 3)
 $createdAtUtc = [DateTime]::UtcNow.ToString('o')
-$loraModelMetadata = if ([string]::IsNullOrWhiteSpace($resolvedLoraName)) { $null } else { $LoraModelStrength }
-$loraClipMetadata = if ([string]::IsNullOrWhiteSpace($resolvedLoraName)) { $null } else { $LoraClipStrength }
+$enabledLoras = @($resolvedLoraStack | Where-Object { [bool]$_.enabled })
+$legacyLoraNameMetadata = if ($enabledLoras.Count -eq 1) { [string]$enabledLoras[0].name } else { '' }
+$loraModelMetadata = if ($enabledLoras.Count -eq 1) { [double]$enabledLoras[0].modelStrength } else { $null }
+$loraClipMetadata = if ($enabledLoras.Count -eq 1) { [double]$enabledLoras[0].clipStrength } else { $null }
+$historyInputImagePath = if ($normalizedMode -eq 'img2img') { $resolvedInputImagePath } else { '' }
+$historyDenoise = if ($normalizedMode -eq 'img2img') { $Denoise } else { $null }
 
 $historyRecord = [pscustomobject]@{
-    schemaVersion = 2
+    schemaVersion = 3
     createdAtUtc = $createdAtUtc
     promptId = $promptId
+    mode = $normalizedMode
     prompt = $Prompt
     negativePrompt = $NegativePrompt
     modelId = [string]$model.id
     modelName = [string]$model.name
     modelPath = $selectedModelPath
     checkpointName = $checkpointName
+    inputImagePath = $historyInputImagePath
+    denoise = $historyDenoise
     width = $resolvedWidth
     height = $resolvedHeight
     steps = $resolvedSteps
@@ -425,7 +555,8 @@ $historyRecord = [pscustomobject]@{
     seed = $resolvedSeed
     sampler = $resolvedSampler
     scheduler = $resolvedScheduler
-    loraName = $resolvedLoraName
+    loraStack = @($resolvedLoraStack)
+    loraName = $legacyLoraNameMetadata
     loraModelStrength = $loraModelMetadata
     loraClipStrength = $loraClipMetadata
     generationSeconds = $generationSeconds
@@ -438,12 +569,15 @@ Write-StableAmdProgressEvent -Stage 'completed' -Message "Generation complete in
 
 return [pscustomobject]@{
     PromptId = $promptId
+    Mode = $normalizedMode
     Prompt = $Prompt
     NegativePrompt = $NegativePrompt
     ModelId = [string]$model.id
     ModelName = [string]$model.name
     ModelPath = $selectedModelPath
     CheckpointName = $checkpointName
+    InputImagePath = $historyInputImagePath
+    Denoise = $historyDenoise
     Width = $resolvedWidth
     Height = $resolvedHeight
     Steps = $resolvedSteps
@@ -451,7 +585,8 @@ return [pscustomobject]@{
     Seed = $resolvedSeed
     Sampler = $resolvedSampler
     Scheduler = $resolvedScheduler
-    LoraName = $resolvedLoraName
+    LoraStack = @($resolvedLoraStack)
+    LoraName = $legacyLoraNameMetadata
     LoraModelStrength = $loraModelMetadata
     LoraClipStrength = $loraClipMetadata
     GenerationSeconds = $generationSeconds
