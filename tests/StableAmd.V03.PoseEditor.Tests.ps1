@@ -36,6 +36,16 @@ Describe 'StableAMD v0.3 pose library and interactive editor' {
         $control | Should -Match 'optional upload'
     }
 
+    It 'fits template and editor poses inside a safe frame before control use' {
+        $pose = Get-Content -LiteralPath $posePath -Raw
+        $pose | Should -Match 'POSE_SAFE_FRAME_FRACTION'
+        $pose | Should -Match 'fitTemplatePoseToFrame'
+        $pose | Should -Match 'fitPosePointsToFrame'
+        $pose | Should -Match 'currentPoseTargetSize'
+        $pose | Should -Match 'Fit to frame'
+        $pose | Should -Match 'Selected .*safe-frame fitted'
+    }
+
     It 'composes direct Z-Image OpenPose-map support over Union 2.1' {
         Test-Path $poseBackendPath | Should -BeTrue
         $wrapper = Get-Content -LiteralPath $wrapperPath -Raw
