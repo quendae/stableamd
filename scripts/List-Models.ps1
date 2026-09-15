@@ -39,9 +39,42 @@ if ($NoRegistryUpdate) {
     }
 }
 
-$existing = Read-StableAmdModelRegistry -Path $paths.ModelsRegistryPath
+# The registry is derived cache/state, not the source of truth. Earlier v0.3
+# builds could leave models.json truncated if two HTTP requests refreshed model
+# discovery while Set-Content was replacing the file. Never let a broken cache
+# make the whole Generate page unusable: quarantine it and rebuild from disk.
+try {
+    $existing = Read-StableAmdModelRegistry -Path $paths.ModelsRegistryPath
+}
+catch {
+    if (Test-Path -LiteralPath $paths.ModelsRegistryPath -PathType Leaf) {
+        $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+        $quarantine = $paths.ModelsRegistryPath + '.corrupt-' + $stamp
+        try {
+            Move-Item -LiteralPath $paths.ModelsRegistryPath -Destination $quarantine -Force -ErrorAction Stop
+            Write-Warning "StableAMD recovered a corrupt model registry. Previous file: $quarantine"
+        }
+        catch {
+            Remove-Item -LiteralPath $paths.ModelsRegistryPath -Force -ErrorAction SilentlyContinue
+            Write-Warning 'StableAMD recovered a corrupt model registry and removed the unreadable cache.'
+        }
+    }
+    $existing = New-StableAmdEmptyModelRegistry
+}
+
 $registry = Merge-StableAmdModelRegistry -ExistingRegistry $existing -DiscoveredModels $discovered
-Write-StableAmdModelRegistry -Path $paths.ModelsRegistryPath -Registry $registry
+
+# Write through a sibling temporary file and rename it into place. Readers now
+# see either the previous complete registry or the new complete registry, never
+# a half-written JSON document.
+$tempRegistry = $paths.ModelsRegistryPath + '.tmp-' + [guid]::NewGuid().ToString('N')
+try {
+    Write-StableAmdModelRegistry -Path $tempRegistry -Registry $registry
+    Move-Item -LiteralPath $tempRegistry -Destination $paths.ModelsRegistryPath -Force
+}
+finally {
+    Remove-Item -LiteralPath $tempRegistry -Force -ErrorAction SilentlyContinue
+}
 
 return [pscustomobject]@{
     models = [object[]]@($registry.models)
