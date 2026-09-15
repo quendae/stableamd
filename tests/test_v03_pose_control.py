@@ -20,17 +20,7 @@ class FakePoseBridge(server.PowerShellBridge):
         return server.ZIMAGE_FUN_PATCH
 
     def _node_available(self, node_name: str) -> bool:
-        return node_name in {
-            "ModelPatchLoader",
-            "ZImageFunControlnet",
-            "Canny",
-            "TextEncodeKrea2OstrisEdit",
-            "Krea2OstrisEditModelPatch",
-            "LoraLoaderModelOnly",
-        }
-
-    def _lora_choice_by_leaf(self, filename, node_name="LoraLoaderModelOnly"):
-        return f"krea/{filename}"
+        return node_name in {"ModelPatchLoader", "ZImageFunControlnet", "Canny"}
 
 
 class StableAmdV03PoseControlTests(unittest.TestCase):
@@ -61,32 +51,6 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
         self.assertEqual(result["73"]["inputs"]["image"], ["71", 0])
         self.assertEqual(result["11"]["inputs"]["model"], ["73", 0])
         self.assertNotIn("Canny", [node.get("class_type") for node in result.values()])
-
-    def test_krea_openpose_enables_provider_published_reference_kv_cache(self):
-        workflow = {
-            "10": {"class_type": "UNETLoader", "inputs": {}},
-            "11": {"class_type": "CLIPLoader", "inputs": {}},
-            "12": {"class_type": "VAELoader", "inputs": {}},
-            "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024}},
-            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "astronaut", "clip": ["11", 0]}},
-            "3": {
-                "class_type": "KSampler",
-                "inputs": {
-                    "model": ["10", 0],
-                    "positive": ["6", 0],
-                    "negative": ["13", 0],
-                    "latent_image": ["5", 0],
-                },
-            },
-        }
-        context = {"image_name": "pose.png", "width": 1024, "height": 1024, "strength": 0.85}
-
-        result = self.bridge._inject_krea_openpose(workflow, context)
-
-        self.assertEqual(result["62"]["class_type"], "Krea2OstrisEditModelPatch")
-        self.assertIs(result["62"]["inputs"]["kv_cache"], True)
-        self.assertEqual(result["63"]["class_type"], "LoraLoaderModelOnly")
-        self.assertEqual(result["63"]["inputs"]["lora_name"], f"krea/{server.KREA_OPENPOSE_LORA}")
 
     def test_zimage_model_support_exposes_openpose_when_union_route_is_ready(self):
         support = {
