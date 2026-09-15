@@ -59,7 +59,17 @@ $registry = New-StableAmdEmptyBundleRegistry
 foreach ($bundle in $complete) {
     $registry = Upsert-StableAmdBundleRegistryEntry -Registry $registry -Entry $bundle
 }
-Write-StableAmdBundleRegistry -Path $paths.BundlesRegistryPath -Registry $registry
+
+# The bundle registry is derived state. Publish it atomically so concurrent API
+# readers never observe a partially written JSON document during model refresh.
+$tempRegistry = $paths.BundlesRegistryPath + '.tmp-' + [guid]::NewGuid().ToString('N')
+try {
+    Write-StableAmdBundleRegistry -Path $tempRegistry -Registry $registry
+    Move-Item -LiteralPath $tempRegistry -Destination $paths.BundlesRegistryPath -Force
+}
+finally {
+    Remove-Item -LiteralPath $tempRegistry -Force -ErrorAction SilentlyContinue
+}
 
 [pscustomobject]@{
     count = @($packages).Count
