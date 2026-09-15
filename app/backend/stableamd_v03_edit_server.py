@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,7 @@ ZIMAGE_FUN_PATCH_SHA256 = editing.ZIMAGE_FUN_PATCH_SHA256
 ZIMAGE_FUN_PATCH_BYTES = editing.ZIMAGE_FUN_PATCH_BYTES
 
 _POWERSHELL_JSON_SENTINEL = "__STABLEAMD_JSON__"
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class PowerShellBridge(editing.PowerShellBridge):
@@ -108,7 +110,18 @@ class PowerShellBridge(editing.PowerShellBridge):
         return parts
 
     @staticmethod
-    def _parse_powershell_json(stdout: str) -> Any:
+    def _sanitize_powershell_json(payload: str) -> str:
+        # PowerShell warning/progress rendering can leak ANSI CSI sequences into
+        # captured stdout. A source-encoding mismatch can also surface C0 bytes
+        # such as BEL inside an otherwise valid JSON string. Neither should make
+        # the product lose all model discovery. Keep JSON whitespace, strip the
+        # remaining C0 transport noise, then parse the cleaned payload.
+        cleaned = _ANSI_ESCAPE_RE.sub("", str(payload or ""))
+        cleaned = "".join(ch for ch in cleaned if ch in "\t\r\n" or ord(ch) >= 0x20)
+        return cleaned.strip()
+
+    @classmethod
+    def _parse_powershell_json(cls, stdout: str) -> Any:
         lines = [line.strip() for line in str(stdout or "").splitlines() if line.strip()]
 
         # Preferred v0.3 contract. The sentinel makes parsing deterministic even
@@ -118,22 +131,32 @@ class PowerShellBridge(editing.PowerShellBridge):
             marker = line.find(_POWERSHELL_JSON_SENTINEL)
             if marker < 0:
                 continue
-            payload = line[marker + len(_POWERSHELL_JSON_SENTINEL) :].strip()
+            payload = cls._sanitize_powershell_json(line[marker + len(_POWERSHELL_JSON_SENTINEL) :])
             if not payload:
                 return None
             try:
                 return json.loads(payload)
             except json.JSONDecodeError:
-                continue
+                # strict=False is a final compatibility guard for malformed C0
+                # characters embedded by external scripts that survived string
+                # transport. Our own scripts should never require this path.
+                try:
+                    return json.loads(payload, strict=False)
+                except json.JSONDecodeError:
+                    continue
 
         # Backward-compatible parser for explicit/custom PowerShell commands and
         # old scripts that may still emit a clean JSON line without the marker.
         for line in reversed(lines):
-            if line.startswith("{") or line.startswith("[") or line in {"null", "true", "false"}:
+            payload = cls._sanitize_powershell_json(line)
+            if payload.startswith("{") or payload.startswith("[") or payload in {"null", "true", "false"}:
                 try:
-                    return json.loads(line)
+                    return json.loads(payload)
                 except json.JSONDecodeError:
-                    continue
+                    try:
+                        return json.loads(payload, strict=False)
+                    except json.JSONDecodeError:
+                        continue
         raise ValueError("no machine-readable JSON payload found")
 
     def _run_script(self, name: str, parameters: list[tuple[str, Any]] | None = None) -> Any:
@@ -150,8 +173,12 @@ class PowerShellBridge(editing.PowerShellBridge):
         # Force terminating failures and wrap the script output in a unique JSON
         # envelope. Convert the whole success-stream result at once so arrays,
         # objects and scalar/null results all share the same transport contract.
+        # Warnings/progress are intentionally suppressed for this machine-facing
+        # transport; actionable failures still become terminating exceptions.
         command = (
             "$ErrorActionPreference = 'Stop'; "
+            "$WarningPreference = 'SilentlyContinue'; "
+            "$ProgressPreference = 'SilentlyContinue'; "
             "try { "
             f"$stableamdPayload = @({invoke_text}); "
             "$stableamdJson = $stableamdPayload | ConvertTo-Json -Depth 20 -Compress; "
