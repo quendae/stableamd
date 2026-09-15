@@ -36,6 +36,15 @@ class StableAmdV03PowerShellTransportTests(unittest.TestCase):
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["models"][0]["id"], "krea")
 
+    def test_sentinel_json_survives_ansi_and_raw_control_byte_inside_string(self):
+        payload = server.PowerShellBridge._parse_powershell_json(
+            "\x1b[33mWARNING: noisy import\x1b[0m "
+            '__STABLEAMD_JSON__{"models":[{"label":"FP4 mixed \x07 low-memory preferred"}],"count":1}\n'
+        )
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["models"][0]["label"], "FP4 mixed  low-memory preferred")
+
     def test_run_script_uses_sentinel_envelope(self):
         bridge = server.PowerShellBridge(REPO_ROOT, powershell="pwsh.exe")
         completed = SimpleNamespace(
@@ -51,6 +60,8 @@ class StableAmdV03PowerShellTransportTests(unittest.TestCase):
         command = run.call_args.args[0][-1]
         self.assertIn("__STABLEAMD_JSON__", command)
         self.assertIn("$ErrorActionPreference = 'Stop'", command)
+        self.assertIn("$WarningPreference = 'SilentlyContinue'", command)
+        self.assertIn("$ProgressPreference = 'SilentlyContinue'", command)
 
     def test_unparseable_success_names_script_and_includes_output_tail(self):
         bridge = server.PowerShellBridge(REPO_ROOT, powershell="pwsh.exe")
