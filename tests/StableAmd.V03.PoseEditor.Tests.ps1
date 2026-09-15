@@ -3,16 +3,21 @@ BeforeAll {
     $loaderPath = Join-Path $repoRoot 'app/frontend/app-generate-upscale.js'
     $controlPath = Join-Path $repoRoot 'app/frontend/app-controlnet.js'
     $posePath = Join-Path $repoRoot 'app/frontend/app-pose-editor.js'
+    $safeFramePath = Join-Path $repoRoot 'app/frontend/app-pose-safe-frame.js'
     $wrapperPath = Join-Path $repoRoot 'app/backend/stableamd_v03_edit_server.py'
     $poseBackendPath = Join-Path $repoRoot 'app/backend/stableamd_v03_pose_control.py'
 }
 
 Describe 'StableAMD v0.3 pose library and interactive editor' {
-    It 'loads the pose editor after the ControlNet frontend layer' {
+    It 'loads pose safe-frame preprocessing before ControlNet and the editor after it' {
         Test-Path $posePath | Should -BeTrue
+        Test-Path $safeFramePath | Should -BeTrue
         $loader = Get-Content -LiteralPath $loaderPath -Raw
+        $loader | Should -Match 'app-pose-safe-frame\.js'
         $loader | Should -Match 'app-controlnet\.js'
         $loader | Should -Match 'app-pose-editor\.js'
+        $loader.IndexOf('app-pose-safe-frame.js') | Should -BeLessThan $loader.IndexOf('app-controlnet.js')
+        $loader.IndexOf('app-controlnet.js') | Should -BeLessThan $loader.IndexOf('app-pose-editor.js')
     }
 
     It 'pins Pose Depot image templates and OpenPose Studio editable presets' {
@@ -36,14 +41,17 @@ Describe 'StableAMD v0.3 pose library and interactive editor' {
         $control | Should -Match 'optional upload'
     }
 
-    It 'fits template and editor poses inside a safe frame before control use' {
-        $pose = Get-Content -LiteralPath $posePath -Raw
-        $pose | Should -Match 'POSE_SAFE_FRAME_FRACTION'
-        $pose | Should -Match 'fitTemplatePoseToFrame'
-        $pose | Should -Match 'fitPosePointsToFrame'
-        $pose | Should -Match 'currentPoseTargetSize'
-        $pose | Should -Match 'Fit to frame'
-        $pose | Should -Match 'Selected .*safe-frame fitted'
+    It 'auto-fits every OpenPose source into the requested aspect ratio with a safe border' {
+        $safeFrame = Get-Content -LiteralPath $safeFramePath -Raw
+        $safeFrame | Should -Match 'POSE_SAFE_FRAME_FRACTION'
+        $safeFrame | Should -Match '0\.82'
+        $safeFrame | Should -Match 'findPoseContentBounds'
+        $safeFrame | Should -Match 'fitOpenPosePayloadToFrame'
+        $safeFrame | Should -Match "control\.type === 'openpose'"
+        $safeFrame | Should -Match 'request\.width'
+        $safeFrame | Should -Match 'request\.height'
+        $safeFrame | Should -Match 'imageSmoothingEnabled = false'
+        $safeFrame | Should -Match 'safe-frame fitted'
     }
 
     It 'composes direct Z-Image OpenPose-map support over Union 2.1' {
