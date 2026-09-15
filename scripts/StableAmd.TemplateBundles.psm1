@@ -2,7 +2,7 @@ Set-StrictMode -Version 2.0
 
 # Shared dependency: avoid -Force here so callers that already imported the
 # bundle primitives do not lose their exported commands when templates load.
-Import-Module (Join-Path $PSScriptRoot 'StableAmd.Bundles.psm1')
+Import-Module (Join-Path $PSScriptRoot 'StableAmd.Bundles.psm1') -DisableNameChecking
 
 function Find-StableAmdTemplateAsset {
     [CmdletBinding()]
@@ -61,7 +61,7 @@ function New-StableAmdTemplateComponent {
     $displayLabel = $Label
     $problem = $null
     if ($found -and -not $sizeValid) {
-        $displayLabel = "$Label · incomplete/corrupt file"
+        $displayLabel = "$Label - incomplete/corrupt file"
         $problem = "Found $actualBytes bytes; expected $ExpectedBytes bytes. Re-download $ExpectedName."
     }
 
@@ -131,7 +131,7 @@ function Find-StableAmdTemplatePackages {
     $zEncoderVariants = @(
         [pscustomobject]@{
             name = 'qwen_3_4b_fp4_mixed.safetensors'
-            label = 'Text encoder (FP4 mixed · low-memory preferred)'
+            label = 'Text encoder (FP4 mixed - low-memory preferred)'
             expectedBytes = [Int64]3479416193
             expectedSha256 = '7ca32dcf07dfe7692945d80fff86e3a74cb83c6206b9b223ac6836b939bb85d6'
         },
@@ -143,7 +143,7 @@ function Find-StableAmdTemplatePackages {
         },
         [pscustomobject]@{
             name = 'qwen_3_4b.safetensors'
-            label = 'Text encoder (BF16 · compatibility fallback)'
+            label = 'Text encoder (BF16 - compatibility fallback)'
             expectedBytes = [Int64]0
             expectedSha256 = ''
         }
