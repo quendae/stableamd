@@ -47,7 +47,7 @@ Describe 'StableAMD v0.3 pose library and interactive editor' {
         $safeFrame | Should -Match '0\.82'
         $safeFrame | Should -Match 'findPoseContentBounds'
         $safeFrame | Should -Match 'fitOpenPosePayloadToFrame'
-        $safeFrame | Should -Match "control\.type === 'openpose'"
+        $safeFrame | Should -Match "control\?\.type === 'openpose'"
         $safeFrame | Should -Match 'request\.width'
         $safeFrame | Should -Match 'request\.height'
         $safeFrame | Should -Match 'imageSmoothingEnabled = false'
