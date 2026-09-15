@@ -6,15 +6,25 @@ import stableamd_v03_controlnet as controlnet
 
 base = controlnet.base
 
+KREA_POSE_REF_MAX_SIDE = 512
+
 
 class PoseControlBridgeMixin:
-    """Adds direct OpenPose-map control for Z-Image Turbo.
+    """Adds direct OpenPose-map control for Z-Image Turbo and Krea 2 tuning.
 
     Alibaba PAI Union 2.1 is a union control model: the same model patch accepts
     Canny, Depth, Pose, MLSD and other prepared control maps. The existing
     StableAMD Z-Image Canny route already proves the ModelPatchLoader +
     ZImageFunControlnet path; this layer reuses it without the Canny
     preprocessor when the user supplies a prepared OpenPose map.
+
+    Krea 2's published pose adapter was trained with isolated reference
+    attention (the Ostris ``kv_cache`` mode). Running it with the normal joint
+    reference path can produce weak pose adherence and visible control-image
+    leakage. On the 16 GiB target, full-resolution cached references are far too
+    expensive, so StableAMD keeps the correct training semantics while reducing
+    only the sparse OpenPose reference map to at most 512 px on its longest
+    side. The generated image itself remains at the user's selected resolution.
     """
 
     def _zimage_pose_ready(self) -> bool:
@@ -24,6 +34,22 @@ class PoseControlBridgeMixin:
             self._node_available(name)
             for name in ("ModelPatchLoader", "ZImageFunControlnet")
         )
+
+    def _krea_openpose_ready(self) -> bool:
+        return super()._krea_openpose_ready() and self._node_available(
+            "FluxKontextMultiReferenceLatentMethod"
+        )
+
+    @staticmethod
+    def _krea_pose_reference_size(width: int, height: int) -> tuple[int, int]:
+        width = max(16, int(width))
+        height = max(16, int(height))
+        scale = min(1.0, KREA_POSE_REF_MAX_SIDE / float(max(width, height)))
+
+        def snap(value: float) -> int:
+            return max(16, int(round(value / 16.0)) * 16)
+
+        return snap(width * scale), snap(height * scale)
 
     def model_support(self) -> dict[str, Any]:
         support = super().model_support()
@@ -35,6 +61,20 @@ class PoseControlBridgeMixin:
             if not isinstance(entry, dict):
                 continue
             family = str(entry.get("family") or "").lower()
+            if family == "krea2":
+                policy = entry.setdefault("controlPolicy", {})
+                controls = policy.setdefault("controls", [])
+                for item in controls:
+                    if isinstance(item, dict) and str(item.get("id") or "").lower() == "openpose":
+                        item["strengthDefault"] = 1.0
+                        item["recommendedSteps"] = 10
+                        item["referenceMaxSide"] = KREA_POSE_REF_MAX_SIDE
+                policy["note"] = (
+                    "Krea 2 OpenPose uses the adapter's isolated-reference training mode. "
+                    "StableAMD feeds a compact 512 px pose reference to keep it practical on 16 GiB; "
+                    "10 steps and strength 0.8-1.0 are recommended."
+                )
+                continue
             if family != "z-image-turbo":
                 continue
 
@@ -59,6 +99,55 @@ class PoseControlBridgeMixin:
             if isinstance(capabilities, dict) and pose_ready:
                 capabilities["controlnet"] = "supported"
         return support
+
+    def _inject_krea_openpose(self, workflow: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+        """Use the pose adapter's trained isolated-reference mode economically.
+
+        The published thedeoxen workflow enables ``kv_cache`` and marks both
+        positive and negative reference conditioning as ``index_timestep_zero``.
+        Keep those semantics, but encode the sparse pose map at <=512 px so the
+        reference-only K/V pass does not carry a 1 MP OpenPose latent on the
+        RX 6950 XT target.
+        """
+        result = super()._inject_krea_openpose(workflow, context)
+        patch = result.get("62")
+        sampler = result.get("3")
+        scale_node = result.get("61")
+        if not isinstance(patch, dict) or patch.get("class_type") != "Krea2OstrisEditModelPatch":
+            raise base.StableAmdBridgeError("Krea 2 OpenPose patch node is missing after workflow composition.")
+        if not isinstance(sampler, dict) or not isinstance(sampler.get("inputs"), dict):
+            raise base.StableAmdBridgeError("Krea 2 OpenPose KSampler is missing after workflow composition.")
+        if not isinstance(scale_node, dict) or not isinstance(scale_node.get("inputs"), dict):
+            raise base.StableAmdBridgeError("Krea 2 OpenPose control-image scaler is missing after workflow composition.")
+        if not self._node_available("FluxKontextMultiReferenceLatentMethod"):
+            raise base.StableAmdBridgeError(
+                "Krea 2 OpenPose requires FluxKontextMultiReferenceLatentMethod from the pinned ComfyUI runtime."
+            )
+
+        ref_width, ref_height = self._krea_pose_reference_size(
+            int(context["width"]), int(context["height"])
+        )
+        scale_node["inputs"]["width"] = ref_width
+        scale_node["inputs"]["height"] = ref_height
+        patch.setdefault("inputs", {})["kv_cache"] = True
+
+        result["66"] = {
+            "class_type": "FluxKontextMultiReferenceLatentMethod",
+            "inputs": {
+                "conditioning": ["64", 0],
+                "reference_latents_method": "index_timestep_zero",
+            },
+        }
+        result["67"] = {
+            "class_type": "FluxKontextMultiReferenceLatentMethod",
+            "inputs": {
+                "conditioning": ["65", 0],
+                "reference_latents_method": "index_timestep_zero",
+            },
+        }
+        sampler["inputs"]["positive"] = ["66", 0]
+        sampler["inputs"]["negative"] = ["67", 0]
+        return result
 
     def _inject_zimage_openpose(self, workflow: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         for node_id in ("11", "29", "3"):
