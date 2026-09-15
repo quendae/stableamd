@@ -12,6 +12,7 @@
 
   loadScript('/app-generate-upscale-base.js')
     .then(() => loadScript('/app-controlnet.js'))
+    .then(() => loadScript('/app-pose-editor.js'))
     .catch((error) => {
       console.error('StableAMD late frontend extension failed:', error);
       if (typeof showToast === 'function') showToast(error.message || String(error));

@@ -11,12 +11,14 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 # Keep the previous final v0.3 product server intact as a compatibility layer,
-# then add ControlNet as one more extension. This keeps the accepted Krea LoRA,
-# Z-Image edit and hardened PowerShell transport paths unchanged.
+# then add ControlNet and pose-control extensions. This keeps the accepted Krea
+# LoRA, Z-Image edit and hardened PowerShell transport paths unchanged.
 from stableamd_v03_product_server import *  # noqa: F401,F403,E402
 import stableamd_v03_product_server as product  # noqa: E402
 import stableamd_v03_controlnet as controlnet  # noqa: E402
+import stableamd_v03_pose_control as posecontrol  # noqa: E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
+from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
 
 # Explicit compatibility exports used by the regression suite.
 base = product.base
@@ -37,7 +39,7 @@ KREA_OPENPOSE_LORA_BYTES = controlnet.KREA_OPENPOSE_LORA_BYTES
 KREA_OPENPOSE_LORA_SHA256 = controlnet.KREA_OPENPOSE_LORA_SHA256
 
 
-class PowerShellBridge(ControlNetBridgeMixin, product.PowerShellBridge):
+class PowerShellBridge(PoseControlBridgeMixin, ControlNetBridgeMixin, product.PowerShellBridge):
     """Final v0.3 bridge: accepted product paths + provider-aware ControlNet."""
 
     def _node_available(self, node_name: str) -> bool:

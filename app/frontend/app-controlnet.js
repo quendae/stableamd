@@ -70,7 +70,10 @@
     form.insertBefore(panel, button);
 
     panel.querySelector('#controlnet-enabled')?.addEventListener('change', updateFieldVisibility);
-    panel.querySelector('#controlnet-type')?.addEventListener('change', updateFieldVisibility);
+    panel.querySelector('#controlnet-type')?.addEventListener('change', () => {
+      updateFieldVisibility();
+      document.dispatchEvent(new CustomEvent('stableamd:control-type-changed'));
+    });
     return panel;
   }
 
@@ -90,12 +93,13 @@
     fields.hidden = !enabled.checked;
     canny.hidden = !enabled.checked || type.value !== 'canny';
     if (type.value === 'openpose') {
-      if (label) label.textContent = 'OpenPose / DWPose map';
-      if (hint) hint.textContent = 'First Krea 2 gate expects an already prepared skeleton map. Automatic DWPose extraction is the next sub-phase.';
+      if (label) label.textContent = 'OpenPose / DWPose map (optional upload)';
+      if (hint) hint.textContent = 'Choose a built-in pose template, use the interactive editor, or upload your own prepared skeleton map.';
     } else {
       if (label) label.textContent = 'Source image';
       if (hint) hint.textContent = 'StableAMD runs Canny locally inside the Z-Image graph.';
     }
+    document.dispatchEvent(new CustomEvent('stableamd:control-visibility-changed'));
   }
 
   async function installDependency(id, button) {
@@ -137,6 +141,7 @@
     const install = panel.querySelector('#controlnet-install');
     const available = supportedControls(model);
     const installable = plannedInstallableControls(model);
+    const previousType = type.value;
 
     type.replaceChildren();
     available.forEach((item) => {
@@ -146,6 +151,9 @@
       option.dataset.strength = String(item.strengthDefault ?? 1);
       type.append(option);
     });
+    if ([...type.options].some((option) => option.value === previousType)) {
+      type.value = previousType;
+    }
 
     enable.disabled = !available.length;
     if (!available.length) enable.checked = false;
@@ -157,6 +165,7 @@
     } else if (available.length) {
       help.textContent = model.controlPolicy?.note || 'Provider-specific control is ready.';
       const chosen = available.find((item) => String(item.id) === type.value) || available[0];
+      type.value = String(chosen?.id || '');
       strength.value = String(chosen?.strengthDefault ?? 1);
       if (chosen?.id === 'canny') {
         const low = panel.querySelector('#controlnet-canny-low');
@@ -226,12 +235,21 @@
         if (enabled?.checked) {
           const request = JSON.parse(options.body || '{}');
           const file = document.querySelector('#controlnet-image')?.files?.[0];
-          if (!file) throw new Error('Choose a control image first.');
           const type = document.querySelector('#controlnet-type')?.value || '';
+          let imagePayload = file ? await readFilePayload(file) : null;
+          if (!imagePayload && type === 'openpose' && window.StableAmdPose?.getControlImagePayload) {
+            imagePayload = await window.StableAmdPose.getControlImagePayload();
+          }
+          if (!imagePayload) {
+            throw new Error(type === 'openpose'
+              ? 'Choose a pose template, use the pose editor, or upload an OpenPose map first.'
+              : 'Choose a control image first.');
+          }
+
           const control = {
             enabled: true,
             type,
-            image: await readFilePayload(file),
+            image: imagePayload,
             strength: Number(document.querySelector('#controlnet-strength')?.value || 1),
           };
           if (type === 'canny') {
