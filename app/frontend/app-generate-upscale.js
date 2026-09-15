@@ -11,6 +11,7 @@
   }
 
   loadScript('/app-generate-upscale-base.js')
+    .then(() => loadScript('/app-pose-safe-frame.js'))
     .then(() => loadScript('/app-controlnet.js'))
     .then(() => loadScript('/app-pose-editor.js'))
     .catch((error) => {
