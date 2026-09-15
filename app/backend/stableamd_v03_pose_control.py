@@ -15,11 +15,6 @@ class PoseControlBridgeMixin:
     StableAMD Z-Image Canny route already proves the ModelPatchLoader +
     ZImageFunControlnet path; this layer reuses it without the Canny
     preprocessor when the user supplies a prepared OpenPose map.
-
-    The Krea 2 OpenPose adapter has one provider-specific performance detail as
-    well: its published example workflow enables the Ostris edit node's
-    reference K/V cache. Keep that optimization scoped to this accepted pose
-    adapter instead of changing generic Krea edit behavior.
     """
 
     def _zimage_pose_ready(self) -> bool:
@@ -64,21 +59,6 @@ class PoseControlBridgeMixin:
             if isinstance(capabilities, dict) and pose_ready:
                 capabilities["controlnet"] = "supported"
         return support
-
-    def _inject_krea_openpose(self, workflow: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        """Match the published Krea 2 pose workflow's cached-reference mode.
-
-        This is intentionally limited to the accepted OpenPose adapter. The
-        Ostris node warns that kv_cache must only be used with adapters trained
-        for it, and the published thedeoxen workflow enables the option.
-        """
-        result = super()._inject_krea_openpose(workflow, context)
-        patch = result.get("62")
-        if not isinstance(patch, dict) or patch.get("class_type") != "Krea2OstrisEditModelPatch":
-            raise base.StableAmdBridgeError("Krea 2 OpenPose patch node is missing after workflow composition.")
-        inputs = patch.setdefault("inputs", {})
-        inputs["kv_cache"] = True
-        return result
 
     def _inject_zimage_openpose(self, workflow: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         for node_id in ("11", "29", "3"):
