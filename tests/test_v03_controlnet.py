@@ -23,6 +23,17 @@ class FakeControlBridge(server.PowerShellBridge):
     def _lora_choice_by_leaf(self, filename, node_name="LoraLoaderModelOnly"):
         return f"krea/{filename}"
 
+    def _node_available(self, node_name: str) -> bool:
+        return node_name in {
+            "Canny",
+            "ModelPatchLoader",
+            "ZImageFunControlnet",
+            "TextEncodeKrea2OstrisEdit",
+            "Krea2OstrisEditModelPatch",
+            "LoraLoaderModelOnly",
+            "FluxKontextMultiReferenceLatentMethod",
+        }
+
 
 class StableAmdV03ControlNetTests(unittest.TestCase):
     def setUp(self):
@@ -67,7 +78,7 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
         self.assertEqual(result["64"]["inputs"]["image"], ["62", 0])
         self.assertEqual(result["11"]["inputs"]["model"], ["64", 0])
 
-    def test_krea_openpose_graph_uses_ostris_patch_and_control_lora(self):
+    def test_krea_openpose_graph_uses_trained_isolated_reference_path(self):
         workflow = {
             "10": {"class_type": "UNETLoader", "inputs": {}},
             "11": {"class_type": "CLIPLoader", "inputs": {}},
@@ -81,14 +92,21 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
         }
         context = {"image_name": "pose.png", "width": 1024, "height": 1024, "strength": 0.85}
         result = self.bridge._inject_krea_openpose(workflow, context)
+        self.assertEqual(result["61"]["inputs"]["width"], 512)
+        self.assertEqual(result["61"]["inputs"]["height"], 512)
         self.assertEqual(result["62"]["class_type"], "Krea2OstrisEditModelPatch")
+        self.assertIs(result["62"]["inputs"]["kv_cache"], True)
         self.assertEqual(result["63"]["class_type"], "LoraLoaderModelOnly")
         self.assertEqual(result["63"]["inputs"]["lora_name"], f"krea/{server.KREA_OPENPOSE_LORA}")
         self.assertEqual(result["64"]["class_type"], "TextEncodeKrea2OstrisEdit")
         self.assertEqual(result["64"]["inputs"]["image1"], ["61", 0])
+        self.assertEqual(result["66"]["class_type"], "FluxKontextMultiReferenceLatentMethod")
+        self.assertEqual(result["66"]["inputs"]["reference_latents_method"], "index_timestep_zero")
+        self.assertEqual(result["67"]["class_type"], "FluxKontextMultiReferenceLatentMethod")
+        self.assertEqual(result["67"]["inputs"]["reference_latents_method"], "index_timestep_zero")
         self.assertEqual(result["3"]["inputs"]["model"], ["63", 0])
-        self.assertEqual(result["3"]["inputs"]["positive"], ["64", 0])
-        self.assertEqual(result["3"]["inputs"]["negative"], ["65", 0])
+        self.assertEqual(result["3"]["inputs"]["positive"], ["66", 0])
+        self.assertEqual(result["3"]["inputs"]["negative"], ["67", 0])
 
     def test_krea_openpose_dependencies_are_pinned(self):
         self.assertEqual(server.KREA_OPENPOSE_PLUGIN_COMMIT, "7756566160c4a1b24bb1bd9f0ff3ced1a83d7547")
