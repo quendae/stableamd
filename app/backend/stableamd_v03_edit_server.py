@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# The managed Windows runtime uses the embeddable Python distribution with a
+# restricted module search path. Bootstrap sibling modules before importing the
+# preserved product server, just like the accepted v0.3 wrapper did.
+BACKEND_ROOT = Path(__file__).resolve().parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
 # Keep the previous final v0.3 product server intact as a compatibility layer,
 # then add ControlNet as one more extension. This keeps the accepted Krea LoRA,
 # Z-Image edit and hardened PowerShell transport paths unchanged.
-from stableamd_v03_product_server import *  # noqa: F401,F403
-import stableamd_v03_product_server as product
-import stableamd_v03_controlnet as controlnet
-from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin
+from stableamd_v03_product_server import *  # noqa: F401,F403,E402
+import stableamd_v03_product_server as product  # noqa: E402
+import stableamd_v03_controlnet as controlnet  # noqa: E402
+from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
 
 # Explicit compatibility exports used by the regression suite.
 base = product.base
