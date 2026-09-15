@@ -40,6 +40,22 @@ KREA_OPENPOSE_LORA_SHA256 = controlnet.KREA_OPENPOSE_LORA_SHA256
 class PowerShellBridge(ControlNetBridgeMixin, product.PowerShellBridge):
     """Final v0.3 bridge: accepted product paths + provider-aware ControlNet."""
 
+    def _node_available(self, node_name: str) -> bool:
+        # Capability discovery must never turn an otherwise valid model-support
+        # response into an error. Compatibility test bridges intentionally
+        # expose only the nodes they know about; real ComfyUI can likewise be
+        # temporarily unavailable during restart.
+        try:
+            return super()._node_available(node_name)
+        except Exception:
+            return False
+
+    def _lora_choice_by_leaf(self, filename: str, node_name: str = "LoraLoaderModelOnly"):
+        try:
+            return super()._lora_choice_by_leaf(filename, node_name)
+        except Exception:
+            return None
+
 
 class StableAmdApi(ControlNetApiMixin, product.StableAmdApi):
     _generation_fields = set(product.StableAmdApi._generation_fields) | {"control"}
