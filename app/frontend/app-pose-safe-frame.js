@@ -2,7 +2,7 @@
   const POSE_SAFE_FRAME_FRACTION = 0.82;
   const POSE_SAFE_FRAME_MAX_SIDE = 1024;
   const POSE_CONTENT_THRESHOLD = 8;
-  const SAFE_FRAME_HINT = 'OpenPose maps are safe-frame fitted automatically to the generation aspect ratio.';
+  const SAFE_FRAME_HINT = 'Built-in templates and editor poses are safe-frame fitted automatically to the generation aspect ratio.';
 
   function clampDimension(value, fallback) {
     const numeric = Math.round(Number(value));
@@ -17,6 +17,11 @@
       width: Math.max(64, Math.round(requestedWidth * scale)),
       height: Math.max(64, Math.round(requestedHeight * scale)),
     };
+  }
+
+  function shouldAutoFitOpenPosePayload(payload) {
+    const name = String(payload?.name || '').replace(/\\/g, '/').split('/').pop().toLowerCase();
+    return name.endsWith('-openposefull.png') || name === 'stableamd-openpose-editor.png';
   }
 
   function payloadDataUrl(payload) {
@@ -142,7 +147,12 @@
       if (path === '/api/generate' && String(options.method || 'GET').toUpperCase() === 'POST') {
         const request = JSON.parse(options.body || '{}');
         const control = request?.control;
-        if (control?.enabled !== false && control?.type === 'openpose' && control?.image?.dataBase64) {
+        if (
+          control?.enabled !== false
+          && control?.type === 'openpose'
+          && control?.image?.dataBase64
+          && shouldAutoFitOpenPosePayload(control.image)
+        ) {
           const fitted = await fitOpenPosePayloadToFrame(
             control.image,
             request.width || 1024,
@@ -164,6 +174,7 @@
       fitOpenPosePayloadToFrame,
       findPoseContentBounds,
       poseTargetSize,
+      shouldAutoFitOpenPosePayload,
       fraction: POSE_SAFE_FRAME_FRACTION,
     };
   }
