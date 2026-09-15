@@ -12,15 +12,21 @@ Describe 'StableAMD v0.3 curated model patch installer' {
         $catalog | Should -Match 'Apache-2\.0'
     }
 
-    It 'exposes catalog and install routes from the final edit server layer' {
-        $server = Get-Content -LiteralPath (Join-Path $repoRoot 'app/backend/stableamd_v03_edit_server.py') -Raw
-        $baseServer = Join-Path $repoRoot 'app/backend/stableamd_v03_edit_server_base.py'
+    It 'exposes catalog and install routes through the final composed server layer' {
+        $wrapperPath = Join-Path $repoRoot 'app/backend/stableamd_v03_edit_server.py'
+        $productPath = Join-Path $repoRoot 'app/backend/stableamd_v03_product_server.py'
+        $editBasePath = Join-Path $repoRoot 'app/backend/stableamd_v03_edit_server_base.py'
 
-        Test-Path $baseServer | Should -BeTrue
+        Test-Path $wrapperPath | Should -BeTrue
+        Test-Path $productPath | Should -BeTrue
+        Test-Path $editBasePath | Should -BeTrue
+
+        $server = (Get-Content -LiteralPath $wrapperPath -Raw) + "`n" + (Get-Content -LiteralPath $productPath -Raw)
         $server | Should -Match '/api/model-patches/catalog'
         $server | Should -Match '/api/model-patches/install'
         $server | Should -Match 'install_curated_model_patch'
         $server | Should -Match 'ModelPatchLoader'
+        (Get-Content -LiteralPath $wrapperPath -Raw) | Should -Match 'stableamd_v03_product_server'
     }
 
     It 'adds Install and activate provider dependencies to the Models page' {
