@@ -4,12 +4,15 @@ import base64
 import sys
 import unittest
 from pathlib import Path
+from threading import local
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+import stableamd_v03_controlnet as controlnet
 import stableamd_v03_edit_server as server
 
 
@@ -113,6 +116,49 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
         self.assertEqual(result["3"]["inputs"]["model"], ["63", 0])
         self.assertEqual(result["3"]["inputs"]["positive"], ["66", 0])
         self.assertEqual(result["3"]["inputs"]["negative"], ["67", 0])
+
+    def test_krea_openpose_forwards_user_lora_stack_to_krea_generator(self):
+        captured = {}
+
+        class Parent:
+            def _generate_krea2_turbo(self, request, model):
+                captured["request"] = dict(request)
+                return {"PromptId": "krea-prompt", "HistoryPath": ""}
+
+        class LoraControlBridge(controlnet.ControlNetBridgeMixin, Parent):
+            def __init__(self):
+                self.repo_root = REPO_ROOT
+                self._stableamd_control_context = local()
+
+            def _krea_openpose_ready(self):
+                return True
+
+        bridge = LoraControlBridge()
+        lora_stack = [
+            {
+                "name": "krea/krea2_darkbrush.safetensors",
+                "modelStrength": 0.75,
+                "clipStrength": 0.0,
+                "enabled": True,
+            }
+        ]
+        fake_staged = REPO_ROOT / ".runtime" / "stableamd" / "input" / "test-openpose.png"
+        control = {
+            "type": "openpose",
+            "strength": 1.0,
+            "image": {"name": "pose.png", "mimeType": "image/png", "dataBase64": "ignored-by-test"},
+        }
+
+        with patch.object(controlnet.base, "stage_input_image", return_value=fake_staged):
+            result = bridge._generate_krea_control(
+                {"prompt": "portrait", "width": 1024, "height": 1024, "loraStack": lora_stack},
+                {"id": "krea"},
+                control,
+            )
+
+        self.assertEqual(result["Mode"], "controlnet")
+        self.assertEqual(captured["request"]["loraStack"], lora_stack)
+        self.assertNotIn("control", captured["request"])
 
     def test_krea_openpose_releases_comfy_runtime_after_generation(self):
         class Parent:
