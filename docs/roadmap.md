@@ -1,23 +1,43 @@
 # StableAMD roadmap
 
-Last updated: 2026-09-14
+Last updated: 2026-09-16
 
-This file tracks larger product directions. Detailed implementation/acceptance state for the active release remains in `docs/v0.3-status.md`; the agreed execution order and feature backlog live in `docs/v0.3-forward-plan.md`.
+This file tracks larger product directions. Detailed implementation/acceptance state for the active release remains in `docs/v0.3-status.md`; the active execution order lives in `docs/v0.3-forward-plan.md`.
 
 ## v0.3 — active
 
 Primary goal: turn the proven Radeon/ComfyUI runtime into a practical multi-provider image workstation without destabilizing the accepted RX 6950 XT path.
 
+Already target-accepted in v0.3:
+
+- Z-Image Turbo txt2img + ordered model-only LoRA;
+- native Z-Image Inpaint / Outpaint;
+- Krea 2 Turbo txt2img + model-only LoRA;
+- Krea 2 OpenPose, including normal user-LoRA coexistence;
+- Krea 2 whole-image Image Edit;
+- curated pose templates + interactive pose editor;
+- classic verified upscaling with exact 2x/4x/8x planning;
+- asynchronous long-generation jobs;
+- capability-aware model/mode UI and startup model-discovery gate.
+
 Current order:
 
-1. Curated one-click dependency installer, starting with the accepted Z-Image Union 2.1 Lite model patch.
-2. Real Krea 2 LoRA execution and target acceptance, including stack/history/reuse behavior where the pinned loader path supports it.
-3. ControlNet / structural guidance, beginning with Canny, Depth and OpenPose and keeping provider/model compatibility explicit.
-4. First-class image-edit workflows: general image edit, material replacement, one/two-image reference and style guidance, then a character turnaround sheet preset.
-5. Separate vector/graphics providers for text-to-SVG, image-to-SVG and infographic-specialized generation.
-6. Remaining v0.3 polish and infrastructure that directly supports these workflows; inpaint/outpaint stay maintained but are no longer the main development focus.
+1. Finish remaining provider-aware structural guidance:
+   - Z-Image control-route acceptance;
+   - Krea Depth;
+   - automatic pose extraction from a normal source photo.
+2. Expand the accepted Krea Image Edit route:
+   - material/texture replacement;
+   - one/two-image reference roles;
+   - character turnaround sheets;
+   - later masked Krea editing and Image Edit + Control composition if target-stable.
+3. Add vector/graphics workflows:
+   - text-to-SVG;
+   - image-to-SVG;
+   - infographic-specialized generation/tooling.
+4. Finish remaining v0.3 polish and infrastructure that directly supports these workflows.
 
-Batch/queue work and optional SeedVR2 evaluation remain useful supporting work, but they do not take priority over installer -> Krea 2 LoRA -> ControlNet.
+SDXL remains the compatibility baseline but is no longer the main feature-development target. Inpaint/outpaint are maintained, while new provider work prioritizes Z-Image and Krea.
 
 ## v0.4 candidate — Image(s) to Gaussian Splat
 
@@ -31,7 +51,8 @@ Add Gaussian Splatting as a separate 3D tool rather than mixing it into the imag
 - optional background removal for isolated objects;
 - generate a splat locally;
 - interactive orbit/zoom preview in the StableAMD web UI;
-- export a portable splat/PLY representation and keep the result in Gallery/history with its source images and settings.
+- export a portable splat/PLY representation;
+- preserve source images/settings in Gallery/history.
 
 ### Backend direction
 
@@ -57,8 +78,8 @@ Rationale:
 3. Browser viewer capable of smooth orbit/zoom on the generated result.
 4. Export and Gallery persistence.
 
-This feature is intentionally **post-v0.3** so it does not delay the current image-model/provider work.
+This feature remains intentionally **post-v0.3** so it does not delay the current image workstation.
 
 ## Later — video generation
 
-Video is intentionally after the core v0.3 image workstation and the first 3D work. It needs its own queue/job lifecycle, preview/export UX and memory/runtime acceptance. MiniMax H3 is the first candidate to benchmark on the target Radeon system; other models should be selected by demonstrated Windows/AMD feasibility rather than name recognition alone.
+Video comes after the v0.3 image workstation and first 3D work. It needs its own queue/job lifecycle, preview/export UX and memory/runtime acceptance. Candidate models should be selected by demonstrated Windows/AMD feasibility rather than name recognition alone.
