@@ -92,6 +92,20 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
         self.assertEqual(result["11"]["inputs"]["model"], ["73", 0])
         self.assertNotIn("Canny", [node.get("class_type") for node in result.values()])
 
+    def test_krea_openpose_uses_dynamic_text_encoder_device(self):
+        workflow = self._krea_workflow(cfg=1.0)
+        context = {
+            "image_name": "pose.png",
+            "width": 1024,
+            "height": 1024,
+            "strength": 1.0,
+        }
+
+        result = self.bridge._inject_krea_openpose(workflow, context)
+
+        self.assertEqual(result["11"]["class_type"], "CLIPLoader")
+        self.assertEqual(result["11"]["inputs"]["device"], "default")
+
     def test_krea_openpose_uses_official_reference_scaler_and_training_semantics(self):
         workflow = self._krea_workflow(cfg=1.0)
         context = {
