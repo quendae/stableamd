@@ -25,15 +25,15 @@ Describe 'StableAMD one-click launcher' {
         $stopCmd | Should -Match '%\*'
     }
 
-    It 'uses the accepted RX 6950 XT memory profile by default while preserving explicit overrides' {
+    It 'uses DynamicVRAM and RAM-pressure caching by default while preserving explicit overrides' {
         $script = Get-Content $launcherPath -Raw
 
         $script | Should -Match 'hasExplicitMemoryProfile'
         $script | Should -Match 'PSBoundParameters\.ContainsKey'
-        $script | Should -Match 'resolvedDisableDynamicVram\s*=\s*\$true'
-        $script | Should -Match 'resolvedLowVram\s*=\s*\$true'
-        $script | Should -Match 'resolvedCacheClassic\s*=\s*\$true'
-        $script | Should -Match 'RX 6950 XT / 16 GiB profile'
+        $script | Should -Match 'Using default RX 6950 XT / 16 GiB profile: DynamicVRAM \+ RAM-pressure cache \+ CPU VAE\.'
+        $script | Should -Not -Match 'resolvedDisableDynamicVram\s*=\s*\$true'
+        $script | Should -Not -Match 'resolvedLowVram\s*=\s*\$true'
+        $script | Should -Not -Match 'resolvedCacheClassic\s*=\s*\$true'
         $script | Should -Match 'LowVram and HighVram cannot be enabled together'
         $script | Should -Match 'CacheClassic and CacheNone cannot be enabled together'
     }
