@@ -10,7 +10,16 @@
   <link rel="stylesheet" href="/progress.css">
 </head>
 <body>
-  <div class="app-shell">
+  <div id="startup-gate" class="startup-gate" role="status" aria-live="polite">
+    <div class="startup-gate-card">
+      <div class="brand-mark startup-brand-mark" aria-hidden="true">S</div>
+      <div class="startup-spinner" aria-hidden="true"></div>
+      <strong>Loading models</strong>
+      <p id="startup-gate-message">Preparing StableAMD…</p>
+    </div>
+  </div>
+
+  <div class="app-shell" hidden>
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">S</div>
@@ -245,6 +254,7 @@
     </main>
   </div>
 
+  <script src="/app-startup.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/app-progress.js" defer></script>
   <script src="/app-v02.js" defer></script>
