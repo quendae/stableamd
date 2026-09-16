@@ -17,18 +17,22 @@ class StableAmdFrontendStartupGateTests(unittest.TestCase):
         app = source.index('src="/app.js"')
         self.assertLess(startup, app)
 
-    def test_startup_controller_waits_for_model_metadata_and_ui_or_30_second_fallback(self):
+    def test_startup_controller_waits_only_for_supported_model_list_or_10_second_fallback(self):
         source = (FRONTEND / "app-startup.js").read_text(encoding="utf-8")
-        self.assertIn("30000", source)
-        self.assertIn("Promise.allSettled", source)
+        self.assertIn("10000", source)
         self.assertIn("state.models", source)
         self.assertNotIn('fetch("/api/models"', source)
         self.assertIn('fetch("/api/model-support"', source)
-        self.assertIn('fetch("/api/generation-options"', source)
-        self.assertIn('fetch("/api/lora-catalog"', source)
-        self.assertIn("waitForUiReady", source)
+        self.assertIn("waitForModelUiReady", source)
         self.assertIn("startup-gate", source)
         self.assertIn("app-shell", source)
+
+        # Generation options and LoRA metadata continue loading in the background;
+        # they must not extend the model-list startup gate.
+        self.assertNotIn('fetch("/api/generation-options"', source)
+        self.assertNotIn('fetch("/api/lora-catalog"', source)
+        self.assertNotIn("generationOptionsUiReady", source)
+        self.assertNotIn("loraUiReady", source)
 
     def test_startup_styles_cover_screen_until_gate_releases(self):
         source = (FRONTEND / "extras.css").read_text(encoding="utf-8")
