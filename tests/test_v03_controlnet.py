@@ -33,6 +33,7 @@ class FakeControlBridge(server.PowerShellBridge):
             "LoraLoaderModelOnly",
             "FluxKontextImageScale",
             "FluxKontextMultiReferenceLatentMethod",
+            "SelectVAEDevice",
         }
 
 
@@ -90,6 +91,7 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
                 "class_type": "KSampler",
                 "inputs": {"model": ["10", 0], "positive": ["6", 0], "negative": ["13", 0], "latent_image": ["5", 0]},
             },
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["12", 0]}},
         }
         context = {"image_name": "pose.png", "width": 1024, "height": 1024, "strength": 0.85}
         result = self.bridge._inject_krea_openpose(workflow, context)
@@ -101,6 +103,9 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
         self.assertEqual(result["63"]["inputs"]["lora_name"], f"krea/{server.KREA_OPENPOSE_LORA}")
         self.assertEqual(result["64"]["class_type"], "TextEncodeKrea2OstrisEdit")
         self.assertEqual(result["64"]["inputs"]["image1"], ["61", 0])
+        self.assertEqual(result["68"]["class_type"], "SelectVAEDevice")
+        self.assertEqual(result["64"]["inputs"]["vae"], ["68", 0])
+        self.assertEqual(result["8"]["inputs"]["vae"], ["68", 0])
         self.assertEqual(result["66"]["class_type"], "FluxKontextMultiReferenceLatentMethod")
         self.assertEqual(result["66"]["inputs"]["reference_latents_method"], "index_timestep_zero")
         self.assertEqual(result["67"]["class_type"], "FluxKontextMultiReferenceLatentMethod")
