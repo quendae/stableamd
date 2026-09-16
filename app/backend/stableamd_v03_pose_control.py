@@ -37,6 +37,7 @@ class PoseControlBridgeMixin:
             for name in (
                 "FluxKontextImageScale",
                 "FluxKontextMultiReferenceLatentMethod",
+                "SelectVAEDevice",
             )
         )
 
@@ -97,18 +98,26 @@ class PoseControlBridgeMixin:
         before TextEncodeKrea2OstrisEdit, enables kv_cache on the model patch,
         and marks positive and negative reference conditioning as
         index_timestep_zero. StableAMD keeps the user's target latent size while
-        matching that reference path. At CFG=1 ComfyUI does not evaluate the
-        unconditional branch during denoising, so its expensive duplicate
-        reference-image/VAE encode is omitted while the positive reference path
-        remains unchanged.
+        matching that reference path. The process-wide CPU-VAE guard remains in
+        place for the accepted Z-Image path, while this Krea-only graph retargets
+        its small WanVAE to gpu:0 for the reference encode and final decode.
+        At CFG=1 ComfyUI does not evaluate the unconditional branch during
+        denoising, so its expensive duplicate reference-image/VAE encode is
+        omitted while the positive reference path remains unchanged.
         """
         result = super()._inject_krea_openpose(workflow, context)
         patch = result.get("62")
         sampler = result.get("3")
+        positive = result.get("64")
+        decode = result.get("8")
         if not isinstance(patch, dict) or patch.get("class_type") != "Krea2OstrisEditModelPatch":
             raise base.StableAmdBridgeError("Krea 2 OpenPose patch node is missing after workflow composition.")
         if not isinstance(sampler, dict) or not isinstance(sampler.get("inputs"), dict):
             raise base.StableAmdBridgeError("Krea 2 OpenPose KSampler is missing after workflow composition.")
+        if not isinstance(positive, dict) or not isinstance(positive.get("inputs"), dict):
+            raise base.StableAmdBridgeError("Krea 2 OpenPose positive reference encoder is missing after workflow composition.")
+        if not isinstance(decode, dict) or decode.get("class_type") != "VAEDecode" or not isinstance(decode.get("inputs"), dict):
+            raise base.StableAmdBridgeError("Krea 2 OpenPose VAE decode node is missing after workflow composition.")
         if not self._node_available("FluxKontextImageScale"):
             raise base.StableAmdBridgeError(
                 "Krea 2 OpenPose requires FluxKontextImageScale from the pinned ComfyUI runtime."
@@ -117,12 +126,29 @@ class PoseControlBridgeMixin:
             raise base.StableAmdBridgeError(
                 "Krea 2 OpenPose requires FluxKontextMultiReferenceLatentMethod from the pinned ComfyUI runtime."
             )
+        if not self._node_available("SelectVAEDevice"):
+            raise base.StableAmdBridgeError(
+                "Krea 2 OpenPose requires SelectVAEDevice from the pinned ComfyUI runtime."
+            )
 
         result["61"] = {
             "class_type": "FluxKontextImageScale",
             "inputs": {"image": ["60", 0]},
         }
         patch.setdefault("inputs", {})["kv_cache"] = True
+
+        original_vae = positive["inputs"].get("vae")
+        if not isinstance(original_vae, list) or len(original_vae) != 2:
+            raise base.StableAmdBridgeError("Krea 2 OpenPose VAE input is missing after workflow composition.")
+        result["68"] = {
+            "class_type": "SelectVAEDevice",
+            "inputs": {
+                "vae": original_vae,
+                "device": "gpu:0",
+            },
+        }
+        positive["inputs"]["vae"] = ["68", 0]
+        decode["inputs"]["vae"] = ["68", 0]
 
         cfg_value = sampler["inputs"].get("cfg")
         try:
@@ -137,6 +163,8 @@ class PoseControlBridgeMixin:
             # branch. CFG>1 keeps the published positive+negative reference path.
             negative["inputs"].pop("image1", None)
             negative["inputs"].pop("vae", None)
+        elif isinstance(negative, dict) and isinstance(negative.get("inputs"), dict):
+            negative["inputs"]["vae"] = ["68", 0]
 
         result["66"] = {
             "class_type": "FluxKontextMultiReferenceLatentMethod",
