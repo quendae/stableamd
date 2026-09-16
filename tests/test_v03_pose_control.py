@@ -29,6 +29,7 @@ class FakePoseBridge(server.PowerShellBridge):
             "LoraLoaderModelOnly",
             "FluxKontextImageScale",
             "FluxKontextMultiReferenceLatentMethod",
+            "SelectVAEDevice",
         }
 
     def _lora_choice_by_leaf(self, filename, node_name="LoraLoaderModelOnly"):
@@ -55,6 +56,13 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
                     "negative": ["13", 0],
                     "latent_image": ["5", 0],
                     "cfg": cfg,
+                },
+            },
+            "8": {
+                "class_type": "VAEDecode",
+                "inputs": {
+                    "samples": ["3", 0],
+                    "vae": ["12", 0],
                 },
             },
         }
@@ -103,10 +111,13 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
         self.assertIs(result["62"]["inputs"]["kv_cache"], True)
         self.assertEqual(result["63"]["class_type"], "LoraLoaderModelOnly")
         self.assertEqual(result["63"]["inputs"]["lora_name"], f"krea/{server.KREA_OPENPOSE_LORA}")
+        self.assertEqual(result["68"]["class_type"], "SelectVAEDevice")
+        self.assertEqual(result["68"]["inputs"], {"vae": ["12", 0], "device": "gpu:0"})
         self.assertEqual(result["64"]["inputs"]["image1"], ["61", 0])
-        self.assertEqual(result["64"]["inputs"]["vae"], ["12", 0])
+        self.assertEqual(result["64"]["inputs"]["vae"], ["68", 0])
         self.assertNotIn("image1", result["65"]["inputs"])
         self.assertNotIn("vae", result["65"]["inputs"])
+        self.assertEqual(result["8"]["inputs"]["vae"], ["68", 0])
         self.assertEqual(result["66"]["class_type"], "FluxKontextMultiReferenceLatentMethod")
         self.assertEqual(result["66"]["inputs"]["conditioning"], ["64", 0])
         self.assertEqual(result["66"]["inputs"]["reference_latents_method"], "index_timestep_zero")
@@ -127,7 +138,7 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
         result = self.bridge._inject_krea_openpose(workflow, context)
 
         self.assertEqual(result["65"]["inputs"]["image1"], ["61", 0])
-        self.assertEqual(result["65"]["inputs"]["vae"], ["12", 0])
+        self.assertEqual(result["65"]["inputs"]["vae"], ["68", 0])
 
     def test_zimage_model_support_exposes_openpose_when_union_route_is_ready(self):
         support = {
