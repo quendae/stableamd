@@ -12,7 +12,9 @@ BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-import stableamd_server as base
+import stableamd_v03_edit_server as server
+
+base = server.base
 
 
 class BlockingBridge:
@@ -35,16 +37,6 @@ class BlockingBridge:
             self.finished.set()
 
 
-class RecordingPowerShellBridge(base.PowerShellBridge):
-    def __post_init__(self):
-        self.repo_root = Path(self.repo_root).resolve()
-        self.calls = []
-
-    def _run_script(self, name, parameters=None):
-        self.calls.append((name, list(parameters or [])))
-        return {"PromptId": "p"}
-
-
 class StableAmdGenerationJobTests(unittest.TestCase):
     def _wait_status(self, api, job_id, expected, timeout=2.0):
         deadline = time.monotonic() + timeout
@@ -60,7 +52,7 @@ class StableAmdGenerationJobTests(unittest.TestCase):
 
     def test_async_generate_returns_job_immediately_then_exposes_result(self):
         bridge = BlockingBridge()
-        api = base.StableAmdApi(bridge)
+        api = server.StableAmdApi(bridge)
         request = {"prompt": "slow image", "asyncJob": True}
 
         code, submitted = api.dispatch("POST", "/api/generate", json.dumps(request).encode("utf-8"))
@@ -88,7 +80,7 @@ class StableAmdGenerationJobTests(unittest.TestCase):
 
     def test_async_failed_job_reports_error_without_hanging_request(self):
         bridge = BlockingBridge(fail=True)
-        api = base.StableAmdApi(bridge)
+        api = server.StableAmdApi(bridge)
         code, submitted = api.dispatch(
             "POST",
             "/api/generate",
@@ -106,7 +98,7 @@ class StableAmdGenerationJobTests(unittest.TestCase):
 
     def test_generation_job_routes_reject_unknown_ids_and_running_results(self):
         bridge = BlockingBridge()
-        api = base.StableAmdApi(bridge)
+        api = server.StableAmdApi(bridge)
         code, payload = api.dispatch("GET", "/api/generation-jobs/does-not-exist")
         self.assertEqual(code, 404)
         self.assertIn("not found", payload["error"].lower())
@@ -124,18 +116,18 @@ class StableAmdGenerationJobTests(unittest.TestCase):
         bridge.release.set()
         self._wait_status(api, submitted["jobId"], "completed")
 
-    def test_private_async_timeout_is_forwarded_to_powershell_generation(self):
-        bridge = RecordingPowerShellBridge(REPO_ROOT, powershell=sys.executable)
-        bridge.generate({"prompt": "slow", "_generationTimeoutSeconds": 21600})
-        name, parameters = bridge.calls[-1]
-        self.assertEqual(name, "Invoke-Txt2Img.ps1")
-        self.assertEqual(dict(parameters)["GenerationTimeoutSeconds"], 21600)
+    def test_async_krea_timeout_budget_is_six_hours(self):
+        bridge = server.PowerShellBridge(REPO_ROOT, powershell=sys.executable)
+        self.assertEqual(bridge._generation_timeout_seconds({"_generationTimeoutSeconds": 21600}), 21600)
+        self.assertEqual(bridge._generation_timeout_seconds({}), 900)
 
     def test_frontend_uses_job_submit_poll_and_result_contract(self):
-        source = (REPO_ROOT / "app" / "frontend" / "app-progress.js").read_text(encoding="utf-8")
-        self.assertIn("asyncJob: true", source)
+        source = (REPO_ROOT / "app" / "frontend" / "app-generation-jobs.js").read_text(encoding="utf-8")
+        loader = (REPO_ROOT / "app" / "frontend" / "app-generate-upscale.js").read_text(encoding="utf-8")
+        self.assertIn("payload.asyncJob = true", source)
         self.assertIn("/api/generation-jobs/", source)
         self.assertIn("/result", source)
+        self.assertIn("/app-generation-jobs.js", loader)
 
 
 if __name__ == "__main__":
