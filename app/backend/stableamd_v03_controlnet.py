@@ -543,8 +543,6 @@ class ControlNetBridgeMixin:
             raise base.StableAmdBridgeError(
                 "Krea 2 OpenPose control is not ready. Install the curated Krea 2 OpenPose dependency and restart the backend."
             )
-        if request.get("loraStack") or str(request.get("loraName") or "").strip():
-            raise base.StableAmdBridgeError("Disable regular LoRAs for the first Krea 2 OpenPose acceptance gate.")
 
         staged = base.stage_input_image(self.repo_root, control["image"])
         strength = self._number(control.get("strength"), 0.85, 0.0, 2.0, "Control strength")
