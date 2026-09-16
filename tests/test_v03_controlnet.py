@@ -31,6 +31,7 @@ class FakeControlBridge(server.PowerShellBridge):
             "TextEncodeKrea2OstrisEdit",
             "Krea2OstrisEditModelPatch",
             "LoraLoaderModelOnly",
+            "FluxKontextImageScale",
             "FluxKontextMultiReferenceLatentMethod",
         }
 
@@ -92,8 +93,8 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
         }
         context = {"image_name": "pose.png", "width": 1024, "height": 1024, "strength": 0.85}
         result = self.bridge._inject_krea_openpose(workflow, context)
-        self.assertEqual(result["61"]["inputs"]["width"], 512)
-        self.assertEqual(result["61"]["inputs"]["height"], 512)
+        self.assertEqual(result["61"]["class_type"], "FluxKontextImageScale")
+        self.assertEqual(result["61"]["inputs"], {"image": ["60", 0]})
         self.assertEqual(result["62"]["class_type"], "Krea2OstrisEditModelPatch")
         self.assertIs(result["62"]["inputs"]["kv_cache"], True)
         self.assertEqual(result["63"]["class_type"], "LoraLoaderModelOnly")
