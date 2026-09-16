@@ -12,28 +12,28 @@ class StableAmdFrontendStartupGateTests(unittest.TestCase):
         source = (FRONTEND / "index.html").read_text(encoding="utf-8")
         self.assertIn('id="startup-gate"', source)
         self.assertIn('Loading models', source)
+        self.assertIn('class="app-shell" hidden', source)
         startup = source.index('src="/app-startup.js"')
         app = source.index('src="/app.js"')
         self.assertLess(startup, app)
 
-    def test_startup_controller_reveals_gui_after_tasks_or_30_second_fallback(self):
+    def test_startup_controller_waits_for_model_metadata_and_ui_or_30_second_fallback(self):
         source = (FRONTEND / "app-startup.js").read_text(encoding="utf-8")
         self.assertIn("30000", source)
         self.assertIn("Promise.allSettled", source)
+        self.assertIn('fetch("/api/models"', source)
+        self.assertIn('fetch("/api/model-support"', source)
+        self.assertIn('fetch("/api/generation-options"', source)
+        self.assertIn('fetch("/api/lora-catalog"', source)
+        self.assertIn("waitForUiReady", source)
         self.assertIn("startup-gate", source)
         self.assertIn("app-shell", source)
-        self.assertIn("track", source)
 
-    def test_initial_model_and_option_loaders_are_registered_with_gate(self):
-        app = (FRONTEND / "app.js").read_text(encoding="utf-8")
-        v02 = (FRONTEND / "app-v02.js").read_text(encoding="utf-8")
-        compat = (FRONTEND / "app-lora-compat.js").read_text(encoding="utf-8")
-        v03 = (FRONTEND / "app-v03.js").read_text(encoding="utf-8")
-
-        self.assertIn('stableAmdStartup.track("base-models"', app)
-        self.assertIn('stableAmdStartup.track("generation-options"', v02)
-        self.assertIn('stableAmdStartup.track("lora-catalog"', compat)
-        self.assertIn('stableAmdStartup.track("v03-model-packages"', v03)
+    def test_startup_styles_cover_screen_until_gate_releases(self):
+        source = (FRONTEND / "extras.css").read_text(encoding="utf-8")
+        self.assertIn(".startup-gate", source)
+        self.assertIn("position: fixed", source)
+        self.assertIn(".startup-spinner", source)
 
 
 if __name__ == "__main__":
