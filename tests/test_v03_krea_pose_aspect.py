@@ -26,6 +26,7 @@ class FakePoseAspectBridge(server.PowerShellBridge):
             "LoraLoaderModelOnly",
             "FluxKontextImageScale",
             "FluxKontextMultiReferenceLatentMethod",
+            "SelectVAEDevice",
         }
 
 
@@ -44,6 +45,7 @@ class StableAmdV03KreaPoseAspectTests(unittest.TestCase):
                 "class_type": "KSampler",
                 "inputs": {"model": ["10", 0], "positive": ["6", 0], "negative": ["13", 0], "latent_image": ["5", 0]},
             },
+            "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["12", 0]}},
         }
         context = {
             "image_name": "13M_Salute-OpenPoseFull-safe-frame.png",
@@ -58,6 +60,9 @@ class StableAmdV03KreaPoseAspectTests(unittest.TestCase):
         self.assertEqual(result["61"]["inputs"], {"image": ["60", 0]})
         self.assertEqual(result["5"]["inputs"]["width"], 1024)
         self.assertEqual(result["5"]["inputs"]["height"], 1024)
+        self.assertEqual(result["68"]["class_type"], "SelectVAEDevice")
+        self.assertEqual(result["68"]["inputs"]["device"], "gpu:0")
+        self.assertEqual(result["8"]["inputs"]["vae"], ["68", 0])
 
     def test_frontend_safe_frames_krea_templates_to_selected_output_aspect(self):
         source = (REPO_ROOT / "app" / "frontend" / "app-pose-safe-frame.js").read_text(encoding="utf-8")
