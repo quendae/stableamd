@@ -130,7 +130,8 @@ class StableAmdKreaImageEditTests(unittest.TestCase):
     def test_krea_image_edit_route_stages_source_and_reuses_async_krea_provider(self):
         module = self._load_edit_module()
         source = KREA_EDIT_PATH.read_text(encoding="utf-8")
-        self.assertIn('mode == "img2img"', source)
+        self.assertIn('mode = str(request.get("mode") or "txt2img").lower()', source)
+        self.assertIn('or mode != "img2img"', source)
         self.assertIn("base.stage_input_image", source)
         self.assertIn('clean["mode"] = "txt2img"', source)
         self.assertIn('clean.pop("inputImage", None)', source)
