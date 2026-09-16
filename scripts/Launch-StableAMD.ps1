@@ -31,9 +31,10 @@ if ($AppStartupTimeoutSeconds -lt 5) {
     throw 'Application startup timeout must be at least 5 seconds.'
 }
 
-# The accepted RX 6950 XT / 16 GiB profile is now the normal desktop default.
-# Any explicit memory/cache switch opts out of these defaults so diagnostic
-# launch combinations remain available from the command line.
+# The normal desktop profile leaves ComfyUI's memory and cache switches unset.
+# The pinned runtime therefore uses DynamicVRAM and its RAM-pressure cache by
+# default. CPU VAE remains enforced by the isolated Comfy bootstrap. Explicit
+# switches below are preserved for diagnostics and compatibility testing.
 $hasExplicitMemoryProfile = $false
 foreach ($parameterName in @('DisableDynamicVram', 'LowVram', 'HighVram', 'CacheClassic', 'CacheNone')) {
     if ($PSBoundParameters.ContainsKey($parameterName)) {
@@ -46,11 +47,6 @@ $resolvedLowVram = [bool]$LowVram
 $resolvedHighVram = [bool]$HighVram
 $resolvedCacheClassic = [bool]$CacheClassic
 $resolvedCacheNone = [bool]$CacheNone
-if (-not $hasExplicitMemoryProfile) {
-    $resolvedDisableDynamicVram = $true
-    $resolvedLowVram = $true
-    $resolvedCacheClassic = $true
-}
 if ($resolvedLowVram -and $resolvedHighVram) {
     throw 'LowVram and HighVram cannot be enabled together.'
 }
@@ -212,7 +208,7 @@ namespace StableAmd {
 Write-Host ''
 Write-Host 'StableAMD v0.3' -ForegroundColor Cyan
 if (-not $hasExplicitMemoryProfile) {
-    Write-Host 'Using default RX 6950 XT / 16 GiB profile: DisableDynamicVRAM + LowVRAM + CacheClassic.' -ForegroundColor DarkCyan
+    Write-Host 'Using default RX 6950 XT / 16 GiB profile: DynamicVRAM + RAM-pressure cache + CPU VAE.' -ForegroundColor DarkCyan
 }
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
 $backendParams = @{ RepoRoot = $RepoRoot }
