@@ -101,6 +101,9 @@ class PoseControlBridgeMixin:
         matching that reference path. The process-wide CPU-VAE guard remains in
         place for the accepted Z-Image path, while this Krea-only graph retargets
         its small WanVAE to gpu:0 for the reference encode and final decode.
+        Krea OpenPose also lets the Qwen3-VL text/vision encoder use ComfyUI's
+        normal DynamicVRAM device policy instead of pinning its ~5 GiB model to
+        CPU; model management can offload it again before the Krea2 denoiser.
         At CFG=1 ComfyUI does not evaluate the unconditional branch during
         denoising, so its expensive duplicate reference-image/VAE encode is
         omitted while the positive reference path remains unchanged.
@@ -108,12 +111,15 @@ class PoseControlBridgeMixin:
         result = super()._inject_krea_openpose(workflow, context)
         patch = result.get("62")
         sampler = result.get("3")
+        clip_loader = result.get("11")
         positive = result.get("64")
         decode = result.get("8")
         if not isinstance(patch, dict) or patch.get("class_type") != "Krea2OstrisEditModelPatch":
             raise base.StableAmdBridgeError("Krea 2 OpenPose patch node is missing after workflow composition.")
         if not isinstance(sampler, dict) or not isinstance(sampler.get("inputs"), dict):
             raise base.StableAmdBridgeError("Krea 2 OpenPose KSampler is missing after workflow composition.")
+        if not isinstance(clip_loader, dict) or clip_loader.get("class_type") != "CLIPLoader" or not isinstance(clip_loader.get("inputs"), dict):
+            raise base.StableAmdBridgeError("Krea 2 OpenPose CLIP loader is missing after workflow composition.")
         if not isinstance(positive, dict) or not isinstance(positive.get("inputs"), dict):
             raise base.StableAmdBridgeError("Krea 2 OpenPose positive reference encoder is missing after workflow composition.")
         if not isinstance(decode, dict) or decode.get("class_type") != "VAEDecode" or not isinstance(decode.get("inputs"), dict):
@@ -136,6 +142,7 @@ class PoseControlBridgeMixin:
             "inputs": {"image": ["60", 0]},
         }
         patch.setdefault("inputs", {})["kv_cache"] = True
+        clip_loader["inputs"]["device"] = "default"
 
         original_vae = positive["inputs"].get("vae")
         if not isinstance(original_vae, list) or len(original_vae) != 2:
