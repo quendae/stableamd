@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
 from typing import Any
+from urllib.request import Request, urlopen
 
 import stableamd_v03_controlnet as controlnet
 
@@ -294,6 +296,49 @@ class PoseControlBridgeMixin:
         result["Control"] = metadata
         self._persist_control_metadata(result, metadata)
         return result
+
+    def _post_comfy_no_content(self, relative_path: str, payload: dict[str, Any], timeout: int = 60) -> None:
+        url = self._backend_base_url() + relative_path.lstrip("/")
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+        with urlopen(request, timeout=timeout) as response:
+            response.read()
+
+    def _release_krea_openpose_runtime(self) -> bool:
+        """Best-effort reset of the Krea pose working set between generations.
+
+        Target RX 6950 XT testing showed that a second Krea OpenPose prompt can
+        retain a fragmented DynamicVRAM working set and roughly double denoise
+        time. ComfyUI's native /free endpoint restores the fast path without a
+        backend restart. Keep this scoped to Krea OpenPose so accepted plain
+        Krea and Z-Image caching behavior remains unchanged.
+        """
+        try:
+            self._post_comfy_no_content(
+                "free",
+                {"unload_models": True, "free_memory": True},
+                timeout=10,
+            )
+        except (OSError, base.StableAmdBridgeError):
+            return False
+        return True
+
+    def _generate_krea_control(
+        self,
+        request: dict[str, Any],
+        model: dict[str, Any],
+        control: dict[str, Any],
+    ) -> Any:
+        if str(control.get("type") or "").lower() != "openpose":
+            return super()._generate_krea_control(request, model, control)
+        try:
+            return super()._generate_krea_control(request, model, control)
+        finally:
+            # /free sets queue flags and wakes ComfyUI's idle worker, so the
+            # unload/reset runs before the user can normally submit the next
+            # StableAMD prompt. Cleanup failure must never hide a generated
+            # image or the original execution error.
+            self._release_krea_openpose_runtime()
 
     def generate(self, request: dict[str, Any]) -> Any:
         control = self._control_request(request)
