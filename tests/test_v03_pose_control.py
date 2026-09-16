@@ -27,6 +27,7 @@ class FakePoseBridge(server.PowerShellBridge):
             "TextEncodeKrea2OstrisEdit",
             "Krea2OstrisEditModelPatch",
             "LoraLoaderModelOnly",
+            "FluxKontextImageScale",
             "FluxKontextMultiReferenceLatentMethod",
         }
 
@@ -63,13 +64,7 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
         self.assertEqual(result["11"]["inputs"]["model"], ["73", 0])
         self.assertNotIn("Canny", [node.get("class_type") for node in result.values()])
 
-    def test_krea_pose_reference_size_caps_long_side_and_preserves_aspect(self):
-        self.assertEqual(self.bridge._krea_pose_reference_size(1024, 1024), (512, 512))
-        self.assertEqual(self.bridge._krea_pose_reference_size(1024, 768), (512, 384))
-        self.assertEqual(self.bridge._krea_pose_reference_size(768, 1024), (384, 512))
-        self.assertEqual(self.bridge._krea_pose_reference_size(384, 512), (384, 512))
-
-    def test_krea_openpose_uses_training_semantics_with_compact_reference(self):
+    def test_krea_openpose_uses_official_reference_scaler_and_training_semantics(self):
         workflow = {
             "10": {"class_type": "UNETLoader", "inputs": {}},
             "11": {"class_type": "CLIPLoader", "inputs": {}},
@@ -95,9 +90,10 @@ class StableAmdV03PoseControlTests(unittest.TestCase):
 
         result = self.bridge._inject_krea_openpose(workflow, context)
 
-        self.assertEqual(result["61"]["class_type"], "ImageScale")
-        self.assertEqual(result["61"]["inputs"]["width"], 512)
-        self.assertEqual(result["61"]["inputs"]["height"], 512)
+        self.assertEqual(result["61"]["class_type"], "FluxKontextImageScale")
+        self.assertEqual(result["61"]["inputs"], {"image": ["60", 0]})
+        self.assertEqual(result["5"]["inputs"]["width"], 1024)
+        self.assertEqual(result["5"]["inputs"]["height"], 1024)
         self.assertEqual(result["62"]["class_type"], "Krea2OstrisEditModelPatch")
         self.assertIs(result["62"]["inputs"]["kv_cache"], True)
         self.assertEqual(result["63"]["class_type"], "LoraLoaderModelOnly")
