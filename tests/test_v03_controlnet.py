@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import base64
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from threading import local
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+import stableamd_v03_controlnet as controlnet
 import stableamd_v03_edit_server as server
 
 
@@ -113,6 +116,43 @@ class StableAmdV03ControlNetTests(unittest.TestCase):
         self.assertEqual(result["3"]["inputs"]["model"], ["63", 0])
         self.assertEqual(result["3"]["inputs"]["positive"], ["66", 0])
         self.assertEqual(result["3"]["inputs"]["negative"], ["67", 0])
+
+    def test_krea_openpose_releases_comfy_runtime_after_generation(self):
+        class Parent:
+            def _generate_krea2_turbo(self, request, model):
+                return {"PromptId": "krea-prompt", "HistoryPath": ""}
+
+        class CleanupBridge(controlnet.ControlNetBridgeMixin, Parent):
+            def __init__(self, root: Path):
+                self.repo_root = root
+                self._stableamd_control_context = local()
+                self.posts = []
+
+            def _krea_openpose_ready(self):
+                return True
+
+            def _post_comfy_json(self, path, payload, timeout=60):
+                self.posts.append((path, payload, timeout))
+                return None
+
+        tiny_png = base64.b64encode(b"\x89PNG\r\n\x1a\npose").decode("ascii")
+        with tempfile.TemporaryDirectory() as temporary:
+            bridge = CleanupBridge(Path(temporary))
+            result = bridge._generate_krea_control(
+                {"prompt": "test", "width": 1024, "height": 1024},
+                {"id": "krea"},
+                {
+                    "type": "openpose",
+                    "strength": 1.0,
+                    "image": {"name": "pose.png", "mimeType": "image/png", "dataBase64": tiny_png},
+                },
+            )
+
+        self.assertEqual(result["Mode"], "controlnet")
+        self.assertEqual(
+            bridge.posts,
+            [("free", {"unload_models": True, "free_memory": True}, 10)],
+        )
 
     def test_krea_openpose_dependencies_are_pinned(self):
         self.assertEqual(server.KREA_OPENPOSE_PLUGIN_COMMIT, "7756566160c4a1b24bb1bd9f0ff3ced1a83d7547")
