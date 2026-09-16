@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import stableamd_v03_controlnet as controlnet
 
 base = controlnet.base
-
-KREA_POSE_REF_MAX_SIDE = 512
 
 
 class PoseControlBridgeMixin:
@@ -19,13 +16,10 @@ class PoseControlBridgeMixin:
     ZImageFunControlnet path; this layer reuses it without the Canny
     preprocessor when the user supplies a prepared OpenPose map.
 
-    Krea 2's published pose adapter was trained with isolated reference
-    attention (the Ostris ``kv_cache`` mode). Running it with the normal joint
-    reference path can produce weak pose adherence and visible control-image
-    leakage. On the 16 GiB target, full-resolution cached references are far too
-    expensive, so StableAMD keeps the correct training semantics while reducing
-    only the sparse OpenPose reference map to at most 512 px on its longest
-    side. The generated image itself remains at the user's selected resolution.
+    Krea 2 follows the published pose adapter workflow: a pose map is framed to
+    the selected output aspect in the browser, then passed through ComfyUI's
+    FluxKontextImageScale before the Ostris edit encoder. The adapter keeps its
+    trained isolated-reference semantics (kv_cache + index_timestep_zero).
     """
 
     def _zimage_pose_ready(self) -> bool:
@@ -37,127 +31,13 @@ class PoseControlBridgeMixin:
         )
 
     def _krea_openpose_ready(self) -> bool:
-        return super()._krea_openpose_ready() and self._node_available(
-            "FluxKontextMultiReferenceLatentMethod"
+        return super()._krea_openpose_ready() and all(
+            self._node_available(name)
+            for name in (
+                "FluxKontextImageScale",
+                "FluxKontextMultiReferenceLatentMethod",
+            )
         )
-
-    @staticmethod
-    def _krea_pose_reference_size(width: int, height: int) -> tuple[int, int]:
-        width = max(16, int(width))
-        height = max(16, int(height))
-        scale = min(1.0, KREA_POSE_REF_MAX_SIDE / float(max(width, height)))
-
-        def snap(value: float) -> int:
-            return max(16, int(round(value / 16.0)) * 16)
-
-        return snap(width * scale), snap(height * scale)
-
-    def _krea_pose_source_size(
-        self,
-        image_name: str,
-        fallback_width: int,
-        fallback_height: int,
-    ) -> tuple[int, int]:
-        """Read the staged control-map size without decoding it into pixels.
-
-        Krea's pose adapter needs the sparse reference to keep the source map's
-        aspect ratio. The staged image is already validated by StableAMD, so a
-        lightweight header read is enough and avoids adding an image-library
-        dependency to the product server. Invalid/unrecognized headers fall
-        back to the requested output size for backward compatibility.
-        """
-        fallback = (max(16, int(fallback_width)), max(16, int(fallback_height)))
-        input_root = (self.repo_root / ".runtime" / "stableamd" / "input").resolve()
-        path = (input_root / Path(str(image_name or "")).name).resolve()
-        if path.parent != input_root or not path.is_file():
-            return fallback
-
-        try:
-            with path.open("rb") as handle:
-                header = handle.read(32)
-
-                if header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) >= 24:
-                    width = int.from_bytes(header[16:20], "big")
-                    height = int.from_bytes(header[20:24], "big")
-                    if width > 0 and height > 0:
-                        return width, height
-
-                if header.startswith(b"\xff\xd8"):
-                    handle.seek(2)
-                    sof_markers = {
-                        0xC0, 0xC1, 0xC2, 0xC3,
-                        0xC5, 0xC6, 0xC7,
-                        0xC9, 0xCA, 0xCB,
-                        0xCD, 0xCE, 0xCF,
-                    }
-                    standalone = {0x01, 0xD8, 0xD9, *range(0xD0, 0xD8)}
-                    while True:
-                        prefix = handle.read(1)
-                        if not prefix:
-                            break
-                        if prefix != b"\xff":
-                            continue
-                        marker = handle.read(1)
-                        while marker == b"\xff":
-                            marker = handle.read(1)
-                        if not marker:
-                            break
-                        code = marker[0]
-                        if code in sof_markers:
-                            segment_length = int.from_bytes(handle.read(2), "big")
-                            if segment_length < 7:
-                                break
-                            handle.read(1)
-                            height = int.from_bytes(handle.read(2), "big")
-                            width = int.from_bytes(handle.read(2), "big")
-                            if width > 0 and height > 0:
-                                return width, height
-                            break
-                        if code in standalone:
-                            continue
-                        length_bytes = handle.read(2)
-                        if len(length_bytes) != 2:
-                            break
-                        segment_length = int.from_bytes(length_bytes, "big")
-                        if segment_length < 2:
-                            break
-                        handle.seek(segment_length - 2, 1)
-
-                if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
-                    handle.seek(12)
-                    while True:
-                        chunk_header = handle.read(8)
-                        if len(chunk_header) != 8:
-                            break
-                        chunk_type = chunk_header[:4]
-                        chunk_size = int.from_bytes(chunk_header[4:8], "little")
-                        payload_start = handle.tell()
-                        if chunk_type == b"VP8X" and chunk_size >= 10:
-                            payload = handle.read(10)
-                            width = 1 + int.from_bytes(payload[4:7], "little")
-                            height = 1 + int.from_bytes(payload[7:10], "little")
-                            if width > 0 and height > 0:
-                                return width, height
-                        elif chunk_type == b"VP8 " and chunk_size >= 10:
-                            payload = handle.read(10)
-                            if payload[3:6] == b"\x9d\x01\x2a":
-                                width = int.from_bytes(payload[6:8], "little") & 0x3FFF
-                                height = int.from_bytes(payload[8:10], "little") & 0x3FFF
-                                if width > 0 and height > 0:
-                                    return width, height
-                        elif chunk_type == b"VP8L" and chunk_size >= 5:
-                            payload = handle.read(5)
-                            if payload[:1] == b"\x2f":
-                                bits = int.from_bytes(payload[1:5], "little")
-                                width = 1 + (bits & 0x3FFF)
-                                height = 1 + ((bits >> 14) & 0x3FFF)
-                                if width > 0 and height > 0:
-                                    return width, height
-                        handle.seek(payload_start + chunk_size + (chunk_size & 1))
-        except (OSError, ValueError):
-            return fallback
-
-        return fallback
 
     def model_support(self) -> dict[str, Any]:
         support = super().model_support()
@@ -176,11 +56,12 @@ class PoseControlBridgeMixin:
                     if isinstance(item, dict) and str(item.get("id") or "").lower() == "openpose":
                         item["strengthDefault"] = 1.0
                         item["recommendedSteps"] = 10
-                        item["referenceMaxSide"] = KREA_POSE_REF_MAX_SIDE
+                        item.pop("referenceMaxSide", None)
+                        item["referenceScaler"] = "FluxKontextImageScale"
                 policy["note"] = (
-                    "Krea 2 OpenPose uses the adapter's isolated-reference training mode. "
-                    "StableAMD feeds a compact 512 px pose reference while preserving the source map aspect; "
-                    "10 steps and strength 0.8-1.0 are recommended."
+                    "Krea 2 OpenPose follows the adapter's isolated-reference workflow and "
+                    "ComfyUI FluxKontextImageScale training-size preprocessing; 10 steps and "
+                    "strength 0.8-1.0 are recommended."
                 )
                 continue
             if family != "z-image-turbo":
@@ -209,37 +90,34 @@ class PoseControlBridgeMixin:
         return support
 
     def _inject_krea_openpose(self, workflow: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        """Use the pose adapter's trained isolated-reference mode economically.
+        """Mirror the published Krea pose-reference preprocessing and semantics.
 
-        The published thedeoxen workflow enables ``kv_cache`` and marks both
-        positive and negative reference conditioning as ``index_timestep_zero``.
-        Keep those semantics, but encode the sparse pose map at <=512 px while
-        preserving the map's original aspect ratio so the reference-only K/V
-        pass remains practical without changing pose composition.
+        The published workflow sends the pose map through FluxKontextImageScale
+        before TextEncodeKrea2OstrisEdit, enables kv_cache on the model patch,
+        and marks positive and negative reference conditioning as
+        index_timestep_zero. StableAMD keeps the user's target latent size while
+        matching that reference path.
         """
         result = super()._inject_krea_openpose(workflow, context)
         patch = result.get("62")
         sampler = result.get("3")
-        scale_node = result.get("61")
         if not isinstance(patch, dict) or patch.get("class_type") != "Krea2OstrisEditModelPatch":
             raise base.StableAmdBridgeError("Krea 2 OpenPose patch node is missing after workflow composition.")
         if not isinstance(sampler, dict) or not isinstance(sampler.get("inputs"), dict):
             raise base.StableAmdBridgeError("Krea 2 OpenPose KSampler is missing after workflow composition.")
-        if not isinstance(scale_node, dict) or not isinstance(scale_node.get("inputs"), dict):
-            raise base.StableAmdBridgeError("Krea 2 OpenPose control-image scaler is missing after workflow composition.")
+        if not self._node_available("FluxKontextImageScale"):
+            raise base.StableAmdBridgeError(
+                "Krea 2 OpenPose requires FluxKontextImageScale from the pinned ComfyUI runtime."
+            )
         if not self._node_available("FluxKontextMultiReferenceLatentMethod"):
             raise base.StableAmdBridgeError(
                 "Krea 2 OpenPose requires FluxKontextMultiReferenceLatentMethod from the pinned ComfyUI runtime."
             )
 
-        source_width, source_height = self._krea_pose_source_size(
-            str(context.get("image_name") or ""),
-            int(context["width"]),
-            int(context["height"]),
-        )
-        ref_width, ref_height = self._krea_pose_reference_size(source_width, source_height)
-        scale_node["inputs"]["width"] = ref_width
-        scale_node["inputs"]["height"] = ref_height
+        result["61"] = {
+            "class_type": "FluxKontextImageScale",
+            "inputs": {"image": ["60", 0]},
+        }
         patch.setdefault("inputs", {})["kv_cache"] = True
 
         result["66"] = {
