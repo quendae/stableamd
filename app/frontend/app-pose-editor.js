@@ -25,6 +25,9 @@
     label,
     source: 'Pose Depot',
     license: 'Apache-2.0',
+    controlUrl: `${POSE_DEPOT_ROOT}/${folder}/OpenPoseFull.png`,
+    previewUrl: `${POSE_DEPOT_ROOT}/${folder}/Cover.png`,
+    fallbackPreviewUrl: `${POSE_DEPOT_ROOT}/${folder}/Example.png`,
     url: `${POSE_DEPOT_ROOT}/${folder}/OpenPoseFull.png`,
   }));
 
@@ -100,9 +103,11 @@
       .pose-modal-body { padding:14px 16px 18px; display:grid; gap:14px; }
       .pose-tabs { display:flex; gap:8px; flex-wrap:wrap; }
       .pose-tab-active { outline:2px solid rgba(85,150,255,.55); }
-      .pose-template-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
-      .pose-template-card { border:1px solid var(--border,#303642); border-radius:10px; padding:8px; display:grid; gap:7px; background:rgba(127,127,127,.05); }
-      .pose-template-card img { width:100%; aspect-ratio:2/3; object-fit:contain; background:#000; border-radius:7px; }
+      .pose-template-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:12px; }
+      .pose-template-card { border:1px solid var(--border,#303642); border-radius:12px; padding:8px; display:grid; gap:8px; background:rgba(127,127,127,.05); }
+      .pose-template-preview-wrap { position:relative; overflow:hidden; border-radius:10px; background:#000; aspect-ratio:2/3; }
+      .pose-template-preview { width:100%; height:100%; display:block; object-fit:cover; background:#000; }
+      .pose-template-skeleton-badge { position:absolute; right:8px; bottom:8px; width:64px; height:96px; box-sizing:border-box; object-fit:contain; padding:4px; background:rgba(0,0,0,.76); border:1px solid rgba(255,255,255,.2); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.42); }
       .pose-template-card strong { font-size:12px; line-height:1.25; }
       .pose-template-meta { font-size:10px; opacity:.65; }
       .pose-template-actions { display:flex; gap:6px; }
@@ -222,7 +227,7 @@
             <button id="pose-tab-editor" type="button" class="button button-secondary">Interactive editor</button>
           </div>
           <section id="pose-view-templates">
-            <p class="pose-source-note">Curated image templates from a-lgil/pose-depot, pinned to ${POSE_DEPOT_SHA.slice(0, 8)} (Apache-2.0). Selecting a tile downloads its OpenPoseFull PNG and uses it directly as the control map.</p>
+            <p class="pose-source-note">Curated pose pairs from a-lgil/pose-depot, pinned to ${POSE_DEPOT_SHA.slice(0, 8)} (Apache-2.0). Each card shows a realistic pose preview with its matching OpenPose skeleton; selecting a pose always sends the skeleton as the actual control image.</p>
             <div id="pose-template-grid" class="pose-template-grid"></div>
           </section>
           <section id="pose-view-editor" hidden>
@@ -310,14 +315,29 @@
       const card = document.createElement('article');
       card.className = 'pose-template-card';
       card.innerHTML = `
-        <img loading="lazy" src="${template.url}" alt="${template.label}">
+        <div class="pose-template-preview-wrap">
+          <img class="pose-template-preview" loading="lazy" src="${template.previewUrl}" alt="${template.label} realistic pose preview">
+          <img class="pose-template-skeleton-badge" loading="lazy" src="${template.controlUrl}" alt="${template.label} OpenPose skeleton">
+        </div>
         <strong>${template.label}</strong>
         <span class="pose-template-meta">${template.source} · ${template.license}</span>
         <div class="pose-template-actions">
-          <button type="button" class="button button-secondary" data-use-template="${template.id}">Use</button>
-          <a class="button button-secondary" href="${template.url}" target="_blank" rel="noopener">Download</a>
+          <button type="button" class="button button-secondary" data-use-template="${template.id}">Use pose</button>
+          <a class="button button-secondary" href="${template.controlUrl}" target="_blank" rel="noopener">Skeleton</a>
         </div>
       `;
+      const preview = card.querySelector('.pose-template-preview');
+      preview?.addEventListener('error', () => {
+        const stage = preview.dataset.poseFallback || '';
+        if (!stage) {
+          preview.dataset.poseFallback = 'example';
+          preview.src = template.fallbackPreviewUrl;
+        } else if (stage === 'example') {
+          preview.dataset.poseFallback = 'skeleton';
+          preview.src = template.controlUrl;
+          preview.style.objectFit = 'contain';
+        }
+      });
       card.querySelector('[data-use-template]')?.addEventListener('click', () => useTemplate(template));
       grid.append(card);
     });
@@ -325,11 +345,11 @@
 
   async function useTemplate(template) {
     try {
-      const response = await fetch(template.url, { cache: 'force-cache' });
+      const response = await fetch(template.controlUrl, { cache: 'force-cache' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       state.selectedPayload = await blobToPayload(blob, `${template.id}-OpenPoseFull.png`);
-      state.selectedPreview = template.url;
+      state.selectedPreview = template.controlUrl;
       state.selectedLabel = template.label;
       const file = document.querySelector('#controlnet-image');
       if (file) file.value = '';
