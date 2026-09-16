@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import stableamd_v03_controlnet as controlnet
@@ -96,7 +97,10 @@ class PoseControlBridgeMixin:
         before TextEncodeKrea2OstrisEdit, enables kv_cache on the model patch,
         and marks positive and negative reference conditioning as
         index_timestep_zero. StableAMD keeps the user's target latent size while
-        matching that reference path.
+        matching that reference path. At CFG=1 ComfyUI does not evaluate the
+        unconditional branch during denoising, so its expensive duplicate
+        reference-image/VAE encode is omitted while the positive reference path
+        remains unchanged.
         """
         result = super()._inject_krea_openpose(workflow, context)
         patch = result.get("62")
@@ -119,6 +123,20 @@ class PoseControlBridgeMixin:
             "inputs": {"image": ["60", 0]},
         }
         patch.setdefault("inputs", {})["kv_cache"] = True
+
+        cfg_value = sampler["inputs"].get("cfg")
+        try:
+            cfg_is_one = math.isclose(float(cfg_value), 1.0, rel_tol=1e-9, abs_tol=1e-9)
+        except (TypeError, ValueError):
+            cfg_is_one = False
+        negative = result.get("65")
+        if cfg_is_one and isinstance(negative, dict) and isinstance(negative.get("inputs"), dict):
+            # ComfyUI sampling_function sets uncond=None at CFG=1 unless a model
+            # explicitly disables that optimization. Avoid running the same
+            # 1024px pose through Qwen3-VL + WanVAE a second time for an unused
+            # branch. CFG>1 keeps the published positive+negative reference path.
+            negative["inputs"].pop("image1", None)
+            negative["inputs"].pop("vae", None)
 
         result["66"] = {
             "class_type": "FluxKontextMultiReferenceLatentMethod",
