@@ -22,7 +22,7 @@ class StableAmdFrontendStartupGateTests(unittest.TestCase):
         self.assertIn("10000", source)
         self.assertIn("state.models", source)
         self.assertNotIn('fetch("/api/models"', source)
-        self.assertIn('fetch("/api/model-support"', source)
+        self.assertIn('fetchJson("/api/model-support"', source)
         self.assertIn("waitForModelUiReady", source)
         self.assertIn("startup-gate", source)
         self.assertIn("app-shell", source)
