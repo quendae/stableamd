@@ -9,9 +9,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "app" / "backend"
+FRONTEND = ROOT / "app" / "frontend"
 KREA_EDIT_PATH = BACKEND / "stableamd_v03_krea_edit.py"
 FINAL_SERVER_PATH = BACKEND / "stableamd_v03_edit_server.py"
-FRONTEND_PATH = ROOT / "app" / "frontend" / "app-v02.js"
+FRONTEND_PATH = FRONTEND / "app-krea-edit.js"
+INDEX_PATH = FRONTEND / "index.html"
 SUPPORT_PATH = ROOT / "config" / "model-support.v0.3.json"
 
 
@@ -138,13 +140,17 @@ class StableAmdKreaImageEditTests(unittest.TestCase):
         self.assertIn('result["EditOperation"] = "image-edit"', source)
         self.assertTrue(hasattr(module.KreaImageEditBridgeMixin, "generate"))
 
-    def test_frontend_presents_krea_img2img_as_whole_image_edit_without_denoise(self):
+    def test_frontend_adapter_loads_before_v02_and_presents_whole_image_edit_without_denoise(self):
+        self.assertTrue(FRONTEND_PATH.is_file(), "Krea Image Edit frontend adapter is missing.")
         source = FRONTEND_PATH.read_text(encoding="utf-8")
+        index = INDEX_PATH.read_text(encoding="utf-8")
         self.assertIn('"Image Edit"', source)
-        self.assertIn('support?.family === "krea2"', source)
+        self.assertIn('family === "krea2"', source)
         self.assertIn("whole-image", source.lower())
         self.assertIn("Edit instruction", source)
         self.assertIn("delete payload.denoise", source)
+        self.assertIn('/app-krea-edit.js', index)
+        self.assertLess(index.index('/app-krea-edit.js'), index.index('/app-v02.js'))
 
 
 if __name__ == "__main__":
