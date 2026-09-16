@@ -42,6 +42,29 @@ class StableAmdV03Krea2ServerTests(unittest.TestCase):
             self.assertEqual(result, {"ok": True})
             generate.assert_called_once()
 
+    def test_post_comfy_json_accepts_successful_empty_response(self):
+        class EmptyResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            @staticmethod
+            def read():
+                return b""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            bridge = server.PowerShellBridge(Path(temporary), powershell=sys.executable)
+            bridge._backend_base_url = lambda: "http://127.0.0.1:8190/"
+            with patch("stableamd_v03_server.urlopen", return_value=EmptyResponse()):
+                result = bridge._post_comfy_json(
+                    "free",
+                    {"unload_models": True, "free_memory": True},
+                    timeout=10,
+                )
+        self.assertIsNone(result)
+
     def test_krea2_execution_uses_official_turbo_defaults_and_records_family(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
