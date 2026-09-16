@@ -35,6 +35,15 @@ Describe 'StableAMD memory diagnostics' {
         $launcherScript | Should -Match 'classic cache enabled'
     }
 
+    It 'defaults the 16 GiB desktop profile to DynamicVRAM and RAM-pressure caching' {
+        $launcherScript = Get-Content (Join-Path $PSScriptRoot '../scripts/Launch-StableAMD.ps1') -Raw
+
+        $launcherScript | Should -Match 'Using default RX 6950 XT / 16 GiB profile: DynamicVRAM \+ RAM-pressure cache \+ CPU VAE\.'
+        $launcherScript | Should -Not -Match 'resolvedDisableDynamicVram\s*=\s*\$true'
+        $launcherScript | Should -Not -Match 'resolvedLowVram\s*=\s*\$true'
+        $launcherScript | Should -Not -Match 'resolvedCacheClassic\s*=\s*\$true'
+    }
+
     It 'keeps CPU VAE without regressing large safetensors model loading' {
         $runner = Get-Content (Join-Path $PSScriptRoot '../scripts/probes/run_comfy_isolated.py') -Raw
 
