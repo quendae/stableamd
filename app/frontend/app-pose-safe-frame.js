@@ -2,7 +2,7 @@
   const POSE_SAFE_FRAME_FRACTION = 0.82;
   const POSE_SAFE_FRAME_MAX_SIDE = 1024;
   const POSE_CONTENT_THRESHOLD = 8;
-  const SAFE_FRAME_HINT = 'Built-in templates and editor poses are safe-frame fitted automatically to the generation aspect ratio.';
+  const SAFE_FRAME_HINT = 'Built-in pose framing is provider-aware: Krea preserves the pose-map aspect; other supported routes are safe-frame fitted to the generation aspect ratio.';
 
   function clampDimension(value, fallback) {
     const numeric = Math.round(Number(value));
@@ -17,6 +17,13 @@
       width: Math.max(64, Math.round(requestedWidth * scale)),
       height: Math.max(64, Math.round(requestedHeight * scale)),
     };
+  }
+
+  function requestModelFamily(request) {
+    const modelId = String(request?.modelId || '');
+    if (!modelId || typeof state === 'undefined' || !Array.isArray(state?.models)) return '';
+    const model = state.models.find((entry) => String(entry?.id ?? entry?.Id ?? '') === modelId);
+    return String(model?.family ?? model?.Family ?? '').toLowerCase();
   }
 
   function shouldAutoFitOpenPosePayload(payload) {
@@ -147,10 +154,12 @@
       if (path === '/api/generate' && String(options.method || 'GET').toUpperCase() === 'POST') {
         const request = JSON.parse(options.body || '{}');
         const control = request?.control;
+        const family = requestModelFamily(request);
         if (
           control?.enabled !== false
           && control?.type === 'openpose'
           && control?.image?.dataBase64
+          && family !== 'krea2'
           && shouldAutoFitOpenPosePayload(control.image)
         ) {
           const fitted = await fitOpenPosePayloadToFrame(
@@ -174,6 +183,7 @@
       fitOpenPosePayloadToFrame,
       findPoseContentBounds,
       poseTargetSize,
+      requestModelFamily,
       shouldAutoFitOpenPosePayload,
       fraction: POSE_SAFE_FRAME_FRACTION,
     };
