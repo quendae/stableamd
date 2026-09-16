@@ -11,12 +11,13 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 # Keep the previous final v0.3 product server intact as a compatibility layer,
-# then add ControlNet and pose-control extensions. This keeps the accepted Krea
-# LoRA, Z-Image edit and hardened PowerShell transport paths unchanged.
+# then add ControlNet, pose-control and async job extensions. This keeps the
+# accepted Krea LoRA, Z-Image edit and hardened PowerShell transport paths intact.
 from stableamd_v03_product_server import *  # noqa: F401,F403,E402
 import stableamd_v03_product_server as product  # noqa: E402
 import stableamd_v03_controlnet as controlnet  # noqa: E402
 import stableamd_v03_pose_control as posecontrol  # noqa: E402
+from stableamd_generation_jobs import GenerationJobsApiMixin, GenerationTimeoutBridgeMixin  # noqa: E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
 
@@ -39,7 +40,12 @@ KREA_OPENPOSE_LORA_BYTES = controlnet.KREA_OPENPOSE_LORA_BYTES
 KREA_OPENPOSE_LORA_SHA256 = controlnet.KREA_OPENPOSE_LORA_SHA256
 
 
-class PowerShellBridge(PoseControlBridgeMixin, ControlNetBridgeMixin, product.PowerShellBridge):
+class PowerShellBridge(
+    PoseControlBridgeMixin,
+    ControlNetBridgeMixin,
+    GenerationTimeoutBridgeMixin,
+    product.PowerShellBridge,
+):
     """Final v0.3 bridge: accepted product paths + provider-aware ControlNet."""
 
     def _node_available(self, node_name: str) -> bool:
@@ -59,8 +65,8 @@ class PowerShellBridge(PoseControlBridgeMixin, ControlNetBridgeMixin, product.Po
             return None
 
 
-class StableAmdApi(ControlNetApiMixin, product.StableAmdApi):
-    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control"}
+class StableAmdApi(GenerationJobsApiMixin, ControlNetApiMixin, product.StableAmdApi):
+    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob"}
 
 
 base.PowerShellBridge = PowerShellBridge
