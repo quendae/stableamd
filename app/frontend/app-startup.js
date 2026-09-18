@@ -1,8 +1,26 @@
 (() => {
-  const STARTUP_TIMEOUT_MS = 10000;
+  const STARTUP_TIMEOUT_MS = 15000;
+  const MIN_GATE_MS = 450;
   const POLL_INTERVAL_MS = 75;
 
   const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  let criticalReady = false;
+  let resolveCriticalReady = null;
+  const criticalReadyPromise = new Promise((resolve) => {
+    resolveCriticalReady = resolve;
+  });
+
+  window.StableAmdStartup = {
+    markCriticalReady() {
+      if (criticalReady) return;
+      criticalReady = true;
+      resolveCriticalReady?.();
+    },
+    get criticalReady() {
+      return criticalReady;
+    },
+  };
 
   async function fetchJson(path) {
     const response = await fetch(path, {
@@ -61,6 +79,20 @@
     return modelUiReady(modelSupport);
   }
 
+  async function waitForCriticalStartup(timeoutMs) {
+    if (criticalReady) return true;
+    if (timeoutMs <= 0) return false;
+    return Promise.race([
+      criticalReadyPromise.then(() => true),
+      delay(timeoutMs).then(() => false),
+    ]);
+  }
+
+  async function waitForMinimumGate(startedAt) {
+    const remaining = MIN_GATE_MS - (performance.now() - startedAt);
+    if (remaining > 0) await delay(remaining);
+  }
+
   function revealGui(timedOut) {
     const gate = document.querySelector("#startup-gate");
     const shell = document.querySelector(".app-shell");
@@ -81,26 +113,29 @@
     document.body.setAttribute("aria-busy", "true");
     const startedAt = performance.now();
     const gateMessage = document.querySelector("#startup-gate-message");
-    if (gateMessage) gateMessage.textContent = "Loading models…";
+    if (gateMessage) gateMessage.textContent = "Preparing models and capabilities…";
+
+    const modelSupportPromise = fetchJson("/api/model-support").catch(() => null);
+    const criticalReadyResult = await waitForCriticalStartup(STARTUP_TIMEOUT_MS);
+    let remainingMs = STARTUP_TIMEOUT_MS - (performance.now() - startedAt);
 
     let modelSupport = null;
-    try {
+    if (remainingMs > 0) {
       modelSupport = await Promise.race([
-        fetchJson("/api/model-support"),
-        delay(STARTUP_TIMEOUT_MS).then(() => null),
+        modelSupportPromise,
+        delay(remainingMs).then(() => null),
       ]);
-    } catch {
-      modelSupport = null;
     }
 
-    const remainingMs = STARTUP_TIMEOUT_MS - (performance.now() - startedAt);
-    if (!modelSupport || remainingMs <= 0) {
-      revealGui(true);
-      return;
+    remainingMs = STARTUP_TIMEOUT_MS - (performance.now() - startedAt);
+    let modelReady = false;
+    if (criticalReadyResult && modelSupport && remainingMs > 0) {
+      if (gateMessage) gateMessage.textContent = "Finalizing Generate workspace…";
+      modelReady = await waitForModelUiReady(modelSupport, remainingMs);
     }
 
-    const ready = await waitForModelUiReady(modelSupport, remainingMs);
-    revealGui(!ready);
+    await waitForMinimumGate(startedAt);
+    revealGui(!(criticalReadyResult && modelReady));
   }
 
   document.addEventListener("DOMContentLoaded", () => {
