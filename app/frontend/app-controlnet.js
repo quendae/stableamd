@@ -3,6 +3,10 @@
     support: { models: [] },
     dependencies: [],
   };
+  const depthState = {
+    key: '',
+    payload: null,
+  };
 
   function installStyles() {
     if (document.querySelector('#controlnet-styles')) return;
@@ -16,6 +20,8 @@
       .controlnet-help { margin:0; opacity:.72; font-size:12px; line-height:1.45; }
       .controlnet-install { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 10px; border-radius:9px; background:rgba(127,127,127,.09); }
       .controlnet-file-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+      .controlnet-depth-preview { display:grid; gap:6px; padding:8px; border-radius:9px; background:rgba(127,127,127,.07); }
+      .controlnet-depth-preview img { width:100%; max-height:260px; object-fit:contain; border-radius:7px; background:#111; }
       @media (max-width: 720px) { .controlnet-grid { grid-template-columns: 1fr; } }
     `;
     document.head.append(style);
@@ -61,6 +67,10 @@
           <input id="controlnet-image" type="file" accept="image/png,image/jpeg,image/webp">
           <small id="controlnet-image-hint" class="controlnet-help"></small>
         </label>
+        <div id="controlnet-depth-preview-wrap" class="controlnet-depth-preview" hidden>
+          <small class="controlnet-help">Generated depth map preview</small>
+          <img id="controlnet-depth-preview" alt="Generated depth map preview">
+        </div>
         <div id="controlnet-canny-fields" class="controlnet-grid" hidden>
           <label class="field"><span>Canny low</span><input id="controlnet-canny-low" type="number" min="0.01" max="0.99" step="0.01" value="0.4"></label>
           <label class="field"><span>Canny high</span><input id="controlnet-canny-high" type="number" min="0.01" max="0.99" step="0.01" value="0.8"></label>
@@ -72,13 +82,35 @@
     panel.querySelector('#controlnet-enabled')?.addEventListener('change', updateFieldVisibility);
     panel.querySelector('#controlnet-type')?.addEventListener('change', () => {
       updateFieldVisibility();
+      maybePreprocessDepthPreview();
       document.dispatchEvent(new CustomEvent('stableamd:control-type-changed'));
+    });
+    panel.querySelector('#controlnet-image')?.addEventListener('change', () => {
+      depthState.key = '';
+      depthState.payload = null;
+      clearDepthPreview();
+      maybePreprocessDepthPreview();
     });
     return panel;
   }
 
   function dependencyById(id) {
     return controlState.dependencies.find((item) => String(item.id || '') === String(id || '')) || null;
+  }
+
+  function clearDepthPreview() {
+    const wrap = document.querySelector('#controlnet-depth-preview-wrap');
+    const preview = document.querySelector('#controlnet-depth-preview');
+    if (preview) preview.removeAttribute('src');
+    if (wrap) wrap.hidden = true;
+  }
+
+  function showDepthPreview(payload) {
+    const wrap = document.querySelector('#controlnet-depth-preview-wrap');
+    const preview = document.querySelector('#controlnet-depth-preview');
+    if (!wrap || !preview || !payload?.dataBase64) return;
+    preview.src = `data:${payload.mimeType || 'image/png'};base64,${payload.dataBase64}`;
+    wrap.hidden = false;
   }
 
   function updateFieldVisibility() {
@@ -88,6 +120,7 @@
     const canny = document.querySelector('#controlnet-canny-fields');
     const label = document.querySelector('#controlnet-image-label');
     const hint = document.querySelector('#controlnet-image-hint');
+    const depthPreview = document.querySelector('#controlnet-depth-preview-wrap');
     if (!enabled || !fields || !type || !canny) return;
 
     fields.hidden = !enabled.checked;
@@ -95,9 +128,15 @@
     if (type.value === 'openpose') {
       if (label) label.textContent = 'OpenPose / DWPose map (optional upload)';
       if (hint) hint.textContent = 'Choose a built-in pose template, use the interactive editor, or upload your own prepared skeleton map.';
+    } else if (type.value === 'depth') {
+      if (label) label.textContent = 'Source image';
+      if (hint) hint.textContent = 'StableAMD runs Depth Anything V2 Small locally and sends the generated depth map to Z-Image.';
     } else {
       if (label) label.textContent = 'Source image';
       if (hint) hint.textContent = 'StableAMD runs Canny locally inside the Z-Image graph.';
+    }
+    if (depthPreview) {
+      depthPreview.hidden = !enabled.checked || type.value !== 'depth' || !depthState.payload;
     }
     document.dispatchEvent(new CustomEvent('stableamd:control-visibility-changed'));
   }
@@ -130,6 +169,25 @@
     }
   }
 
+  function renderInstallable(panel, installable) {
+    const install = panel.querySelector('#controlnet-install');
+    install.hidden = true;
+    install.replaceChildren();
+    if (!installable.length) return;
+
+    const item = installable[0];
+    const dep = dependencyById(item.dependencyId);
+    install.hidden = false;
+    const text = document.createElement('span');
+    text.textContent = dep?.note || `${item.label || item.id} requires its curated dependency.`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'button button-secondary';
+    button.textContent = 'Install dependency';
+    button.addEventListener('click', () => installDependency(item.dependencyId, button));
+    install.append(text, button);
+  }
+
   function renderPanel() {
     const panel = createPanel();
     if (!panel) return;
@@ -138,7 +196,6 @@
     const type = panel.querySelector('#controlnet-type');
     const strength = panel.querySelector('#controlnet-strength');
     const help = panel.querySelector('#controlnet-help');
-    const install = panel.querySelector('#controlnet-install');
     const available = supportedControls(model);
     const installable = plannedInstallableControls(model);
     const previousType = type.value;
@@ -157,8 +214,7 @@
 
     enable.disabled = !available.length;
     if (!available.length) enable.checked = false;
-    install.hidden = true;
-    install.replaceChildren();
+    renderInstallable(panel, installable);
 
     if (!model) {
       help.textContent = 'Select Z-Image Turbo or Krea 2 Turbo to see provider-specific controls.';
@@ -174,18 +230,7 @@
         if (high) high.value = String(chosen.cannyHighDefault ?? 0.8);
       }
     } else if (installable.length) {
-      const item = installable[0];
-      const dep = dependencyById(item.dependencyId);
       help.textContent = model.controlPolicy?.note || 'A pinned dependency is required before this control route can be enabled.';
-      install.hidden = false;
-      const text = document.createElement('span');
-      text.textContent = dep?.note || `${item.label || item.id} requires its curated dependency.`;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'button button-secondary';
-      button.textContent = 'Install dependency';
-      button.addEventListener('click', () => installDependency(item.dependencyId, button));
-      install.append(text, button);
     } else {
       help.textContent = model.controlPolicy?.note || 'Control guidance is not enabled for this model yet.';
     }
@@ -225,6 +270,46 @@
     });
   }
 
+  function depthFileKey(file) {
+    return `${file?.name || ''}|${file?.size || 0}|${file?.lastModified || 0}`;
+  }
+
+  async function ensureDepthPreprocessed(file) {
+    if (!file) throw new Error('Choose a source image for Depth first.');
+    const key = depthFileKey(file);
+    if (depthState.key === key && depthState.payload) return depthState.payload;
+
+    const source = await readFilePayload(file);
+    const result = await api('/api/controlnet/preprocess/depth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: source }),
+    });
+    const payload = result?.image;
+    if (!payload?.dataBase64) throw new Error('Depth preprocessing did not return a depth map.');
+    depthState.key = key;
+    depthState.payload = payload;
+    showDepthPreview(payload);
+    updateFieldVisibility();
+    return payload;
+  }
+
+  async function maybePreprocessDepthPreview() {
+    const enabled = document.querySelector('#controlnet-enabled');
+    const type = document.querySelector('#controlnet-type')?.value || '';
+    const file = document.querySelector('#controlnet-image')?.files?.[0];
+    if (!enabled?.checked || type !== 'depth' || !file) {
+      if (type !== 'depth') clearDepthPreview();
+      return;
+    }
+    try {
+      await ensureDepthPreprocessed(file);
+    } catch (error) {
+      clearDepthPreview();
+      if (typeof showToast === 'function') showToast(error?.message || String(error));
+    }
+  }
+
   function installApiWrapper() {
     if (window.__stableAmdControlApiWrapped) return;
     window.__stableAmdControlApiWrapped = true;
@@ -236,7 +321,9 @@
           const request = JSON.parse(options.body || '{}');
           const file = document.querySelector('#controlnet-image')?.files?.[0];
           const type = document.querySelector('#controlnet-type')?.value || '';
-          let imagePayload = file ? await readFilePayload(file) : null;
+          let imagePayload = type === 'depth'
+            ? await ensureDepthPreprocessed(file)
+            : (file ? await readFilePayload(file) : null);
           if (!imagePayload && type === 'openpose' && window.StableAmdPose?.getControlImagePayload) {
             imagePayload = await window.StableAmdPose.getControlImagePayload();
           }
