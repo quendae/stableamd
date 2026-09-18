@@ -80,6 +80,11 @@ DWPOSE_LICENSE = poseextract.DWPOSE_LICENSE
 DWPOSE_ONNXRUNTIME_VERSION = poseextract.DWPOSE_ONNXRUNTIME_VERSION
 DWPOSE_OPENCV_VERSION = poseextract.DWPOSE_OPENCV_VERSION
 
+# A source image plus one 20 MiB reference image expands to roughly 54 MiB once
+# both are base64-encoded inside JSON. Keep the loopback-only request budget
+# comfortably above that without changing the per-image 20 MiB validation.
+base.MAX_REQUEST_BYTES = max(base.MAX_REQUEST_BYTES, 64 * 1024 * 1024)
+
 
 class PowerShellBridge(
     KreaImageEditBridgeMixin,
@@ -116,7 +121,42 @@ class StableAmdApi(
     ControlNetApiMixin,
     product.StableAmdApi,
 ):
-    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob"}
+    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob", "references"}
+    _reference_roles = {"style", "material", "content"}
+
+    def _validate_generation(self, request):
+        if "references" not in request:
+            return super()._validate_generation(request)
+
+        references = request.get("references")
+        clean = dict(request)
+        clean.pop("references", None)
+        validated = super()._validate_generation(clean)
+
+        if validated.get("mode", "txt2img") != "img2img":
+            raise ValueError("Reference images are valid only for img2img generation.")
+        if not isinstance(references, list):
+            raise ValueError("references must be an array.")
+        if len(references) > 1:
+            raise ValueError("Krea Image Edit currently accepts at most 1 reference image.")
+        if not references:
+            return validated
+
+        reference = references[0]
+        if not isinstance(reference, dict):
+            raise ValueError("Reference image entry must be an object.")
+        unsupported = sorted(set(reference) - {"role", "image"})
+        if unsupported:
+            raise ValueError("Unsupported reference image field(s): " + ", ".join(unsupported))
+        role = reference.get("role")
+        if not isinstance(role, str) or role not in self._reference_roles:
+            raise ValueError("Reference image role must be style, material, or content.")
+        if "image" not in reference:
+            raise ValueError("Reference image entry requires image.")
+        base._decode_input_image(reference["image"])
+
+        validated["references"] = references
+        return validated
 
 
 base.PowerShellBridge = PowerShellBridge
