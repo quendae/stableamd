@@ -41,6 +41,8 @@ class StableAmdV03PoseExtractTests(unittest.TestCase):
 
     def test_control_dependencies_expose_installable_dwpose_preprocessor(self):
         class Parent:
+            repo_root = REPO_ROOT
+
             def controlnet_dependencies(inner_self):
                 return {"dependencies": []}
 
