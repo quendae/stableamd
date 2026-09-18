@@ -38,10 +38,12 @@
   function selectedModelFamily() {
     const select = document.querySelector('#model-select');
     const id = String(select?.value || '');
-    const model = Array.isArray(window.state?.models)
-      ? window.state.models.find((entry) => String(window.getValue?.(entry, 'id', 'Id') || '') === id)
-      : null;
-    const family = String(window.getValue?.(model, 'family', 'Family') || '').toLowerCase();
+    const models = typeof state !== 'undefined' && Array.isArray(state?.models) ? state.models : [];
+    const readValue = typeof getValue === 'function'
+      ? getValue
+      : ((entry, ...keys) => keys.map((key) => entry?.[key]).find((value) => value !== undefined));
+    const model = models.find((entry) => String(readValue(entry, 'id', 'Id') || '') === id) || null;
+    const family = String(readValue(model, 'family', 'Family') || '').toLowerCase();
     if (family) return family;
     const label = String(select?.selectedOptions?.[0]?.textContent || '').toLowerCase();
     if (label.includes('krea')) return 'krea2';
