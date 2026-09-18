@@ -11,19 +11,21 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 # Keep the previous final v0.3 product server intact as a compatibility layer,
-# then add Krea Image Edit, Depth/ControlNet, pose-control and async job
-# extensions. This keeps the accepted Krea LoRA, Z-Image edit and hardened
-# PowerShell transport paths intact.
+# then add Krea Image Edit, pose extraction, Depth/ControlNet, pose-control and
+# async job extensions. This keeps the accepted Krea LoRA, Z-Image edit and
+# hardened PowerShell transport paths intact.
 from stableamd_v03_product_server import *  # noqa: F401,F403,E402
 import stableamd_v03_product_server as product  # noqa: E402
 import stableamd_v03_controlnet as controlnet  # noqa: E402
 import stableamd_v03_pose_control as posecontrol  # noqa: E402
 import stableamd_v03_depth_control as depthcontrol  # noqa: E402
+import stableamd_v03_pose_extract as poseextract  # noqa: E402
 import stableamd_v03_krea_edit as kreaedit  # noqa: E402
 from stableamd_generation_jobs import GenerationJobsApiMixin, GenerationTimeoutBridgeMixin  # noqa: E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
 from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: E402
+from stableamd_v03_pose_extract import PoseExtractApiMixin, PoseExtractBridgeMixin  # noqa: E402
 from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: E402
 
 # Explicit compatibility exports used by the regression suite.
@@ -62,17 +64,33 @@ KREA_DEPTH_LORA_URL = depthcontrol.KREA_DEPTH_LORA_URL
 KREA_DEPTH_LORA_BYTES = depthcontrol.KREA_DEPTH_LORA_BYTES
 KREA_DEPTH_LORA_SHA256 = depthcontrol.KREA_DEPTH_LORA_SHA256
 KREA_DEPTH_LORA_LICENSE = depthcontrol.KREA_DEPTH_LORA_LICENSE
+DWPOSE_DEPENDENCY_ID = poseextract.DWPOSE_DEPENDENCY_ID
+DWPOSE_SOURCE_REPOSITORY = poseextract.DWPOSE_SOURCE_REPOSITORY
+DWPOSE_SOURCE_COMMIT = poseextract.DWPOSE_SOURCE_COMMIT
+DWPOSE_SOURCE_LICENSE = poseextract.DWPOSE_SOURCE_LICENSE
+DWPOSE_MODEL_REPOSITORY = poseextract.DWPOSE_MODEL_REPOSITORY
+DWPOSE_MODEL_REVISION = poseextract.DWPOSE_MODEL_REVISION
+DWPOSE_DETECTOR_FILENAME = poseextract.DWPOSE_DETECTOR_FILENAME
+DWPOSE_DETECTOR_BYTES = poseextract.DWPOSE_DETECTOR_BYTES
+DWPOSE_DETECTOR_SHA256 = poseextract.DWPOSE_DETECTOR_SHA256
+DWPOSE_POSE_FILENAME = poseextract.DWPOSE_POSE_FILENAME
+DWPOSE_POSE_BYTES = poseextract.DWPOSE_POSE_BYTES
+DWPOSE_POSE_SHA256 = poseextract.DWPOSE_POSE_SHA256
+DWPOSE_LICENSE = poseextract.DWPOSE_LICENSE
+DWPOSE_ONNXRUNTIME_VERSION = poseextract.DWPOSE_ONNXRUNTIME_VERSION
+DWPOSE_OPENCV_VERSION = poseextract.DWPOSE_OPENCV_VERSION
 
 
 class PowerShellBridge(
     KreaImageEditBridgeMixin,
+    PoseExtractBridgeMixin,
     DepthControlBridgeMixin,
     PoseControlBridgeMixin,
     ControlNetBridgeMixin,
     GenerationTimeoutBridgeMixin,
     product.PowerShellBridge,
 ):
-    """Final v0.3 bridge: accepted product paths + Krea edit + provider control."""
+    """Final v0.3 bridge: accepted product paths + provider controls/preprocessors."""
 
     def _node_available(self, node_name: str) -> bool:
         # Capability discovery must never turn an otherwise valid model-support
@@ -93,6 +111,7 @@ class PowerShellBridge(
 
 class StableAmdApi(
     GenerationJobsApiMixin,
+    PoseExtractApiMixin,
     DepthControlApiMixin,
     ControlNetApiMixin,
     product.StableAmdApi,
