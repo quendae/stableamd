@@ -11,17 +11,19 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 # Keep the previous final v0.3 product server intact as a compatibility layer,
-# then add Krea Image Edit, ControlNet, pose-control and async job extensions.
-# This keeps the accepted Krea LoRA, Z-Image edit and hardened PowerShell
-# transport paths intact.
+# then add Krea Image Edit, Depth/ControlNet, pose-control and async job
+# extensions. This keeps the accepted Krea LoRA, Z-Image edit and hardened
+# PowerShell transport paths intact.
 from stableamd_v03_product_server import *  # noqa: F401,F403,E402
 import stableamd_v03_product_server as product  # noqa: E402
 import stableamd_v03_controlnet as controlnet  # noqa: E402
 import stableamd_v03_pose_control as posecontrol  # noqa: E402
+import stableamd_v03_depth_control as depthcontrol  # noqa: E402
 import stableamd_v03_krea_edit as kreaedit  # noqa: E402
 from stableamd_generation_jobs import GenerationJobsApiMixin, GenerationTimeoutBridgeMixin  # noqa: E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
+from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: E402
 from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: E402
 
 # Explicit compatibility exports used by the regression suite.
@@ -41,16 +43,25 @@ KREA_OPENPOSE_LORA = controlnet.KREA_OPENPOSE_LORA
 KREA_OPENPOSE_LORA_URL = controlnet.KREA_OPENPOSE_LORA_URL
 KREA_OPENPOSE_LORA_BYTES = controlnet.KREA_OPENPOSE_LORA_BYTES
 KREA_OPENPOSE_LORA_SHA256 = controlnet.KREA_OPENPOSE_LORA_SHA256
+DEPTH_ANYTHING_DEPENDENCY_ID = depthcontrol.DEPTH_ANYTHING_DEPENDENCY_ID
+DEPTH_ANYTHING_REPOSITORY = depthcontrol.DEPTH_ANYTHING_REPOSITORY
+DEPTH_ANYTHING_REVISION = depthcontrol.DEPTH_ANYTHING_REVISION
+DEPTH_ANYTHING_MODEL_FILENAME = depthcontrol.DEPTH_ANYTHING_MODEL_FILENAME
+DEPTH_ANYTHING_MODEL_URL = depthcontrol.DEPTH_ANYTHING_MODEL_URL
+DEPTH_ANYTHING_MODEL_BYTES = depthcontrol.DEPTH_ANYTHING_MODEL_BYTES
+DEPTH_ANYTHING_MODEL_SHA256 = depthcontrol.DEPTH_ANYTHING_MODEL_SHA256
+DEPTH_ANYTHING_LICENSE = depthcontrol.DEPTH_ANYTHING_LICENSE
 
 
 class PowerShellBridge(
     KreaImageEditBridgeMixin,
+    DepthControlBridgeMixin,
     PoseControlBridgeMixin,
     ControlNetBridgeMixin,
     GenerationTimeoutBridgeMixin,
     product.PowerShellBridge,
 ):
-    """Final v0.3 bridge: accepted product paths + Krea edit + ControlNet."""
+    """Final v0.3 bridge: accepted product paths + Krea edit + provider control."""
 
     def _node_available(self, node_name: str) -> bool:
         # Capability discovery must never turn an otherwise valid model-support
@@ -69,7 +80,12 @@ class PowerShellBridge(
             return None
 
 
-class StableAmdApi(GenerationJobsApiMixin, ControlNetApiMixin, product.StableAmdApi):
+class StableAmdApi(
+    GenerationJobsApiMixin,
+    DepthControlApiMixin,
+    ControlNetApiMixin,
+    product.StableAmdApi,
+):
     _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob"}
 
 
