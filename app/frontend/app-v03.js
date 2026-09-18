@@ -595,6 +595,9 @@
         void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport(), refreshModelPatches()]);
       }
     });
-    void Promise.allSettled([refreshBundleRoots(), refreshModelPackages(), refreshExecutionSupport(), refreshModelPatches()]);
+
+    const criticalStartup = Promise.allSettled([refreshModelPackages(), refreshExecutionSupport()]);
+    void criticalStartup.finally(() => window.StableAmdStartup?.markCriticalReady?.());
+    void Promise.allSettled([refreshBundleRoots(), refreshModelPatches()]);
   });
 })();
