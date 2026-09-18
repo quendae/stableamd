@@ -61,6 +61,9 @@ class StableAmdKreaReferenceEditTests(unittest.TestCase):
                 "references": [{"role": "other", "image": tiny_png("bad.png")}],
             })
 
+    def test_final_server_expands_request_budget_for_source_plus_reference(self):
+        self.assertGreaterEqual(server.base.MAX_REQUEST_BYTES, 64 * 1024 * 1024)
+
     def test_krea_edit_policy_advertises_one_reference_roles(self):
         module = self._load_edit_module()
 
