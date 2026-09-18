@@ -14,6 +14,7 @@
     .then(() => loadScript('/app-pose-safe-frame.js'))
     .then(() => loadScript('/app-controlnet.js'))
     .then(() => loadScript('/app-pose-editor.js'))
+    .then(() => loadScript('/app-pose-extract.js'))
     .then(() => loadScript('/app-generation-jobs.js'))
     .catch((error) => {
       console.error('StableAMD late frontend extension failed:', error);
