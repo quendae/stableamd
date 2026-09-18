@@ -17,22 +17,33 @@ class StableAmdFrontendStartupGateTests(unittest.TestCase):
         app = source.index('src="/app.js"')
         self.assertLess(startup, app)
 
-    def test_startup_controller_waits_only_for_supported_model_list_or_10_second_fallback(self):
+    def test_startup_controller_waits_for_model_ui_and_v03_critical_barrier(self):
         source = (FRONTEND / "app-startup.js").read_text(encoding="utf-8")
-        self.assertIn("10000", source)
+        self.assertIn("15000", source)
+        self.assertIn("450", source)
         self.assertIn("state.models", source)
         self.assertNotIn('fetch("/api/models"', source)
         self.assertIn('fetchJson("/api/model-support"', source)
         self.assertIn("waitForModelUiReady", source)
+        self.assertIn("waitForCriticalStartup", source)
+        self.assertIn("window.StableAmdStartup", source)
+        self.assertIn("markCriticalReady", source)
         self.assertIn("startup-gate", source)
         self.assertIn("app-shell", source)
 
         # Generation options and LoRA metadata continue loading in the background;
-        # they must not extend the model-list startup gate.
+        # they must not extend the critical Generate-ready startup barrier.
         self.assertNotIn('fetch("/api/generation-options"', source)
         self.assertNotIn('fetch("/api/lora-catalog"', source)
         self.assertNotIn("generationOptionsUiReady", source)
         self.assertNotIn("loraUiReady", source)
+
+    def test_v03_marks_critical_startup_ready_only_after_models_and_support_settle(self):
+        source = (FRONTEND / "app-v03.js").read_text(encoding="utf-8")
+        self.assertIn("markCriticalReady", source)
+        self.assertIn("refreshModelPackages", source)
+        self.assertIn("refreshExecutionSupport", source)
+        self.assertIn("Promise.allSettled", source)
 
     def test_startup_styles_cover_screen_until_gate_releases(self):
         source = (FRONTEND / "extras.css").read_text(encoding="utf-8")
