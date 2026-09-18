@@ -17,6 +17,7 @@
       .controlnet-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
       .controlnet-heading strong { font-size: 14px; }
       .controlnet-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }
+      .controlnet-grid[hidden] { display:none !important; }
       .controlnet-help { margin:0; opacity:.72; font-size:12px; line-height:1.45; }
       .controlnet-install { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 10px; border-radius:9px; background:rgba(127,127,127,.09); }
       .controlnet-file-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
