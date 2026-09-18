@@ -34,7 +34,9 @@ class StableAmdKreaImageEditTests(unittest.TestCase):
         source = FINAL_SERVER_PATH.read_text(encoding="utf-8")
         self.assertIn("import stableamd_v03_krea_edit as kreaedit", source)
         self.assertIn("from stableamd_v03_krea_edit import KreaImageEditBridgeMixin", source)
-        self.assertIn("KreaImageEditBridgeMixin,\n    PoseControlBridgeMixin,", source)
+        self.assertIn("from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin", source)
+        self.assertLess(source.index("    KreaImageEditBridgeMixin,"), source.index("    DepthControlBridgeMixin,"))
+        self.assertLess(source.index("    DepthControlBridgeMixin,"), source.index("    PoseControlBridgeMixin,"))
 
     def test_krea_img2img_catalog_stays_runtime_gated(self):
         payload = json.loads(SUPPORT_PATH.read_text(encoding="utf-8"))
