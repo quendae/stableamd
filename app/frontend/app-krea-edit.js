@@ -51,6 +51,43 @@
     return additional ? `${base} ${additional}` : base;
   }
 
+  function readReferenceImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error("Choose a reference image."));
+        return;
+      }
+      if (![/^image\/png$/i, /^image\/jpeg$/i, /^image\/webp$/i].some((pattern) => pattern.test(file.type || ""))) {
+        reject(new Error("Reference image must be PNG, JPEG, or WebP."));
+        return;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        reject(new Error("Reference image must be 20 MiB or smaller."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the reference image."));
+      reader.onload = () => {
+        const encoded = String(reader.result || "");
+        const comma = encoded.indexOf(",");
+        if (comma < 0 || !encoded.slice(comma + 1)) {
+          reject(new Error("Could not encode the reference image."));
+          return;
+        }
+        resolve({
+          name: file.name,
+          mimeType: file.type,
+          dataBase64: encoded.slice(comma + 1),
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function referenceEnabled() {
+    return document.querySelector("#krea-reference-enabled")?.checked === true;
+  }
+
   // app-v02 owns the generic img2img transport. Load this adapter before it so
   // v02 captures this API wrapper as its base transport: v02 can collect the
   // source image normally, then this layer removes classic denoise semantics
@@ -65,6 +102,13 @@
         if (isMaterialTask()) {
           const materialInstruction = buildMaterialInstruction();
           payload.prompt = materialInstruction;
+        }
+        if (referenceEnabled()) {
+          const role = String(document.querySelector("#krea-reference-role")?.value || "style");
+          const file = document.querySelector("#krea-reference-image")?.files?.[0];
+          payload.references = [{ role, image: await readReferenceImage(file) }];
+        } else {
+          delete payload.references;
         }
         return baseKreaEditApi(path, { ...options, body: JSON.stringify(payload) });
       }
@@ -115,6 +159,27 @@
           </label>
           <p class="history-model">StableAMD builds a focused replacement instruction and asks Krea to preserve geometry, lighting, composition and unrelated areas.</p>
         </div>
+        <div class="field">
+          <label class="checkbox-field">
+            <input id="krea-reference-enabled" type="checkbox">
+            <span>Use one reference image</span>
+          </label>
+          <div id="krea-reference-controls" hidden>
+            <label class="field">
+              <span>Reference role</span>
+              <select id="krea-reference-role">
+                <option value="style">Style</option>
+                <option value="material">Material</option>
+                <option value="content">Content</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Reference image · PNG, JPEG or WebP · max 20 MiB</span>
+              <input id="krea-reference-image" type="file" accept="image/png,image/jpeg,image/webp">
+            </label>
+            <p id="krea-reference-hint" class="history-model">Picture 1 remains the source image. Picture 2 is used according to the selected reference role.</p>
+          </div>
+        </div>
       </div>`;
 
     if (hint) hint.before(panel);
@@ -151,6 +216,20 @@
     const target = document.querySelector("#krea-material-target");
     if (target) target.required = Boolean(material);
 
+    const referenceOn = active && referenceEnabled();
+    const referenceControls = document.querySelector("#krea-reference-controls");
+    const referenceInput = document.querySelector("#krea-reference-image");
+    if (referenceControls) referenceControls.hidden = !referenceOn;
+    if (referenceInput) referenceInput.required = referenceOn;
+    const referenceHint = document.querySelector("#krea-reference-hint");
+    if (referenceHint && referenceOn) {
+      const role = String(document.querySelector("#krea-reference-role")?.value || "style");
+      const file = referenceInput?.files?.[0];
+      referenceHint.textContent = file
+        ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Picture 2 will be used as the ${role} reference.`
+        : `Choose Picture 2 to use as the ${role} reference.`;
+    }
+
     const prompt = document.querySelector("#prompt");
     const promptLabel = prompt?.closest(".field")?.querySelector(":scope > span");
     if (promptLabel) {
@@ -183,7 +262,7 @@
           : "Choose a source image, identify the target object/area and select the replacement material. Additional instruction is optional.";
       } else {
         hint.textContent = file
-          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Krea 2 whole-image edit uses this source as its reference.`
+          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Krea 2 whole-image edit uses this source as Picture 1.`
           : "Choose a source image, then describe the requested whole-image change in Edit instruction. No mask or denoise slider is used.";
       }
     }
@@ -202,6 +281,9 @@
       document.querySelector("#input-image")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-edit-task")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-material-preset")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-reference-enabled")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-reference-role")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-reference-image")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       new MutationObserver(() => queueMicrotask(syncKreaEditUi)).observe(model, { childList: true });
     }
     syncKreaEditUi();
