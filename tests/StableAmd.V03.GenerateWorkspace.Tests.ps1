@@ -1,17 +1,19 @@
 BeforeAll {
     $repoRoot = Join-Path $PSScriptRoot '..'
-    $compactPath = Join-Path $repoRoot 'app/frontend/app-generate-compact.js'
+    $indexPath = Join-Path $repoRoot 'app/frontend/index.html'
     $workspacePath = Join-Path $repoRoot 'app/frontend/app-generate-workspace.js'
     $workspaceStylesPath = Join-Path $repoRoot 'app/frontend/generate-workspace.css'
     $designPath = Join-Path $repoRoot 'DESIGN.md'
 }
 
 Describe 'StableAMD v0.3 Generate studio workspace' {
-    It 'loads a dedicated workspace layer after the compact Generate adapter' {
+    It 'loads a dedicated workspace layer after the existing Generate extensions' {
         Test-Path $workspacePath | Should -BeTrue
         Test-Path $workspaceStylesPath | Should -BeTrue
-        $compact = Get-Content $compactPath -Raw
-        $compact | Should -Match '/app-generate-workspace\.js'
+        $index = Get-Content $indexPath -Raw
+        $index | Should -Match '/app-generate-upscale\.js'
+        $index | Should -Match '/app-generate-workspace\.js'
+        $index.IndexOf('/app-generate-workspace.js') | Should -BeGreaterThan $index.IndexOf('/app-generate-upscale.js')
     }
 
     It 'turns Generate modes into direct sidebar choices while preserving generation-mode as canonical state' {
