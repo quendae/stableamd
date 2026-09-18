@@ -72,12 +72,15 @@ class StableAmdV03PoseExtractTests(unittest.TestCase):
         self.assertIn('peopleDetected', source)
 
     def test_frontend_exposes_extract_from_photo_and_uses_result_as_openpose_selection(self):
-        source = (REPO_ROOT / "app" / "frontend" / "app-pose-editor.js").read_text(encoding="utf-8")
+        source = (REPO_ROOT / "app" / "frontend" / "app-pose-extract.js").read_text(encoding="utf-8")
+        loader = (REPO_ROOT / "app" / "frontend" / "app-generate-upscale.js").read_text(encoding="utf-8")
         self.assertIn('Extract from photo', source)
         self.assertIn('/api/controlnet/preprocess/openpose', source)
         self.assertIn('pose-extract-photo', source)
         self.assertIn('peopleDetected', source)
         self.assertIn('stableamd-openpose-extracted.png', source)
+        self.assertIn("loadScript('/app-pose-extract.js')", loader)
+        self.assertLess(loader.index("loadScript('/app-pose-editor.js')"), loader.index("loadScript('/app-pose-extract.js')"))
 
 
 if __name__ == "__main__":
