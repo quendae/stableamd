@@ -65,6 +65,20 @@ class KreaImageEditBridgeMixin:
                 "provider": "krea2-ostris-edit",
                 "referenceScaler": "FluxKontextImageScale",
                 "sourceSizeOutput": True,
+                "tasks": [
+                    {
+                        "id": "general",
+                        "label": "General edit",
+                        "referenceImages": 0,
+                        "masked": False,
+                    },
+                    {
+                        "id": "material-replace",
+                        "label": "Material / texture",
+                        "referenceImages": 0,
+                        "masked": False,
+                    },
+                ],
             }
             capabilities = entry.get("capabilities")
             if isinstance(capabilities, dict) and ready:
@@ -128,8 +142,6 @@ class KreaImageEditBridgeMixin:
         }
         workflow["83"] = {
             "class_type": "Krea2OstrisEditModelPatch",
-            # Keep the already accepted StableAMD user-LoRA ordering: the
-            # sampler's current model may already be the end of the LoRA chain.
             "inputs": {"model": current_model, "kv_cache": True},
         }
         workflow["84"] = {
@@ -177,9 +189,6 @@ class KreaImageEditBridgeMixin:
             },
         }
 
-        # The published edit workflow derives the target latent dimensions from
-        # FluxKontextImageScale, so portrait/landscape source aspect is retained
-        # instead of being forced into the txt2img resolution controls.
         latent_inputs["width"] = ["82", 0]
         latent_inputs["height"] = ["82", 1]
         sampler_inputs["model"] = ["83", 0]
