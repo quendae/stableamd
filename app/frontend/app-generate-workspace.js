@@ -329,8 +329,6 @@
       workspaceState.observer.observe(target, {
         childList: true,
         subtree: true,
-        attributes: true,
-        attributeFilter: ['hidden', 'class', 'disabled'],
       });
     }
 
