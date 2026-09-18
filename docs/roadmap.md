@@ -1,6 +1,6 @@
 # StableAMD roadmap
 
-Last updated: 2026-09-16
+Last updated: 2026-09-18
 
 This file tracks larger product directions. Detailed implementation/acceptance state for the active release remains in `docs/v0.3-status.md`; the active execution order lives in `docs/v0.3-forward-plan.md`.
 
@@ -8,12 +8,15 @@ This file tracks larger product directions. Detailed implementation/acceptance s
 
 Primary goal: turn the proven Radeon/ComfyUI runtime into a practical multi-provider image workstation without destabilizing the accepted RX 6950 XT path.
 
-Already target-accepted in v0.3:
+Already target-accepted / target-proven in v0.3:
 
 - Z-Image Turbo txt2img + ordered model-only LoRA;
 - native Z-Image Inpaint / Outpaint;
+- Z-Image Canny, OpenPose and Depth control routes;
 - Krea 2 Turbo txt2img + model-only LoRA;
 - Krea 2 OpenPose, including normal user-LoRA coexistence;
+- Krea 2 Depth;
+- automatic multi-person DWPose extraction from normal photographs;
 - Krea 2 whole-image Image Edit;
 - curated pose templates + interactive pose editor;
 - classic verified upscaling with exact 2x/4x/8x planning;
@@ -22,15 +25,11 @@ Already target-accepted in v0.3:
 
 Current order:
 
-1. Finish remaining provider-aware structural guidance:
-   - Z-Image control-route acceptance;
-   - Krea Depth;
-   - automatic pose extraction from a normal source photo.
-2. Expand the accepted Krea Image Edit route:
+1. Expand the accepted Krea Image Edit/reference route:
    - material/texture replacement;
    - one/two-image reference roles;
-   - character turnaround sheets;
-   - later masked Krea editing and Image Edit + Control composition if target-stable.
+   - character turnaround sheets.
+2. Keep **Masked Krea editing** and **Image Edit + Control composition** deferred until after the current edit/reference wave.
 3. Add vector/graphics workflows:
    - text-to-SVG;
    - image-to-SVG;
