@@ -55,6 +55,20 @@ Describe 'StableAMD v0.3 Generate studio workspace' {
         $workspace | Should -Match 'MutationObserver'
     }
 
+    It 'does not self-observe page attributes that workspace sync itself rewrites' {
+        $workspace = Get-Content $workspacePath -Raw
+        $pageObserver = [regex]::Match(
+            $workspace,
+            'workspaceState\.observer\.observe\(target,\s*\{(?<body>.*?)\}\);',
+            [System.Text.RegularExpressions.RegexOptions]::Singleline
+        )
+        $pageObserver.Success | Should -BeTrue
+        $pageObserver.Groups['body'].Value | Should -Match 'childList:\s*true'
+        $pageObserver.Groups['body'].Value | Should -Match 'subtree:\s*true'
+        $pageObserver.Groups['body'].Value | Should -Not -Match 'attributes:\s*true'
+        $workspace | Should -Match 'workspaceState\.modeObserver\.observe\(select,\s*\{[^}]*attributes:\s*true'
+    }
+
     It 'provides restrained transitions with a reduced-motion path and responsive recomposition' {
         $styles = Get-Content $workspaceStylesPath -Raw
         $styles | Should -Match '@keyframes'
