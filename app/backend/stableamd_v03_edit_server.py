@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 # The managed Windows runtime uses the embeddable Python distribution with a
 # restricted module search path. Bootstrap sibling modules before importing the
@@ -27,6 +30,8 @@ from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
 from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: E402
 from stableamd_v03_pose_extract import PoseExtractApiMixin, PoseExtractBridgeMixin  # noqa: E402
 from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: E402
+
+COMFYUI_RELEASES_URL = "https://api.github.com/repos/Comfy-Org/ComfyUI/releases/latest"
 
 # Explicit compatibility exports used by the regression suite.
 base = product.base
@@ -86,6 +91,48 @@ DWPOSE_OPENCV_VERSION = poseextract.DWPOSE_OPENCV_VERSION
 base.MAX_REQUEST_BYTES = max(base.MAX_REQUEST_BYTES, 64 * 1024 * 1024)
 
 
+def _read_json(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _version_tuple(value: str | None) -> tuple[int, ...] | None:
+    if not value:
+        return None
+    match = re.match(r"^v?(\d+(?:\.\d+)+)", str(value).strip())
+    if not match:
+        return None
+    try:
+        return tuple(int(part) for part in match.group(1).split("."))
+    except ValueError:
+        return None
+
+
+def _read_comfy_version(comfy_root: Path) -> str | None:
+    candidates = [
+        comfy_root / "comfyui_version.py",
+        comfy_root / "comfy" / "comfyui_version.py",
+        comfy_root / "pyproject.toml",
+    ]
+    patterns = [
+        re.compile(r"__version__\s*=\s*['\"]([^'\"]+)['\"]"),
+        re.compile(r"(?m)^version\s*=\s*['\"]([^'\"]+)['\"]"),
+    ]
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for pattern in patterns:
+            match = pattern.search(text)
+            if match:
+                return match.group(1).strip()
+    return None
+
+
 class PowerShellBridge(
     KreaImageEditBridgeMixin,
     PoseExtractBridgeMixin,
@@ -113,6 +160,104 @@ class PowerShellBridge(
         except Exception:
             return None
 
+    def comfyui_runtime(self):
+        lock = _read_json(self.repo_root / "config" / "runtime-lock.v0.1.json")
+        runtime_lock = lock.get("runtime") if isinstance(lock.get("runtime"), dict) else {}
+        pinned_version = str(runtime_lock.get("comfyui") or "") or None
+        pinned_commit = str(runtime_lock.get("comfyCommit") or "") or None
+
+        comfy_root = self.repo_root / ".runtime" / "therock-comfy" / "ComfyUI"
+        installed_commit = None
+        if comfy_root.is_dir():
+            try:
+                completed = subprocess.run(
+                    ["git", "-C", str(comfy_root), "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                )
+                if completed.returncode == 0 and completed.stdout.strip():
+                    installed_commit = completed.stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                installed_commit = None
+
+        installed_version = _read_comfy_version(comfy_root) if comfy_root.is_dir() else None
+        if not installed_version and installed_commit and pinned_commit and installed_commit.lower() == pinned_commit.lower():
+            installed_version = pinned_version
+
+        backend_url = "http://127.0.0.1:8190/"
+        state = _read_json(self.repo_root / ".runtime" / "stableamd" / "backend-state.json")
+        state_url = state.get("url")
+        if isinstance(state_url, str) and state_url.startswith(("http://127.0.0.1:", "http://localhost:")):
+            backend_url = state_url if state_url.endswith("/") else state_url + "/"
+        else:
+            config = _read_json(self.repo_root / ".runtime" / "stableamd" / "config.json")
+            if not config:
+                config = _read_json(self.repo_root / "config" / "stableamd.default.json")
+            backend = config.get("backend") if isinstance(config.get("backend"), dict) else {}
+            try:
+                port = int(backend.get("port") or 8190)
+                if 1 <= port <= 65535:
+                    backend_url = f"http://127.0.0.1:{port}/"
+            except (TypeError, ValueError):
+                pass
+
+        latest = None
+        latest_check = "unavailable"
+        try:
+            request = Request(
+                COMFYUI_RELEASES_URL,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "StableAMD-v0.3-runtime-check",
+                },
+            )
+            with urlopen(request, timeout=3) as response:
+                release = json.loads(response.read().decode("utf-8"))
+            if isinstance(release, dict):
+                tag = str(release.get("tag_name") or "").strip()
+                version = tag[1:] if tag.lower().startswith("v") else tag
+                if version:
+                    latest = {
+                        "version": version,
+                        "tag": tag or version,
+                        "url": str(release.get("html_url") or ""),
+                        "publishedAt": release.get("published_at"),
+                    }
+                    latest_check = "ok"
+        except Exception:
+            latest = None
+            latest_check = "unavailable"
+
+        installed_tuple = _version_tuple(installed_version)
+        latest_tuple = _version_tuple(latest.get("version") if latest else None)
+        update_available = None
+        if installed_tuple is not None and latest_tuple is not None:
+            update_available = latest_tuple > installed_tuple
+
+        pin_matches = None
+        if installed_commit and pinned_commit:
+            pin_matches = installed_commit.lower() == pinned_commit.lower()
+
+        return {
+            "backendUrl": backend_url,
+            "installed": {
+                "version": installed_version,
+                "commit": installed_commit,
+                "path": str(comfy_root),
+            },
+            "pinned": {
+                "version": pinned_version,
+                "commit": pinned_commit,
+            },
+            "latest": latest,
+            "latestCheck": latest_check,
+            "updateAvailable": update_available,
+            "pinMatchesCheckout": pin_matches,
+        }
+
 
 class StableAmdApi(
     GenerationJobsApiMixin,
@@ -123,6 +268,11 @@ class StableAmdApi(
 ):
     _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob", "references"}
     _reference_roles = {"style", "material", "content"}
+
+    def dispatch(self, method: str, target: str, body: bytes | None = None):
+        if method.upper() == "GET" and target.split("?", 1)[0] == "/api/comfyui-runtime":
+            return 200, self.bridge.comfyui_runtime()
+        return super().dispatch(method, target, body)
 
     def _validate_generation(self, request):
         if "references" not in request:
