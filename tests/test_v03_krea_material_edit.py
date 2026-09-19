@@ -49,7 +49,7 @@ class StableAmdKreaMaterialEditTests(unittest.TestCase):
         tasks = {item["id"]: item for item in policy["tasks"]}
         self.assertEqual(tasks["general"]["label"], "General edit")
         self.assertEqual(tasks["material-replace"]["label"], "Material / texture")
-        self.assertEqual(tasks["material-replace"]["referenceImages"], 1)
+        self.assertEqual(tasks["material-replace"]["referenceImages"], 2)
         self.assertFalse(tasks["material-replace"]["masked"])
 
     def test_frontend_material_task_exposes_target_presets_and_custom_material(self):
