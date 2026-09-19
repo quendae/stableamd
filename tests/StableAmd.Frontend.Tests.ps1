@@ -23,7 +23,7 @@ Describe 'StableAMD local web UI' {
         $html | Should -Match 'id="model-select"'
     }
 
-    It 'makes model folders the primary local model workflow' {
+    It 'keeps checkpoint folder controls available for the advanced model workflow' {
         $html = Get-Content $indexPath -Raw
         $html | Should -Match 'id="model-root-form"'
         $html | Should -Match 'id="model-root-path"'

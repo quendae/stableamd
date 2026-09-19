@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "0.3",
+  "models": [
+    {
+      "id": "realesrgan-x2plus",
+      "name": "RealESRGAN x2plus",
+      "filename": "RealESRGAN_x2plus.pth",
+      "nativeScale": 2,
+      "purpose": "Faster and lighter general/photo upscale",
+      "sourceUrl": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
+      "sha256": "49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb",
+      "sizeBytes": 67061725,
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/xinntao/Real-ESRGAN",
+      "nonCommercial": false
+    },
+    {
+      "id": "realesrgan-x4plus",
+      "name": "RealESRGAN x4plus",
+      "filename": "RealESRGAN_x4plus.pth",
+      "nativeScale": 4,
+      "purpose": "General/photo native 4x upscale",
+      "sourceUrl": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+      "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+      "sizeBytes": 67040989,
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/xinntao/Real-ESRGAN",
+      "nonCommercial": false
+    },
+    {
+      "id": "ultrasharp-x4",
+      "name": "4x-UltraSharp",
+      "filename": "4x-UltraSharp.safetensors",
+      "nativeScale": 4,
+      "purpose": "Sharper native 4x upscale for detailed images",
+      "sourceUrl": "https://huggingface.co/Kim2091/UltraSharp/resolve/main/4x-UltraSharp.safetensors",
+      "sha256": "36a340b5509b699d2c06cb445ddc1d3d39199ac734d889ed6d7915f60e05bcbc",
+      "sizeBytes": 66864028,
+      "license": "CC BY-NC-SA 4.0",
+      "homepage": "https://huggingface.co/Kim2091/UltraSharp",
+      "nonCommercial": true
+    }
+  ]
+}

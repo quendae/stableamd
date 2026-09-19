@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "zimage-union21-lite-2602-8step",
+      "name": "Z-Image Union 2.1 Lite 2602 (8-step)",
+      "family": "z-image-turbo",
+      "filename": "Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+      "purpose": "Native Z-Image Inpaint/Outpaint and future Fun Control workflows",
+      "sourceUrl": "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1/resolve/main/Z-Image-Turbo-Fun-Controlnet-Union-2.1-lite-2602-8steps.safetensors",
+      "sha256": "3ea098db9bd145be525c7e2366920b6d76c5ffd46b3d7aa8169bbc943fdaee35",
+      "sizeBytes": 2016627488,
+      "license": "Apache-2.0",
+      "homepage": "https://huggingface.co/alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union-2.1"
+    }
+  ]
+}

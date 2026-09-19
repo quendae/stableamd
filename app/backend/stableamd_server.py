@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import mimetypes
 import shutil
 import subprocess
+import sys
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,10 +18,23 @@ from urllib.error import URLError
 from urllib.parse import parse_qs, unquote, urlsplit
 from urllib.request import urlopen
 
+BACKEND_ROOT = Path(__file__).resolve().parent
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from model_support import load_model_support_catalog, summarize_model_support
+
 SERVICE_NAME = "StableAMD"
-API_VERSION = 2
-MAX_REQUEST_BYTES = 1024 * 1024
+API_VERSION = 3
+MAX_REQUEST_BYTES = 32 * 1024 * 1024
+MAX_INPUT_IMAGE_BYTES = 20 * 1024 * 1024
 SUPPORTED_OUTPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+INPUT_IMAGE_MIME_SUFFIXES = {
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/webp": {".webp"},
+}
+BUNDLE_ASSET_ROLES = ("diffusion_model", "text_encoder", "vae")
 
 
 class StableAmdBridgeError(RuntimeError):
@@ -46,6 +63,55 @@ def resolve_output_image(repo_root: Path, requested_path: str) -> Path:
     if not candidate.is_file():
         raise ValueError("Generated image file was not found.")
     return candidate
+
+
+def _decode_input_image(image: Any) -> tuple[str, bytes]:
+    if not isinstance(image, dict):
+        raise ValueError("img2img inputImage must be an object.")
+    allowed = {"name", "mimeType", "dataBase64"}
+    unsupported = sorted(set(image) - allowed)
+    if unsupported:
+        raise ValueError("Unsupported inputImage field(s): " + ", ".join(unsupported))
+
+    name = image.get("name")
+    mime_type = image.get("mimeType")
+    encoded = image.get("dataBase64")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("img2img inputImage name must be a non-empty string.")
+    if Path(name).name != name or name in {".", ".."}:
+        raise ValueError("img2img inputImage name must be a file name, not a path.")
+    if not isinstance(mime_type, str) or mime_type not in INPUT_IMAGE_MIME_SUFFIXES:
+        raise ValueError("img2img supports PNG, JPEG, or WebP input images.")
+    suffix = Path(name).suffix.lower()
+    if suffix not in INPUT_IMAGE_MIME_SUFFIXES[mime_type]:
+        raise ValueError("img2img inputImage extension does not match its MIME type.")
+    if not isinstance(encoded, str) or not encoded:
+        raise ValueError("img2img inputImage dataBase64 must be a non-empty base64 string.")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("img2img inputImage dataBase64 is invalid.") from exc
+    if not payload:
+        raise ValueError("img2img inputImage is empty.")
+    if len(payload) > MAX_INPUT_IMAGE_BYTES:
+        raise ValueError("img2img inputImage exceeds the 20 MiB limit.")
+
+    if mime_type == "image/png" and not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("img2img PNG input has an invalid file signature.")
+    if mime_type == "image/jpeg" and not payload.startswith(b"\xff\xd8\xff"):
+        raise ValueError("img2img JPEG input has an invalid file signature.")
+    if mime_type == "image/webp" and not (len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"):
+        raise ValueError("img2img WebP input has an invalid file signature.")
+    return suffix, payload
+
+
+def stage_input_image(repo_root: Path, image: Any) -> Path:
+    suffix, payload = _decode_input_image(image)
+    input_root = (Path(repo_root).resolve() / ".runtime" / "stableamd" / "input").resolve()
+    input_root.mkdir(parents=True, exist_ok=True)
+    destination = input_root / f"StableAMD_{uuid.uuid4().hex}{suffix}"
+    destination.write_bytes(payload)
+    return destination.resolve()
 
 
 def _powershell_literal(value: str) -> str:
@@ -170,6 +236,16 @@ class PowerShellBridge:
         result = self._run_script("Browse-LoraRoot.ps1")
         return result or {"cancelled": True, "path": None}
 
+    def bundle_roots(self) -> dict[str, list[Any]]:
+        return {
+            role: self._normalize_list_payload(self._run_script("Get-BundleAssetRoots.ps1", [("Role", role)]))
+            for role in BUNDLE_ASSET_ROLES
+        }
+
+    def browse_bundle_root(self, role: str) -> Any:
+        result = self._run_script("Browse-BundleAssetRoot.ps1", [("Role", role)])
+        return result or {"cancelled": True, "role": role, "path": None}
+
     def _backend_restart_required(self) -> bool:
         status = self.status()
         return isinstance(status, dict) and bool(status.get("Healthy", status.get("healthy", False)))
@@ -203,6 +279,20 @@ class PowerShellBridge:
         if isinstance(result, dict):
             return {**result, "restartRequired": restart_required}
         return {"removed": False, "path": path, "restartRequired": False}
+
+    def add_bundle_root(self, role: str, path: str) -> Any:
+        result = self._run_script("Add-BundleAssetRoot.ps1", [("Role", role), ("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("added") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"added": False, "role": role, "path": path, "restartRequired": False}
+
+    def remove_bundle_root(self, role: str, path: str) -> Any:
+        result = self._run_script("Remove-BundleAssetRoot.ps1", [("Role", role), ("Path", path)]) or {}
+        restart_required = bool(isinstance(result, dict) and result.get("removed") and self._backend_restart_required())
+        if isinstance(result, dict):
+            return {**result, "restartRequired": restart_required}
+        return {"removed": False, "role": role, "path": path, "restartRequired": False}
 
     def install_model(self, request: dict[str, Any]) -> Any:
         source = str(request["source"]).lower()
@@ -245,6 +335,14 @@ class PowerShellBridge:
         if not isinstance(payload, dict) or not isinstance(payload.get("profiles"), list):
             raise StableAmdBridgeError("Generation profile catalog must contain a profiles array.")
         return payload
+
+    def model_support(self) -> dict[str, Any]:
+        try:
+            catalog = load_model_support_catalog(self.repo_root)
+            models = [model for model in self.models() if isinstance(model, dict)]
+            return summarize_model_support(catalog, models)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise StableAmdBridgeError(f"Model support catalog is invalid: {exc}") from exc
 
     def _backend_base_url(self) -> str:
         status = self.status()
@@ -309,7 +407,29 @@ class PowerShellBridge:
         for source, target in mapping.items():
             if source in request:
                 parameters.append((target, request[source]))
-        return self._run_script("Invoke-Txt2Img.ps1", parameters)
+        if "loraStack" in request:
+            parameters.append(("LoraStackJson", json.dumps(request["loraStack"], ensure_ascii=False, separators=(",", ":"))))
+
+        mode = request.get("mode", "txt2img")
+        staged_input: Path | None = None
+        if mode == "img2img":
+            staged_input = stage_input_image(self.repo_root, request["inputImage"])
+            parameters.extend(
+                [
+                    ("Mode", "img2img"),
+                    ("InputImagePath", str(staged_input)),
+                    ("Denoise", request.get("denoise", 0.55)),
+                ]
+            )
+        try:
+            return self._run_script("Invoke-Txt2Img.ps1", parameters)
+        except Exception:
+            if staged_input is not None:
+                try:
+                    staged_input.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
 
     def start_backend(self) -> Any:
         return self._run_script("Start-StableAMD.ps1")
@@ -347,6 +467,9 @@ class StableAmdApi:
         "prompt",
         "negativePrompt",
         "modelId",
+        "mode",
+        "inputImage",
+        "denoise",
         "width",
         "height",
         "steps",
@@ -357,11 +480,15 @@ class StableAmdApi:
         "loraName",
         "loraModelStrength",
         "loraClipStrength",
+        "loraStack",
         "startBackendIfNeeded",
     }
     _local_model_fields = {"source", "localPath", "moveLocal", "expectedSha256"}
     _huggingface_model_fields = {"source", "repository", "filename", "revision", "token", "expectedSha256"}
     _root_fields = {"path"}
+    _bundle_root_fields = {"role", "path"}
+    _bundle_browse_fields = {"role"}
+    _lora_stack_fields = {"name", "modelStrength", "clipStrength", "enabled"}
 
     def __init__(self, bridge: Any):
         self.bridge = bridge
@@ -394,6 +521,28 @@ class StableAmdApi:
             raise ValueError(f"{label} folder path must be a non-empty string.")
         return value.strip()
 
+    @staticmethod
+    def _validate_bundle_role(value: Any) -> str:
+        if not isinstance(value, str) or value not in BUNDLE_ASSET_ROLES:
+            raise ValueError("Bundle asset role must be one of: diffusion_model, text_encoder, vae.")
+        return value
+
+    def _validate_bundle_browse(self, request: dict[str, Any]) -> str:
+        unsupported = sorted(set(request) - self._bundle_browse_fields)
+        if unsupported:
+            raise ValueError("Unsupported bundle folder field(s): " + ", ".join(unsupported))
+        return self._validate_bundle_role(request.get("role"))
+
+    def _validate_bundle_root(self, request: dict[str, Any]) -> tuple[str, str]:
+        unsupported = sorted(set(request) - self._bundle_root_fields)
+        if unsupported:
+            raise ValueError("Unsupported bundle folder field(s): " + ", ".join(unsupported))
+        role = self._validate_bundle_role(request.get("role"))
+        path = request.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("Bundle asset folder path must be a non-empty string.")
+        return role, path.strip()
+
     def _validate_model_install(self, request: dict[str, Any]) -> dict[str, Any]:
         source = self._required_text(request, "source").lower()
         if source == "local":
@@ -424,6 +573,39 @@ class StableAmdApi:
         request["source"] = source
         return request
 
+    @staticmethod
+    def _validate_numeric_strength(value: Any, field: str) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{field} must be numeric.")
+        if value < -100 or value > 100:
+            raise ValueError(f"{field} must be between -100 and 100.")
+
+    def _validate_lora_stack(self, request: dict[str, Any]) -> None:
+        if "loraStack" not in request:
+            return
+        stack = request["loraStack"]
+        if not isinstance(stack, list):
+            raise ValueError("loraStack must be an array.")
+        if len(stack) > 8:
+            raise ValueError("loraStack may contain at most 8 entries.")
+        if stack and isinstance(request.get("loraName"), str) and request["loraName"].strip():
+            raise ValueError("Use loraStack or legacy loraName, not both.")
+
+        for index, entry in enumerate(stack, start=1):
+            if not isinstance(entry, dict):
+                raise ValueError(f"loraStack entry {index} must be an object.")
+            unsupported = sorted(set(entry) - self._lora_stack_fields)
+            if unsupported:
+                raise ValueError(f"Unsupported loraStack entry field(s) at {index}: " + ", ".join(unsupported))
+            name = entry.get("name")
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(f"loraStack entry {index} name must be a non-empty string.")
+            if "enabled" in entry and not isinstance(entry["enabled"], bool):
+                raise ValueError(f"loraStack entry {index} enabled must be boolean.")
+            for field in ("modelStrength", "clipStrength"):
+                if field in entry:
+                    self._validate_numeric_strength(entry[field], f"loraStack entry {index} {field}")
+
     def _validate_generation(self, request: dict[str, Any]) -> dict[str, Any]:
         unsupported = sorted(set(request) - self._generation_fields)
         if unsupported:
@@ -431,15 +613,27 @@ class StableAmdApi:
         prompt = request.get("prompt")
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Generation prompt must be a non-empty string.")
+
+        mode = request.get("mode", "txt2img")
+        if not isinstance(mode, str) or mode not in {"txt2img", "img2img"}:
+            raise ValueError("Generation mode must be 'txt2img' or 'img2img'.")
+        if mode == "img2img":
+            if "inputImage" not in request:
+                raise ValueError("img2img requires inputImage.")
+            _decode_input_image(request["inputImage"])
+            if "denoise" in request:
+                denoise = request["denoise"]
+                if isinstance(denoise, bool) or not isinstance(denoise, (int, float)) or denoise < 0 or denoise > 1:
+                    raise ValueError("denoise must be numeric between 0 and 1.")
+        elif "inputImage" in request or "denoise" in request:
+            raise ValueError("inputImage and denoise are valid only for img2img generation.")
+
         if "loraName" in request and request["loraName"] is not None and not isinstance(request["loraName"], str):
             raise ValueError("loraName must be a string.")
         for field in ("loraModelStrength", "loraClipStrength"):
             if field in request:
-                value = request[field]
-                if isinstance(value, bool) or not isinstance(value, (int, float)):
-                    raise ValueError(f"{field} must be numeric.")
-                if value < -100 or value > 100:
-                    raise ValueError(f"{field} must be between -100 and 100.")
+                self._validate_numeric_strength(request[field], field)
+        self._validate_lora_stack(request)
         return request
 
     def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
@@ -457,6 +651,8 @@ class StableAmdApi:
                 return 200, self.bridge.generation_options()
             if method == "GET" and path == "/api/generation-profiles":
                 return 200, self.bridge.generation_profiles()
+            if method == "GET" and path == "/api/model-support":
+                return 200, self.bridge.model_support()
             if method == "GET" and path == "/api/models":
                 return 200, self.bridge.models()
             if method == "POST" and path == "/api/models/scan":
@@ -484,6 +680,17 @@ class StableAmdApi:
             if method == "POST" and path == "/api/lora-roots/remove":
                 root = self._validate_root(self._decode_json(body), "LoRA")
                 return 200, self.bridge.remove_lora_root(root)
+            if method == "GET" and path == "/api/bundle-roots":
+                return 200, self.bridge.bundle_roots()
+            if method == "POST" and path == "/api/bundle-roots/browse":
+                role = self._validate_bundle_browse(self._decode_json(body))
+                return 200, self.bridge.browse_bundle_root(role)
+            if method == "POST" and path == "/api/bundle-roots":
+                role, root = self._validate_bundle_root(self._decode_json(body))
+                return 200, self.bridge.add_bundle_root(role, root)
+            if method == "POST" and path == "/api/bundle-roots/remove":
+                role, root = self._validate_bundle_root(self._decode_json(body))
+                return 200, self.bridge.remove_bundle_root(role, root)
             if method == "POST" and path == "/api/models/install":
                 request = self._validate_model_install(self._decode_json(body))
                 return 200, self.bridge.install_model(request)
@@ -521,7 +728,7 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
     resolved_repo_root = Path(repo_root).resolve() if repo_root is not None else None
 
     class StableAmdRequestHandler(BaseHTTPRequestHandler):
-        server_version = "StableAMD/0.2"
+        server_version = "StableAMD/0.3"
 
         def _send_json(self, status: int, payload: Any) -> None:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -646,7 +853,7 @@ def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
 
 def main() -> int:
     default_repo_root = Path(__file__).resolve().parents[2]
-    parser = argparse.ArgumentParser(description="StableAMD v0.2 loopback application API and web UI")
+    parser = argparse.ArgumentParser(description="StableAMD v0.3 loopback application API and web UI")
     parser.add_argument("--repo-root", default=str(default_repo_root))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8188)

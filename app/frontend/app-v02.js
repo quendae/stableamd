@@ -1,13 +1,18 @@
 (() => {
-  pageMeta.settings = ["Settings", "StableAMD v0.2 runtime and generation defaults."];
+  pageMeta.settings = ["Settings", "StableAMD v0.3 runtime, model capabilities and generation defaults."];
 
   const v02State = {
     generationOptions: { samplers: [], schedulers: [], loras: [] },
     profileCatalog: { profiles: [] },
+    modelSupport: { models: [] },
     loraRoots: [],
   };
 
+  const baseApi = api;
+  let applyingResolutionPreset = false;
+
   function fillSelect(select, values, preferred, emptyLabel = null) {
+    if (!select) return;
     const available = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
     const previous = select.value;
     select.replaceChildren();
@@ -34,7 +39,162 @@
     if (target !== undefined) select.value = String(target);
   }
 
-  function syncLoraStrengthState() {
+  function supportForCurrentModel() {
+    const modelId = document.querySelector("#model-select")?.value || "";
+    const entries = Array.isArray(v02State.modelSupport?.models) ? v02State.modelSupport.models : [];
+    return entries.find((entry) => String(entry?.id || "") === String(modelId)) || null;
+  }
+
+  function maxLoraStack() {
+    const support = supportForCurrentModel();
+    const value = Number(support?.loraPolicy?.maxStack ?? 0);
+    if (Number.isInteger(value) && value > 0) return Math.min(8, value);
+    return support?.capabilities?.lora === "supported" ? 1 : 0;
+  }
+
+  function ensureModelSupportHint() {
+    let hint = document.querySelector("#model-support-hint");
+    if (hint) return hint;
+    const modelField = document.querySelector("#model-select")?.closest(".field");
+    if (!modelField) return null;
+    hint = document.createElement("p");
+    hint.id = "model-support-hint";
+    hint.className = "history-model";
+    hint.setAttribute("aria-live", "polite");
+    modelField.append(hint);
+    return hint;
+  }
+
+  function ensureGenerationModeUi() {
+    if (document.querySelector("#generation-mode")) return document.querySelector("#generation-mode");
+    const profile = ensureProfileControl();
+    const resolutionPanel = ensureResolutionPresetUi();
+    const anchor = resolutionPanel || profile?.closest(".field") || document.querySelector("#model-select")?.closest(".field");
+    if (!anchor) return null;
+
+    const panel = document.createElement("div");
+    panel.id = "generation-mode-panel";
+    panel.className = "model-root-card";
+    panel.innerHTML = `
+      <div class="field-grid field-grid-2">
+        <label class="field">
+          <span>Generation mode <small>uses the selected model capability</small></span>
+          <select id="generation-mode" name="generationMode">
+            <option value="txt2img">Text to image</option>
+            <option value="img2img">Image to image</option>
+          </select>
+        </label>
+        <div id="img2img-controls" hidden>
+          <label class="field">
+            <span>Input image <small>PNG, JPEG or WebP · max 20 MiB</small></span>
+            <input id="input-image" type="file" accept="image/png,image/jpeg,image/webp">
+          </label>
+          <label class="field">
+            <span>Denoise strength <small>0 keeps the source, 1 changes it strongly</small></span>
+            <input id="img2img-denoise" type="number" min="0" max="1" step="0.05" value="0.55">
+          </label>
+          <p id="img2img-source-hint" class="history-model">The image is staged only in StableAMD's managed local input folder.</p>
+        </div>
+      </div>`;
+    anchor.after(panel);
+
+    const select = panel.querySelector("#generation-mode");
+    select.addEventListener("change", syncGenerationModeUi);
+    panel.querySelector("#input-image").addEventListener("change", syncGenerationModeUi);
+    syncGenerationModeUi();
+    return select;
+  }
+
+  function syncGenerationModeUi() {
+    const select = document.querySelector("#generation-mode");
+    const controls = document.querySelector("#img2img-controls");
+    if (!select || !controls) return;
+
+    const support = supportForCurrentModel();
+    const supported = support?.capabilities?.img2img === "supported";
+    const imgOption = Array.from(select.options).find((option) => option.value === "img2img");
+    if (imgOption) {
+      imgOption.disabled = !supported;
+      imgOption.textContent = supported ? "Image to image" : "Image to image · unavailable for this model";
+    }
+    if (select.value === "img2img" && !supported) select.value = "txt2img";
+
+    const active = select.value === "img2img";
+    controls.hidden = !active;
+    const input = document.querySelector("#input-image");
+    const denoise = document.querySelector("#img2img-denoise");
+    if (input) input.required = active;
+    if (denoise) denoise.disabled = !active;
+
+    const hint = document.querySelector("#img2img-source-hint");
+    if (hint && active) {
+      const file = input?.files?.[0];
+      hint.textContent = file
+        ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · staged locally when generation starts.`
+        : "Choose a source image. Gallery reuse can restore denoise/settings, but browsers require selecting the source file again.";
+    }
+  }
+
+  function readInputImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error("Choose an input image for img2img."));
+        return;
+      }
+      if (![/^image\/png$/i, /^image\/jpeg$/i, /^image\/webp$/i].some((pattern) => pattern.test(file.type || ""))) {
+        reject(new Error("Img2img accepts PNG, JPEG, or WebP images."));
+        return;
+      }
+      if (file.size > 20 * 1024 * 1024) {
+        reject(new Error("Img2img input image must be 20 MiB or smaller."));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the img2img input image."));
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        if (comma < 0) {
+          reject(new Error("Could not encode the img2img input image."));
+          return;
+        }
+        const dataBase64 = result.slice(comma + 1);
+        if (!dataBase64) {
+          reject(new Error("The img2img input image is empty."));
+          return;
+        }
+        resolve({ name: file.name, mimeType: file.type, dataBase64 });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function renderModelSupportHint() {
+    const hint = ensureModelSupportHint();
+    if (!hint) return;
+    const support = supportForCurrentModel();
+    if (!support) {
+      hint.textContent = "Model capabilities will appear after model discovery.";
+      syncGenerationModeUi();
+      return;
+    }
+    const caps = support.capabilities || {};
+    const family = support.label || support.family || "Unknown model";
+    const parts = [
+      `txt2img ${caps.txt2img || "unsupported"}`,
+      `img2img ${caps.img2img || "unsupported"}`,
+      `inpaint ${caps.inpaint || "unsupported"}`,
+      `ControlNet ${caps.controlnet || "unsupported"}`,
+    ];
+    const maxStack = Number(support?.loraPolicy?.maxStack || 0);
+    if (caps.lora === "supported") parts.push(maxStack > 1 ? `LoRA stack up to ${maxStack}` : "LoRA supported");
+    hint.textContent = `${family} · ${parts.join(" · ")}`;
+    syncLoraStackAvailability();
+    syncGenerationModeUi();
+  }
+
+  function syncLegacyLoraStrengthState() {
     const enabled = Boolean(document.querySelector("#lora-select")?.value);
     for (const id of ["#lora-model-strength", "#lora-clip-strength"]) {
       const input = document.querySelector(id);
@@ -83,6 +243,137 @@
     return profiles.find((profile) => profileMatchesModel(profile, model)) || null;
   }
 
+  function ensureResolutionPresetUi() {
+    let panel = document.querySelector("#resolution-preset-panel");
+    if (panel) return panel;
+    const profile = ensureProfileControl();
+    const anchor = profile?.closest(".field");
+    if (!anchor) return null;
+
+    panel = document.createElement("div");
+    panel.id = "resolution-preset-panel";
+    panel.className = "model-root-card";
+    panel.hidden = true;
+    panel.innerHTML = `
+      <div class="field-grid field-grid-2">
+        <label class="field">
+          <span>Size tier <small>model-aware resolution bucket</small></span>
+          <select id="resolution-tier" name="resolutionTier">
+            <option value="custom">Custom size</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Aspect ratio <small>updates width and height</small></span>
+          <select id="aspect-ratio" name="aspectRatio" disabled></select>
+        </label>
+      </div>
+      <p id="resolution-preset-hint" class="history-model">Custom size · width and height stay editable below.</p>`;
+    anchor.after(panel);
+
+    panel.querySelector("#resolution-tier").addEventListener("change", () => {
+      populateResolutionControls(false);
+      applyResolutionPreset();
+    });
+    panel.querySelector("#aspect-ratio").addEventListener("change", applyResolutionPreset);
+    for (const selector of ["#width", "#height"]) {
+      document.querySelector(selector)?.addEventListener("input", () => {
+        if (applyingResolutionPreset) return;
+        const tier = document.querySelector("#resolution-tier");
+        const ratio = document.querySelector("#aspect-ratio");
+        if (tier && !panel.hidden) tier.value = "custom";
+        if (ratio) ratio.disabled = true;
+        const hint = document.querySelector("#resolution-preset-hint");
+        if (hint && !panel.hidden) hint.textContent = "Custom size · width and height are controlled manually.";
+      });
+    }
+    return panel;
+  }
+
+  function populateResolutionControls(applyDefault = false) {
+    const panel = ensureResolutionPresetUi();
+    if (!panel) return;
+    const tierSelect = panel.querySelector("#resolution-tier");
+    const ratioSelect = panel.querySelector("#aspect-ratio");
+    const hint = panel.querySelector("#resolution-preset-hint");
+    const profile = matchedProfile();
+    const resolutionTiers = Array.isArray(profile?.resolutionTiers) ? profile.resolutionTiers : [];
+
+    if (!resolutionTiers.length) {
+      panel.hidden = true;
+      tierSelect.replaceChildren();
+      const custom = document.createElement("option");
+      custom.value = "custom";
+      custom.textContent = "Custom size";
+      tierSelect.append(custom);
+      ratioSelect.replaceChildren();
+      ratioSelect.disabled = true;
+      return;
+    }
+
+    panel.hidden = false;
+    const previousTier = tierSelect.value;
+    const previousRatio = ratioSelect.value;
+    tierSelect.replaceChildren();
+    const custom = document.createElement("option");
+    custom.value = "custom";
+    custom.textContent = "Custom size";
+    tierSelect.append(custom);
+    for (const tier of resolutionTiers) {
+      const option = document.createElement("option");
+      option.value = String(tier.id);
+      option.textContent = String(tier.label || tier.id);
+      tierSelect.append(option);
+    }
+
+    const recommended = resolutionTiers.find((tier) => tier.recommended) || resolutionTiers[0];
+    const previousValid = Array.from(tierSelect.options).some((option) => option.value === previousTier);
+    tierSelect.value = applyDefault || !previousValid || !previousTier ? String(recommended.id) : previousTier;
+
+    ratioSelect.replaceChildren();
+    if (tierSelect.value === "custom") {
+      ratioSelect.disabled = true;
+      if (hint) hint.textContent = "Custom size · width and height are controlled manually.";
+      return;
+    }
+
+    const tier = resolutionTiers.find((item) => String(item.id) === tierSelect.value) || recommended;
+    const sizes = Array.isArray(tier?.sizes) ? tier.sizes : [];
+    for (const size of sizes) {
+      const option = document.createElement("option");
+      option.value = String(size.ratio);
+      option.textContent = `${size.ratio} · ${size.width} × ${size.height}`;
+      ratioSelect.append(option);
+    }
+    ratioSelect.disabled = !sizes.length;
+    if (sizes.length) {
+      const ratioValid = sizes.some((size) => String(size.ratio) === previousRatio);
+      ratioSelect.value = !applyDefault && ratioValid ? previousRatio : String(sizes.find((size) => size.ratio === "1:1")?.ratio || sizes[0].ratio);
+    }
+    if (hint) hint.textContent = `${tier.label || tier.id} · choose an aspect ratio or switch to Custom size.`;
+    if (applyDefault) applyResolutionPreset();
+  }
+
+  function applyResolutionPreset() {
+    const profile = matchedProfile();
+    const resolutionTiers = Array.isArray(profile?.resolutionTiers) ? profile.resolutionTiers : [];
+    const tierId = document.querySelector("#resolution-tier")?.value || "custom";
+    const ratioId = document.querySelector("#aspect-ratio")?.value || "";
+    if (!resolutionTiers.length || tierId === "custom") return;
+    const tier = resolutionTiers.find((item) => String(item.id) === String(tierId));
+    const size = tier?.sizes?.find((item) => String(item.ratio) === String(ratioId));
+    if (!size) return;
+
+    applyingResolutionPreset = true;
+    try {
+      document.querySelector("#width").value = size.width;
+      document.querySelector("#height").value = size.height;
+    } finally {
+      applyingResolutionPreset = false;
+    }
+    const hint = document.querySelector("#resolution-preset-hint");
+    if (hint) hint.textContent = `${tier.label || tier.id} · ${size.ratio} · ${size.width} × ${size.height}`;
+  }
+
   function populateProfileControl(applyDefault = false) {
     const select = ensureProfileControl();
     if (!select) return;
@@ -109,7 +400,8 @@
     }
 
     if (applyDefault && combinations.length) {
-      select.value = `${profile.id}::${combinations[0].id}`;
+      const recommended = combinations.find((combination) => combination.recommended) || combinations[0];
+      select.value = `${profile.id}::${recommended.id}`;
       applySelectedProfile();
     }
   }
@@ -130,29 +422,275 @@
     if (!profile || !combination) return;
 
     const defaults = profile.defaults || {};
-    if (defaults.width) document.querySelector("#width").value = defaults.width;
-    if (defaults.height) document.querySelector("#height").value = defaults.height;
+    if (Array.isArray(profile.resolutionTiers) && profile.resolutionTiers.length) {
+      populateResolutionControls(false);
+      applyResolutionPreset();
+    } else {
+      if (defaults.width) document.querySelector("#width").value = defaults.width;
+      if (defaults.height) document.querySelector("#height").value = defaults.height;
+    }
     if (combination.steps) document.querySelector("#steps").value = combination.steps;
     if (combination.cfg !== undefined) document.querySelector("#cfg").value = combination.cfg;
     setIfOptionExists("#sampler", combination.sampler || defaults.sampler);
     setIfOptionExists("#scheduler", combination.scheduler || defaults.scheduler);
   }
 
+  function currentModelFamily() {
+    const model = currentModel();
+    const support = supportForCurrentModel();
+    return String(getValue(model, "family", "Family") || support?.family || "").toLowerCase();
+  }
+
+  function loraFamilyGroupsForCurrentModel() {
+    const family = currentModelFamily();
+    if (family.includes("z-image")) return ['shared', 'z-image'];
+    if (family.includes("sdxl")) return ['shared', 'sdxl'];
+    if (family === "sd15" || family.startsWith("sd1")) return ['shared', 'sd15'];
+    if (family === "sd3" || family.startsWith("sd3")) return ['shared', 'sd3'];
+    if (family.includes("flux")) return ['shared', 'flux'];
+    if (family.includes("krea")) return ['shared', 'krea'];
+    return ['shared'];
+  }
+
+  function filterLoraChoicesForCurrentModel(values) {
+    const choices = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
+    if (!currentModelFamily()) return choices;
+    const allowed = new Set(loraFamilyGroupsForCurrentModel());
+    const familyGroups = new Set(['shared', 'sd15', 'sdxl', 'sd3', 'z-image', 'flux', 'krea']);
+    return choices.filter((value) => {
+      const normalized = value.replace(/\\/g, "/").replace(/^\.\//, "");
+      const group = normalized.split("/", 1)[0].toLowerCase();
+      return !familyGroups.has(group) || allowed.has(group);
+    });
+  }
+
+  function loraChoices() {
+    const all = Array.isArray(v02State.generationOptions?.loras) ? v02State.generationOptions.loras : [];
+    return filterLoraChoicesForCurrentModel(all);
+  }
+
+  function populateLoraRowSelect(select, preferred = "") {
+    if (!select) return;
+    const previous = preferred || select.value;
+    select.replaceChildren();
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "Choose LoRA…";
+    select.append(empty);
+    for (const value of loraChoices()) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    }
+    if (previous && Array.from(select.options).some((option) => option.value === String(previous))) select.value = String(previous);
+  }
+
+  function refreshLoraChoiceControls() {
+    fillSelect(document.querySelector("#lora-select"), loraChoices(), "", "None");
+    syncLegacyLoraStrengthState();
+    for (const select of document.querySelectorAll("[data-lora-name]")) populateLoraRowSelect(select, select.value);
+  }
+
+  function ensureLoraStackUi() {
+    let panel = document.querySelector("#lora-stack-panel");
+    if (panel) return panel;
+
+    const legacySelect = document.querySelector("#lora-select");
+    const legacyField = legacySelect?.closest(".field");
+    const legacyStrengthGrid = document.querySelector("#lora-model-strength")?.closest(".field-grid");
+    if (!legacyField || !legacyStrengthGrid) return null;
+
+    legacyField.hidden = true;
+    legacyStrengthGrid.hidden = true;
+
+    panel = document.createElement("div");
+    panel.id = "lora-stack-panel";
+    panel.className = "model-root-card";
+    panel.innerHTML = `
+      <div class="section-toolbar">
+        <div>
+          <strong>LoRA stack</strong>
+          <p>LoRAs are applied from top to bottom. Each entry has independent model and CLIP strength.</p>
+        </div>
+        <button class="button button-secondary" id="lora-stack-add" type="button">Add LoRA</button>
+      </div>
+      <div id="lora-stack-list"></div>
+      <p id="lora-stack-limit" class="history-model"></p>`;
+    legacyStrengthGrid.after(panel);
+    panel.querySelector("#lora-stack-add").addEventListener("click", () => addLoraStackRow());
+    panel.querySelector("#lora-stack-list").addEventListener("click", handleLoraStackAction);
+    panel.querySelector("#lora-stack-list").addEventListener("change", (event) => {
+      if (event.target.matches('[data-lora-name], [data-lora-enabled]')) syncLoraStackRow(event.target.closest("[data-lora-stack-row]"));
+    });
+    syncLoraStackAvailability();
+    return panel;
+  }
+
+  function makeLoraStackRow(entry = {}) {
+    const row = document.createElement("div");
+    row.className = "model-root-row";
+    row.dataset.loraStackRow = "";
+    row.innerHTML = `
+      <div class="model-root-main">
+        <label class="checkbox-field"><input type="checkbox" data-lora-enabled checked> <span>Enabled</span></label>
+        <label class="field"><span>LoRA</span><select data-lora-name></select></label>
+        <div class="field-grid field-grid-2">
+          <label class="field"><span>Model strength</span><input data-lora-model-strength type="number" min="-4" max="4" step="0.05" value="1"></label>
+          <label class="field"><span>CLIP strength</span><input data-lora-clip-strength type="number" min="-4" max="4" step="0.05" value="1"></label>
+        </div>
+      </div>
+      <div class="model-root-actions">
+        <button class="button button-quiet" type="button" data-lora-action="up" aria-label="Move LoRA up">↑</button>
+        <button class="button button-quiet" type="button" data-lora-action="down" aria-label="Move LoRA down">↓</button>
+        <button class="button button-quiet" type="button" data-lora-action="remove">Remove</button>
+      </div>`;
+
+    populateLoraRowSelect(row.querySelector("[data-lora-name]"), String(entry?.name || ""));
+    row.querySelector("[data-lora-enabled]").checked = entry?.enabled !== false;
+    row.querySelector("[data-lora-model-strength]").value = entry?.modelStrength ?? 1;
+    row.querySelector("[data-lora-clip-strength]").value = entry?.clipStrength ?? 1;
+    syncLoraStackRow(row);
+    return row;
+  }
+
+  function loraStackRows() {
+    return Array.from(document.querySelectorAll("[data-lora-stack-row]"));
+  }
+
+  function addLoraStackRow(entry = {}) {
+    const panel = ensureLoraStackUi();
+    if (!panel) return;
+    const max = maxLoraStack();
+    const rows = loraStackRows();
+    if (max <= 0) {
+      showToast("The selected model does not currently support LoRA in StableAMD.", "error");
+      return;
+    }
+    if (rows.length >= max) {
+      showToast(`This model supports at most ${max} LoRA${max === 1 ? "" : "s"} in the current StableAMD profile.`, "error");
+      return;
+    }
+    panel.querySelector("#lora-stack-list").append(makeLoraStackRow(entry));
+    syncLoraStackAvailability();
+  }
+
+  function syncLoraStackRow(row) {
+    if (!row) return;
+    const enabled = row.querySelector("[data-lora-enabled]")?.checked !== false;
+    const hasName = Boolean(row.querySelector("[data-lora-name]")?.value);
+    for (const input of row.querySelectorAll("[data-lora-model-strength], [data-lora-clip-strength]")) input.disabled = !enabled || !hasName;
+  }
+
+  function syncLoraStackAvailability() {
+    const panel = document.querySelector("#lora-stack-panel");
+    if (!panel) return;
+    const max = maxLoraStack();
+    const count = loraStackRows().length;
+    const button = panel.querySelector("#lora-stack-add");
+    if (button) button.disabled = max <= 0 || count >= max;
+    const limit = panel.querySelector("#lora-stack-limit");
+    if (limit) limit.textContent = max > 0 ? `${count}/${max} LoRA slots used` : "LoRA is not enabled for this model family yet.";
+    for (const row of loraStackRows()) syncLoraStackRow(row);
+  }
+
+  function handleLoraStackAction(event) {
+    const button = event.target.closest("[data-lora-action]");
+    const row = button?.closest("[data-lora-stack-row]");
+    if (!button || !row) return;
+    const action = button.dataset.loraAction;
+    if (action === "remove") row.remove();
+    if (action === "up" && row.previousElementSibling) row.parentElement.insertBefore(row, row.previousElementSibling);
+    if (action === "down" && row.nextElementSibling) row.parentElement.insertBefore(row.nextElementSibling, row);
+    syncLoraStackAvailability();
+  }
+
+  function collectLoraStack() {
+    const stack = [];
+    for (const row of loraStackRows()) {
+      const name = row.querySelector("[data-lora-name]")?.value || "";
+      if (!name) continue;
+      const modelStrength = Number(row.querySelector("[data-lora-model-strength]")?.value ?? 1);
+      const clipStrength = Number(row.querySelector("[data-lora-clip-strength]")?.value ?? 1);
+      stack.push({
+        name,
+        modelStrength: Number.isFinite(modelStrength) ? modelStrength : 1,
+        clipStrength: Number.isFinite(clipStrength) ? clipStrength : 1,
+        enabled: row.querySelector("[data-lora-enabled]")?.checked !== false,
+      });
+    }
+    return stack;
+  }
+
+  function renderLoraStack(entries) {
+    ensureLoraStackUi();
+    const list = document.querySelector("#lora-stack-list");
+    if (!list) return;
+    list.replaceChildren();
+    const stack = Array.isArray(entries) ? entries : [];
+    for (const entry of stack.slice(0, Math.max(0, maxLoraStack()))) list.append(makeLoraStackRow(entry));
+    syncLoraStackAvailability();
+  }
+
+  api = async function v03Api(path, options = {}) {
+    if (path === "/api/generate" && String(options?.method || "GET").toUpperCase() === "POST") {
+      let payload = {};
+      try { payload = options.body ? JSON.parse(options.body) : {}; }
+      catch { payload = {}; }
+
+      const loraStack = collectLoraStack();
+      delete payload.loraName;
+      delete payload.loraModelStrength;
+      delete payload.loraClipStrength;
+      if (loraStack.length) payload.loraStack = loraStack;
+      else delete payload.loraStack;
+
+      const generationMode = document.querySelector("#generation-mode")?.value || "txt2img";
+      if (generationMode === "img2img") {
+        const support = supportForCurrentModel();
+        if (support?.capabilities?.img2img !== "supported") {
+          throw new Error("Img2img is not supported for the selected model.");
+        }
+        const denoise = Number(document.querySelector("#img2img-denoise")?.value ?? 0.55);
+        if (!Number.isFinite(denoise) || denoise < 0 || denoise > 1) {
+          throw new Error("Denoise strength must be between 0 and 1.");
+        }
+        const file = document.querySelector("#input-image")?.files?.[0];
+        payload.mode = "img2img";
+        payload.denoise = denoise;
+        payload.inputImage = await readInputImage(file);
+      } else {
+        delete payload.mode;
+        delete payload.denoise;
+        delete payload.inputImage;
+      }
+      return baseApi(path, { ...options, body: JSON.stringify(payload) });
+    }
+    return baseApi(path, options);
+  };
+
   async function refreshGenerationOptions() {
     try {
-      const [options, catalog] = await Promise.all([
+      const [options, catalog, modelSupport] = await Promise.all([
         api("/api/generation-options"),
         api("/api/generation-profiles"),
+        api("/api/model-support"),
       ]);
       v02State.generationOptions = options || { samplers: [], schedulers: [], loras: [] };
       v02State.profileCatalog = catalog || { profiles: [] };
+      v02State.modelSupport = modelSupport || { models: [] };
       fillSelect(document.querySelector("#sampler"), options?.samplers, "euler");
       fillSelect(document.querySelector("#scheduler"), options?.schedulers, "normal");
-      fillSelect(document.querySelector("#lora-select"), options?.loras, "", "None");
-      syncLoraStrengthState();
-      populateProfileControl(false);
+      refreshLoraChoiceControls();
+      const profileSelect = document.querySelector("#generation-profile");
+      const applyDefaults = Boolean(currentModel()) && !profileSelect?.value;
+      populateProfileControl(applyDefaults);
+      populateResolutionControls(applyDefaults);
+      renderModelSupportHint();
+      syncLoraStackAvailability();
+      syncGenerationModeUi();
     } catch (error) {
-      syncLoraStrengthState();
+      syncLegacyLoraStrengthState();
       showToast(`Generation options unavailable: ${error.message}`, "error");
     }
   }
@@ -161,20 +699,43 @@
     const record = state.history[index];
     if (!record) return;
 
-    const loraName = String(getValue(record, "loraName", "LoraName") || "");
-    const select = document.querySelector("#lora-select");
-    if (select && Array.from(select.options).some((option) => option.value === loraName)) {
-      select.value = loraName;
-    } else if (select) {
-      select.value = "";
+    const historyStack = getValue(record, "loraStack", "LoraStack");
+    if (Array.isArray(historyStack)) {
+      renderLoraStack(historyStack);
+    } else {
+      const loraName = String(getValue(record, "loraName", "LoraName") || "");
+      const modelStrength = getValue(record, "loraModelStrength", "LoraModelStrength");
+      const clipStrength = getValue(record, "loraClipStrength", "LoraClipStrength");
+      renderLoraStack(loraName ? [{ name: loraName, modelStrength: modelStrength ?? 1, clipStrength: clipStrength ?? 1, enabled: true }] : []);
     }
 
-    const modelStrength = getValue(record, "loraModelStrength", "LoraModelStrength");
-    const clipStrength = getValue(record, "loraClipStrength", "LoraClipStrength");
-    document.querySelector("#lora-model-strength").value = modelStrength ?? 1;
-    document.querySelector("#lora-clip-strength").value = clipStrength ?? 1;
-    syncLoraStrengthState();
+    const legacyName = String(getValue(record, "loraName", "LoraName") || "");
+    const legacySelect = document.querySelector("#lora-select");
+    if (legacySelect && Array.from(legacySelect.options).some((option) => option.value === legacyName)) legacySelect.value = legacyName;
+    else if (legacySelect) legacySelect.value = "";
+    const legacyModelStrength = getValue(record, "loraModelStrength", "LoraModelStrength");
+    const legacyClipStrength = getValue(record, "loraClipStrength", "LoraClipStrength");
+    document.querySelector("#lora-model-strength").value = legacyModelStrength ?? 1;
+    document.querySelector("#lora-clip-strength").value = legacyClipStrength ?? 1;
+    syncLegacyLoraStrengthState();
+
+    ensureGenerationModeUi();
+    const mode = String(getValue(record, "mode", "Mode") || "txt2img").toLowerCase();
+    const generationMode = document.querySelector("#generation-mode");
+    const denoise = getValue(record, "denoise", "Denoise");
+    if (generationMode) generationMode.value = mode === "img2img" ? "img2img" : "txt2img";
+    if (denoise !== null && denoise !== undefined && document.querySelector("#img2img-denoise")) {
+      document.querySelector("#img2img-denoise").value = denoise;
+    }
+    const input = document.querySelector("#input-image");
+    if (input) input.value = "";
+    syncGenerationModeUi();
+
     if (document.querySelector("#generation-profile")) document.querySelector("#generation-profile").value = "";
+    const tier = document.querySelector("#resolution-tier");
+    const ratio = document.querySelector("#aspect-ratio");
+    if (tier) tier.value = "custom";
+    if (ratio) ratio.disabled = true;
   }
 
   function ensureLoraRootUi() {
@@ -189,7 +750,7 @@
       <div class="section-toolbar">
         <div>
           <h2>LoRA folders</h2>
-          <p>Add existing LoRA libraries without copying files. Changes refresh the managed backend.</p>
+          <p>Managed LoRAs can be grouped into shared, SDXL, Z-Image, FLUX, Krea and other family folders. External libraries remain available without copying files.</p>
         </div>
       </div>
       <div class="model-root-card">
@@ -267,7 +828,7 @@
         document.querySelector("#lora-root-path").focus();
       }
     } catch (error) {
-      showToast(`LoRA folder picker failed: ${error.message}`, "error");
+      showToast(`Bundle folder picker failed: ${error.message}`, "error");
     } finally {
       button.disabled = false;
       button.textContent = oldText;
@@ -330,9 +891,19 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     ensureProfileControl();
+    ensureResolutionPresetUi();
+    ensureGenerationModeUi();
+    ensureModelSupportHint();
+    ensureLoraStackUi();
     ensureLoraRootUi();
-    document.querySelector("#lora-select")?.addEventListener("change", syncLoraStrengthState);
-    document.querySelector("#model-select")?.addEventListener("change", () => populateProfileControl(true));
+    document.querySelector("#model-select")?.addEventListener("change", () => {
+      populateProfileControl(true);
+      populateResolutionControls(true);
+      renderModelSupportHint();
+      refreshLoraChoiceControls();
+      syncLoraStackAvailability();
+      syncGenerationModeUi();
+    });
     document.querySelector("#refresh-button")?.addEventListener("click", () => { void refreshGenerationOptions(); });
     document.querySelector('[data-page="models"]')?.addEventListener("click", () => void refreshLoraRoots());
     document.querySelector("#gallery-grid")?.addEventListener("click", (event) => {
@@ -341,7 +912,13 @@
     });
 
     const modelSelect = document.querySelector("#model-select");
-    if (modelSelect) new MutationObserver(() => populateProfileControl(false)).observe(modelSelect, { childList: true });
+    if (modelSelect) new MutationObserver(() => {
+      populateProfileControl(false);
+      populateResolutionControls(false);
+      renderModelSupportHint();
+      refreshLoraChoiceControls();
+      syncGenerationModeUi();
+    }).observe(modelSelect, { childList: true });
 
     void Promise.all([refreshGenerationOptions(), refreshLoraRoots()]);
   });

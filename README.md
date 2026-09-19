@@ -1,47 +1,197 @@
 # StableAMD
 
-StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. It keeps ComfyUI as an internal inference engine while the normal user experience stays product-level: **Generate, Models, Gallery, Settings and Diagnostics**.
+StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. ComfyUI stays an internal inference engine while the normal user experience remains product-level: **Generate, Models, Gallery, Settings and Diagnostics**.
 
 ## Current status
 
-StableAMD v0.1 is **hardware-accepted on AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)**. The target-machine acceptance completed on 2026-09-11 covered a fresh source-package runtime bootstrap, native Radeon FP16 compute, managed ComfyUI and application startup, recursive external model discovery, SDXL 1024x1024 generation through StableAMD, output persistence and Gallery display.
+The active development line is **StableAMD v0.3** on `feat/stableamd-v0.3` / draft PR #4.
+
+The project is hardware-tested on an **AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)** using the managed native-Windows TheRock/ROCm runtime. v0.3 is now a practical multi-provider Radeon image workstation rather than only an SDXL frontend.
+
+Current detailed status: [`docs/v0.3-status.md`](docs/v0.3-status.md)  
+Execution order: [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md)  
+Larger roadmap: [`docs/roadmap.md`](docs/roadmap.md)
+
+### Accepted target hardware
 
 ```text
-RX 6950 XT -> TheRock multi-arch ROCm -> PyTorch -> ComfyUI -> StableAMD -> SDXL 1024x1024
+RX 6950 XT -> TheRock multi-arch ROCm -> PyTorch -> ComfyUI -> StableAMD
 ```
 
-The accepted locked stack is:
+Locked runtime foundation:
 
-- private CPython `3.12.10` from the CPython NuGet x64 package;
+- private CPython `3.12.10`;
 - `device-gfx1030`;
 - PyTorch `2.13.0+rocm10.1.0a20260822`;
 - torchvision `0.28.0+rocm10.1.0a20260822`;
 - torchaudio `2.11.0+rocm10.1.0a20260822`;
-- ComfyUI `0.35.0`, pinned to commit `40c4fcdf513a4523e39d54a9d391908af8df8171`;
-- Stable Diffusion XL 1.0 base as the compatibility reference.
+- pinned ComfyUI source managed by the StableAMD runtime installer.
 
-The earlier feasibility reference run at 1024x1024 / 20 steps used about 102 seconds and about 14 GiB peak VRAM on the tested RX 6950 XT. The machine-readable runtime lock and acceptance state are in [`config/runtime-lock.v0.1.json`](config/runtime-lock.v0.1.json).
+Other Radeon GPUs are not implicitly validated by the RX 6950 XT result; each target still needs its own runtime/generation acceptance.
 
-Other Radeon GPUs are not implicitly validated by this result; each target needs its own runtime/generation acceptance.
+## Accepted model flows
 
-## What v0.1 contains
+### SDXL
 
-- managed loopback-only ComfyUI backend lifecycle;
-- RX 6950 XT / `gfx1030` detection and diagnostics;
-- StableAMD product API instead of arbitrary ComfyUI workflow execution;
-- SDXL txt2img generation with prompt, negative prompt, model, size, steps, CFG and seed;
-- recursive model-folder discovery that uses existing checkpoints in place without copying them;
-- optional single-file local import plus Hugging Face checkpoint download;
-- safetensors structural validation and optional SHA-256 verification;
-- generation history and Gallery metadata;
-- responsive local web UI;
-- one-click Windows launcher;
-- automatic first-launch bootstrap of private CPython + the pinned TheRock ROCm/PyTorch stack + pinned ComfyUI;
-- real FP16 Radeon compute verification before a bootstrapped runtime is accepted;
-- source-only ZIP packaging that deliberately excludes runtimes, models and generated data;
-- isolated clean-package acceptance that does not touch the development runtime.
+The compatibility baseline remains supported:
 
-All services bind to `127.0.0.1`; v0.1 does not expose remote access, telemetry or cloud upload.
+- txt2img;
+- img2img;
+- inpaint;
+- outpaint;
+- ordered MultiLoRA;
+- sampler/scheduler metadata and presets;
+- external checkpoint and LoRA folders;
+- Gallery history/reuse/delete.
+
+SDXL is maintained, but new feature work now targets Z-Image Turbo and Krea 2 Turbo first.
+
+### Z-Image Turbo
+
+The dedicated Z-Image package uses:
+
+- `z_image_turbo_bf16.safetensors`;
+- `qwen_3_4b.safetensors`;
+- `ae.safetensors`.
+
+Target-accepted features include:
+
+- repeated txt2img generation;
+- one or multiple ordered model-only LoRAs;
+- native Inpaint;
+- native Outpaint through the accepted Union 2.1 Lite Fun Control patch;
+- automatic Outpaint canvas preparation;
+- Gallery history/reuse/delete;
+- classic `Upscale after`.
+
+The proven sampler path remains `res_multistep + simple + CFG 1`.
+
+### Krea 2 Turbo
+
+The official FP8 package is accepted on the RX 6950 XT:
+
+- `krea2_turbo_fp8_scaled.safetensors`;
+- `qwen3vl_4b_fp8_scaled.safetensors`;
+- `qwen_image_vae.safetensors`.
+
+Target-accepted features now include:
+
+- txt2img through the dedicated `krea2-bundle` provider;
+- official-style `8 steps / CFG 1 / Euler / simple` defaults;
+- ordered model-only LoRA stacks;
+- Gallery persistence/reuse;
+- classic `Upscale after`;
+- **OpenPose structural control** using the pinned Krea/Ostris edit integration and Turbo pose adapter;
+- **OpenPose + normal user LoRA in the same generation**;
+- **whole-image Image Edit** using a source image plus a natural-language edit instruction.
+
+Krea Image Edit follows the published reference-conditioning path rather than classic latent-denoise img2img:
+
+```text
+Source image
+-> FluxKontextImageScale
+-> TextEncodeKrea2OstrisEdit
+-> FluxKontextMultiReferenceLatentMethod(index_timestep_zero)
+-> Krea2OstrisEditModelPatch
+-> KSampler
+```
+
+The output aspect is derived from the source image after `FluxKontextImageScale`. StableAMD therefore labels this mode **Image Edit** and does not expose a denoise slider for Krea.
+
+## Control / pose guidance
+
+StableAMD has a provider-aware control surface instead of pretending every model supports the same ControlNet graph.
+
+Current accepted Krea 2 OpenPose path:
+
+- pinned `ostris/ComfyUI-Krea2-Ostris-Edit` integration;
+- pinned `krea2_turbo_openpose_controlnet.safetensors` adapter;
+- curated pose templates;
+- interactive OpenPose editor;
+- safe-frame handling for Krea aspect ratios;
+- user LoRA coexistence target-tested on the RX 6950 XT.
+
+Z-Image control routes remain independently gated and are documented in [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md).
+
+## LoRA compatibility
+
+StableAMD does not assume that every discovered LoRA fits every model family.
+
+Managed LoRA folders are grouped by family:
+
+```text
+.runtime\stableamd\models\loras\
+├─ shared
+├─ sd15
+├─ sdxl
+├─ sd3
+├─ z-image
+├─ flux
+└─ krea
+```
+
+Safetensors metadata is inspected without loading tensor payloads, with managed-folder and filename hints used only as fallbacks. Known cross-family mismatches are blocked server-side; unknown adapters remain explicitly unknown instead of being guessed compatible.
+
+Execution is workflow-specific:
+
+- SDXL: model + CLIP LoRA path;
+- Z-Image: model-only LoRA path;
+- Krea 2: model-only LoRA path, matching the official Krea Turbo workflow.
+
+## Editing and post-generation tools
+
+Gallery and Generate expose the editing/upscale paths that the selected provider actually supports.
+
+Accepted flows include:
+
+- SDXL Img2Img / Inpaint / Outpaint;
+- native Z-Image Inpaint / Outpaint;
+- Krea 2 whole-image **Image Edit**;
+- Gallery Reuse and Delete;
+- `Upscale after` from Generate;
+- manual Gallery upscale.
+
+Krea Image Edit currently edits the whole reference image. Masked Krea editing and Image Edit + Control composition are intentionally separate future gates.
+
+## Classic upscale
+
+The stable classic provider uses stock ComfyUI nodes:
+
+```text
+LoadImage -> UpscaleModelLoader -> ImageUpscaleWithModel -> SaveImage
+```
+
+Managed root:
+
+```text
+.runtime\stableamd\models\upscale_models\
+```
+
+Target-accepted curated models include:
+
+- RealESRGAN x2plus;
+- RealESRGAN x4plus;
+- 4x-UltraSharp.
+
+StableAMD can plan exact `2x`, `4x` and `8x` results by selecting a native matching model or chaining compatible x2/x4 passes. Curated downloads are size/hash verified before being promoted into the managed model folder.
+
+## Runtime behavior
+
+The current RX 6950 XT / 16 GiB default profile is:
+
+```text
+DynamicVRAM + RAM-pressure cache + CPU VAE
+```
+
+Provider-specific optimizations are applied only where target-tested. For example, Krea reference/edit paths can move the VAE work to `gpu:0` without globally removing the CPU-VAE safeguard used by other workflows.
+
+Generation uses an asynchronous product transport:
+
+```text
+submit job -> poll status -> fetch result
+```
+
+Long Krea jobs therefore do not keep one browser request open for the entire generation. The GUI also waits for initial supported-model discovery before revealing the main interface, preventing model entries such as Krea from appearing a few seconds after the page is already usable.
 
 ## Start StableAMD
 
@@ -57,30 +207,31 @@ or run:
 powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1
 ```
 
-If the managed runtime is missing, the launcher invokes `Install-StableAMDRuntime.ps1`. First launch downloads the private CPython 3.12.10 NuGet runtime, the locked TheRock `gfx1030` package set and pinned ComfyUI source, installs ComfyUI dependencies without allowing PyPI to replace the locked AMD torch family, then runs the Radeon FP16 compute probe. This can download more than 1 GB.
+To pull the newest branch state and start in one step:
 
-If the runtime already exists, StableAMD reuses it. The launcher then starts or reuses the managed compute backend, starts the application server, waits for `/api/health`, writes logs under `.runtime\stableamd\logs`, and opens the local UI.
-
-To prevent automatic runtime installation while diagnosing a machine:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\Launch-StableAMD.ps1 -SkipRuntimeInstall
+```text
+Update-and-Start-StableAMD.cmd
 ```
 
-## Models
+If the managed runtime is missing, the launcher invokes the runtime installer. The backend and application bind to loopback only. Logs are written under `.runtime\stableamd\logs` and the supervisor owns process lifecycle/cleanup.
 
-The recommended local workflow is **Models -> Add folder -> Scan models**. StableAMD stores selected Windows folders in its local configuration, scans them recursively for `.safetensors` checkpoints and passes them directly to ComfyUI through generated `extra_model_paths.yaml`. Multi-gigabyte checkpoints stay in their original location and are not copied.
+## Model packages and folders
 
-Use **Browse folder...** to open the native Windows folder picker, or paste a path such as `D:\AI\Models`. Adding or removing a folder refreshes the managed backend when needed so ComfyUI sees the new search path. Existing SwarmUI Stable Diffusion folders are also discovered when present.
+The Models page is package-first:
 
-Single-file copy/move import and resumable Hugging Face download remain available under **Other ways to add models**.
+- checkpoint models appear as logical packages;
+- modern multi-file providers such as Z-Image and Krea 2 appear as one model entry;
+- incomplete known packages remain visible with Found/Missing state;
+- only ready + supported models are offered for generation;
+- raw checkpoint / diffusion model / text encoder / VAE / LoRA roots stay available under advanced controls;
+- curated provider dependencies can be installed through verified product flows where implemented.
 
-The official SDXL 1.0 base checkpoint is the v0.1 compatibility reference. LoRA, ControlNet, inpainting, Flux and video generation are intentionally deferred.
+Existing model libraries can be referenced without copying multi-gigabyte files. StableAMD generates the required `extra_model_paths.yaml` entries for configured roots and managed asset folders.
 
 ## Useful commands
 
 ```powershell
-# Show exactly what the clean runtime bootstrap would install; no downloads
+# Show what a clean runtime bootstrap would install; no downloads
 powershell -ExecutionPolicy Bypass -File .\scripts\Install-StableAMDRuntime.ps1 -PlanOnly
 
 # Install or reuse the pinned Radeon runtime
@@ -89,48 +240,44 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Install-StableAMDRuntime.ps1
 # Runtime status
 powershell -ExecutionPolicy Bypass -File .\scripts\Get-StableAMDStatus.ps1
 
-# Stop the managed backend
+# Stop StableAMD managed processes
 powershell -ExecutionPolicy Bypass -File .\scripts\Stop-StableAMD.ps1
 
-# List/discover models
+# List/discover checkpoint models
 powershell -ExecutionPolicy Bypass -File .\scripts\List-Models.ps1
 
-# List configured model folders
-powershell -ExecutionPolicy Bypass -File .\scripts\Get-ModelRoots.ps1
+# List logical multi-file model packages
+powershell -ExecutionPolicy Bypass -File .\scripts\List-BundleModels.ps1
 
-# Add an existing model library without copying it
-powershell -ExecutionPolicy Bypass -File .\scripts\Add-ModelRoot.ps1 -Path 'D:\AI\Models'
-
-# Build the source-only v0.1 package
+# Build the source package
 powershell -ExecutionPolicy Bypass -File .\scripts\Build-StableAMDPackage.ps1
 
 # Resolve a clean package install plan without downloading runtime files
 powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1 -PlanOnly
-
-# Repeat the full isolated clean-package GPU/runtime acceptance
-powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1
 ```
-
-The package builder produces:
-
-```text
-dist\StableAMD-0.1.0\
-dist\StableAMD-0.1.0.zip
-```
-
-`.runtime`, model checkpoints, generated images, diagnostics, tests and Git metadata are not shipped inside that ZIP. The full package acceptance harness builds a fresh copy under `diagnostics\acceptance-package-*`, gives it separate local ports, installs its own runtime, verifies FP16 compute plus application/backend health, then removes the successful isolated runtime unless `-KeepRuntime` is supplied. Failed acceptance directories are kept for diagnosis.
 
 ## Development and validation
 
-The automated CI suite covers PowerShell parsing, Python API contracts, runtime/model/generation/frontend contracts, Windows PowerShell 5.1 compatibility, external model-folder configuration, launcher behavior, generated-output correlation, packaging, the exact no-network runtime plan and a real plan-only package build. GPU/runtime downloads are intentionally not performed on GitHub-hosted runners.
+CI covers PowerShell parsing, Python API contracts, Pester unit/regression tests, workflow construction, provider/model-root handling, frontend contracts, source package build and artifact upload.
 
-Target-machine evidence and repeatable acceptance commands are in [`docs/v0.1-validation.md`](docs/v0.1-validation.md). The earlier feasibility work remains in [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md).
+The current Krea Image Edit implementation passed GitHub Actions **#660** end to end. GPU/runtime execution remains separately validated on the physical RX 6950 XT target; the Image Edit gate is now target-accepted as well.
 
-Product design and implementation plan:
+Useful project documents:
 
-- [`docs/superpowers/specs/2026-09-11-stableamd-v0.1-product-design.md`](docs/superpowers/specs/2026-09-11-stableamd-v0.1-product-design.md)
-- [`docs/superpowers/plans/2026-09-11-stableamd-v0.1.md`](docs/superpowers/plans/2026-09-11-stableamd-v0.1.md)
+- [`docs/v0.3-status.md`](docs/v0.3-status.md) — current accepted/pending v0.3 status;
+- [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md) — current execution order;
+- [`docs/roadmap.md`](docs/roadmap.md) — larger product directions;
+- [`docs/v0.1-validation.md`](docs/v0.1-validation.md) — original clean-runtime RX 6950 XT acceptance;
+- [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md) — early feasibility work.
 
-## Scope after v0.1
+## Near-term roadmap
 
-Later work can add more Radeon GPU targets, LoRA/ControlNet, additional model families and potentially WSL2/Linux backends. DirectML and ZLUDA remain explicit fallback investigations rather than silent defaults.
+1. continue provider-aware structural guidance, especially remaining Z-Image and Krea Depth routes;
+2. add automatic pose extraction from a normal source photo;
+3. expand Krea Image Edit into focused material/texture replacement workflows;
+4. add one/two-image content/style reference workflows;
+5. add a character turnaround-sheet workflow;
+6. explore text/image-to-SVG and infographic-oriented providers;
+7. keep Gaussian Splatting and video as post-v0.3 work.
+
+The stable RX 6950 XT path takes priority over marginal throughput experiments that risk regressing already accepted workflows.

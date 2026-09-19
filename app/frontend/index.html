@@ -10,7 +10,16 @@
   <link rel="stylesheet" href="/progress.css">
 </head>
 <body>
-  <div class="app-shell">
+  <div id="startup-gate" class="startup-gate" role="status" aria-live="polite">
+    <div class="startup-gate-card">
+      <div class="brand-mark startup-brand-mark" aria-hidden="true">S</div>
+      <div class="startup-spinner" aria-hidden="true"></div>
+      <strong>Loading models</strong>
+      <p id="startup-gate-message">Preparing StableAMD…</p>
+    </div>
+  </div>
+
+  <div class="app-shell" hidden>
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">S</div>
@@ -26,6 +35,7 @@
         <button class="nav-item" type="button" data-page="gallery">Gallery</button>
         <button class="nav-item" type="button" data-page="settings">Settings</button>
         <button class="nav-item" type="button" data-page="diagnostics">Diagnostics</button>
+        <a class="nav-item nav-external" id="open-comfyui" href="http://127.0.0.1:8190/" target="_blank" rel="noopener noreferrer">Open ComfyUI ↗</a>
       </nav>
 
       <div class="runtime-card">
@@ -44,7 +54,7 @@
       <header class="topbar">
         <div>
           <h1 id="page-title">Generate</h1>
-          <p id="page-subtitle">Create an SDXL image on your Radeon GPU.</p>
+          <p id="page-subtitle">Create an image locally on your Radeon GPU.</p>
         </div>
         <button class="button button-quiet" id="refresh-button" type="button">Refresh</button>
       </header>
@@ -96,7 +106,7 @@
                   </label>
                 </div>
                 <label class="field">
-                  <span>LoRA <small>optional · one per generation in v0.2</small></span>
+                  <span>LoRA <small>legacy single-LoRA control; v0.3 upgrades this to a stack</small></span>
                   <select id="lora-select" name="loraName"><option value="">None</option></select>
                 </label>
                 <div class="field-grid field-grid-2">
@@ -145,7 +155,7 @@
         <div class="section-toolbar model-list-heading">
           <div>
             <h2>Detected checkpoints</h2>
-            <p>Recursive scan of every configured model folder.</p>
+            <p>Recursive scan of every configured checkpoint folder. Bundle-model asset folders are managed separately.</p>
           </div>
         </div>
         <div class="model-list" id="model-list"></div>
@@ -215,11 +225,11 @@
             <code>127.0.0.1</code>
           </div>
           <div class="settings-row">
-            <div><strong>Generation preset</strong><p>Default StableAMD v0.2 SDXL profile.</p></div>
-            <span>1024 × 1024 · 20 steps · CFG 7</span>
+            <div><strong>Generation profiles</strong><p>Model-aware recommendations are stored in a versioned StableAMD catalog.</p></div>
+            <span>Model aware</span>
           </div>
           <div class="settings-row">
-            <div><strong>Generation controls</strong><p>Sampler, scheduler and optional LoRA come from the managed ComfyUI backend.</p></div>
+            <div><strong>Generation controls</strong><p>Sampler, scheduler, model capabilities and LoRA stack come from the managed product layer.</p></div>
             <span>Dynamic</span>
           </div>
           <div class="settings-row">
@@ -245,8 +255,19 @@
     </main>
   </div>
 
+  <script src="/app-startup.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/app-progress.js" defer></script>
+  <script src="/app-krea-edit.js" defer></script>
   <script src="/app-v02.js" defer></script>
+  <script src="/app-lora-compat.js" defer></script>
+  <script src="/app-v03.js" defer></script>
+  <script src="/app-comfy-runtime.js" defer></script>
+  <script src="/app-inpaint.js" defer></script>
+  <script src="/app-upscale.js" defer></script>
+  <script src="/app-post-actions.js" defer></script>
+  <script src="/app-outpaint-context.js" defer></script>
+  <script src="/app-generate-upscale.js" defer></script>
+  <script src="/app-generate-workspace.js" defer></script>
 </body>
 </html>

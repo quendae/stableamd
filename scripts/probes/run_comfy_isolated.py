@@ -36,7 +36,24 @@ def main() -> None:
         sys.path.remove(comfy_root)
     sys.path.insert(0, comfy_root)
 
-    forwarded_args = sys.argv[2:]
+    forwarded_args = list(sys.argv[2:])
+
+    # Keep only the guard that produced a successful Z-Image + LoRA render on
+    # the target gfx1030 machine. The additional host-memory flags introduced
+    # later, especially --disable-mmap, regressed diffusion-model loading before
+    # sampling. VAE remains on CPU; the workflow itself is kept identical to the
+    # previously proven official Z-Image graph.
+    if "--cpu-vae" not in forwarded_args:
+        forwarded_args.append("--cpu-vae")
+
+    # Make the effective runtime arguments visible in the normal backend log so
+    # a native crash can be correlated with the exact launch profile next time.
+    print(
+        "[StableAMD bootstrap] ComfyUI args: " + " ".join(forwarded_args),
+        file=sys.stderr,
+        flush=True,
+    )
+
     sys.argv = [main_py, *forwarded_args]
     os.chdir(comfy_root)
 

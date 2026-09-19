@@ -1,0 +1,585 @@
+/* StableAMD Generate studio workspace
+   Desktop-first recipe -> canvas -> inspector composition. */
+
+body.generate-studio-page .workspace {
+  padding: 24px clamp(18px, 2.4vw, 42px) 48px;
+}
+
+body.generate-studio-page .topbar,
+#page-generate {
+  max-width: 1800px;
+}
+
+body.generate-studio-page .topbar {
+  margin-bottom: 18px;
+}
+
+body.generate-studio-page #page-title {
+  font-size: clamp(26px, 2vw, 34px);
+}
+
+.studio-workspace {
+  display: grid;
+  grid-template-columns: minmax(330px, 420px) minmax(460px, 1fr) minmax(300px, 350px);
+  gap: 16px;
+  align-items: start;
+  width: 100%;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+.studio-workspace [hidden] {
+  display: none !important;
+}
+
+.studio-recipe,
+.studio-canvas,
+.studio-inspector {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.18);
+}
+
+.studio-recipe {
+  padding: 18px;
+}
+
+.studio-recipe .generate-context-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.studio-recipe .compact-prompt-field {
+  margin-bottom: 12px;
+}
+
+.studio-recipe .compact-prompt-field textarea {
+  min-height: 150px;
+  resize: none;
+}
+
+.studio-recipe .negative-prompt-field textarea {
+  min-height: 76px;
+  resize: none;
+}
+
+.studio-recipe #generate-mode-workspace {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.studio-recipe #img2img-controls,
+.studio-recipe #inpaint-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.studio-recipe #krea-edit-task-panel,
+.studio-recipe .model-root-card {
+  margin: 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+.studio-recipe #krea-edit-task-panel .field-grid-2 {
+  grid-template-columns: 1fr;
+}
+
+.studio-recipe .generate-submit-row {
+  position: sticky;
+  bottom: 10px;
+  z-index: 4;
+  margin: 16px -2px -2px;
+  padding-top: 10px;
+  background: linear-gradient(to bottom, rgba(20, 24, 30, 0), var(--surface) 34%);
+}
+
+.studio-recipe .compact-generate-button {
+  width: 100%;
+  min-height: 46px;
+  box-shadow: 0 8px 22px rgba(239, 108, 69, 0.12);
+}
+
+.studio-canvas {
+  position: sticky;
+  top: 20px;
+  min-height: min(760px, calc(100vh - 112px));
+  padding: clamp(18px, 2vw, 28px);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.025), transparent 48%),
+    var(--surface);
+}
+
+.studio-canvas .result-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: min(680px, calc(100vh - 170px));
+}
+
+.studio-canvas .result-empty::before {
+  content: "";
+  width: 78px;
+  height: 58px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, transparent 54%, rgba(239, 108, 69, 0.17) 55%, transparent 57%),
+    linear-gradient(28deg, transparent 48%, rgba(255, 255, 255, 0.06) 49%, transparent 51%),
+    #0f1217;
+}
+
+.studio-canvas .result-details {
+  gap: 16px;
+}
+
+.studio-canvas .result-image {
+  width: 100%;
+  max-height: min(68vh, 820px);
+  object-fit: contain;
+  border-radius: 10px;
+  background: #0a0c0f;
+}
+
+.studio-canvas .result-meta {
+  grid-template-columns: 88px minmax(0, 1fr);
+}
+
+.studio-canvas .result-details code {
+  max-height: 92px;
+  overflow: auto;
+}
+
+.studio-inspector {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 10px 12px 12px;
+  scrollbar-gutter: stable;
+}
+
+.studio-inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 2px 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.studio-inspector-header strong {
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.studio-inspector-header span {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.studio-inspector-section {
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.studio-inspector-section:last-child {
+  border-bottom: 0;
+}
+
+.studio-inspector-section > summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 24px 0 4px;
+  list-style: none;
+  color: #d7dde4;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.studio-inspector-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.studio-inspector-section > summary::after {
+  content: "+";
+  position: absolute;
+  right: 5px;
+  color: var(--muted-2);
+  font-size: 16px;
+  font-weight: 400;
+  transition: transform 160ms ease, color 160ms ease;
+}
+
+.studio-inspector-section[open] > summary::after {
+  transform: rotate(45deg);
+  color: var(--accent);
+}
+
+.studio-inspector-section > summary:hover {
+  color: var(--text);
+}
+
+.studio-inspector-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 4px 14px;
+}
+
+.studio-inspector-section[open] .studio-inspector-body {
+  animation: studio-panel-in 170ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+.studio-inspector .generate-size-row,
+.studio-inspector .custom-size-fields,
+.studio-inspector .generate-parameter-row {
+  margin: 0;
+}
+
+.studio-inspector .generate-size-row .compact-resolution-panel {
+  max-width: none;
+}
+
+.studio-inspector .generate-parameter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.studio-inspector .generate-parameter-row .field:first-child {
+  grid-column: 1 / -1;
+}
+
+.studio-inspector .generate-parameter-row input,
+.studio-inspector .generate-parameter-row select,
+.studio-inspector .generate-size-row select,
+.studio-inspector .custom-size-fields input {
+  height: 36px;
+}
+
+.studio-inspector .custom-size-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.studio-inspector .custom-size-fields .field {
+  width: auto;
+  min-width: 0;
+  flex: initial;
+}
+
+.studio-inspector .compact-lora-stack,
+.studio-inspector .controlnet-panel,
+.studio-inspector .upscale-after-generation {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.studio-inspector .compact-lora-heading {
+  margin-bottom: 8px;
+}
+
+.studio-inspector .compact-lora-heading > div > strong,
+.studio-inspector .controlnet-heading > strong {
+  display: none;
+}
+
+.studio-inspector .compact-lora-heading p,
+.studio-inspector .controlnet-help,
+.studio-inspector .upscale-output-hint {
+  font-size: 10px;
+}
+
+.studio-inspector .lora-row-toolbar {
+  grid-template-columns: auto minmax(0, 1fr) 78px;
+}
+
+.studio-inspector .lora-row-toolbar .model-root-actions {
+  grid-column: 2 / -1;
+  justify-self: end;
+}
+
+.studio-inspector .controlnet-grid {
+  grid-template-columns: 1fr 92px;
+}
+
+.studio-inspector .upscale-after-generation {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.studio-inspector .upscale-output-hint {
+  grid-column: 1 / -1;
+}
+
+.studio-inspector .upscale-after-factor-field,
+.studio-inspector .upscale-after-model-field {
+  min-width: 0;
+  flex: initial;
+}
+
+.studio-file-field input[type="file"] {
+  min-height: 42px;
+  height: auto;
+  padding: 5px;
+}
+
+.studio-file-field input[type="file"]::file-selector-button {
+  min-height: 30px;
+  margin-right: 9px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface-3);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.studio-file-preview {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-top: 7px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #0f1217;
+}
+
+.studio-file-preview img {
+  width: 58px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #080a0d;
+}
+
+.studio-file-preview span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generate-mode-choices {
+  display: grid;
+  gap: 2px;
+  padding: 2px 0 4px;
+}
+
+.generate-mode-choice {
+  position: relative;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px 7px 18px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 620;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.generate-mode-choice::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 9px;
+  bottom: 9px;
+  width: 2px;
+  border-radius: 999px;
+  background: transparent;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.generate-mode-choice:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+  transform: translateX(1px);
+}
+
+.generate-mode-choice.is-active,
+.generate-mode-choice[aria-current="page"] {
+  background: rgba(239, 108, 69, 0.075);
+  color: var(--text);
+}
+
+.generate-mode-choice.is-active::before,
+.generate-mode-choice[aria-current="page"]::before {
+  background: var(--accent);
+}
+
+.generate-mode-choice:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.studio-canonical-mode-field {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.studio-mode-transition .studio-recipe,
+.studio-mode-transition .studio-canvas {
+  animation: studio-mode-change 190ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+@keyframes studio-mode-change {
+  from { opacity: 0.72; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes studio-panel-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 1440px) {
+  .studio-workspace {
+    grid-template-columns: minmax(310px, 360px) minmax(420px, 1fr) minmax(285px, 320px);
+  }
+}
+
+@media (max-width: 1180px) {
+  .studio-workspace {
+    grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  }
+
+  .studio-inspector {
+    position: static;
+    grid-column: 1 / -1;
+    max-height: none;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 18px;
+  }
+
+  .studio-inspector-header {
+    grid-column: 1 / -1;
+  }
+
+  .studio-canvas {
+    top: 16px;
+  }
+}
+
+@media (max-width: 900px) {
+  .studio-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-canvas,
+  .studio-inspector {
+    position: static;
+  }
+
+  .studio-canvas {
+    grid-row: 1;
+    min-height: 360px;
+  }
+
+  .studio-recipe {
+    grid-row: 2;
+  }
+
+  .studio-inspector {
+    grid-row: 3;
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  body.generate-studio-page .workspace {
+    padding: 18px 12px 86px;
+  }
+
+  .studio-recipe,
+  .studio-canvas,
+  .studio-inspector {
+    border-radius: 11px;
+  }
+
+  .studio-recipe {
+    padding: 14px;
+  }
+
+  .studio-canvas {
+    min-height: 300px;
+    padding: 14px;
+  }
+
+  .studio-canvas .result-empty {
+    min-height: 260px;
+  }
+
+  .nav-generate-submenu {
+    width: min(280px, calc(100vw - 20px));
+  }
+
+  .generate-mode-choices {
+    gap: 4px;
+  }
+
+  .generate-mode-choice {
+    min-height: 40px;
+    font-size: 12px;
+  }
+
+  .studio-inspector .generate-parameter-row,
+  .studio-inspector .custom-size-fields,
+  .studio-inspector .controlnet-grid,
+  .studio-inspector .upscale-after-generation {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-inspector .generate-parameter-row .field:first-child,
+  .studio-inspector .upscale-output-hint {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-workspace *,
+  .generate-mode-choice,
+  .studio-inspector-section > summary::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
