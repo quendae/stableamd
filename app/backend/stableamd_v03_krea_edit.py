@@ -48,29 +48,35 @@ class KreaImageEditBridgeMixin:
         return all(self._node_available(node_name) for node_name in self._KREA_EDIT_NODES)
 
     @staticmethod
-    def _compose_reference_prompt(prompt: str, role: str) -> str:
+    def _compose_reference_prompt(prompt: str, roles: str | list[str] | tuple[str, ...]) -> str:
         instruction = str(prompt or "").strip()
-        normalized_role = str(role or "").strip().lower()
-        if normalized_role == "style":
-            prefix = (
-                "Picture 1 is the source image to edit. Picture 2 is the style reference. "
-                "Use Picture 2 only as visual style guidance while preserving the source content, "
-                "geometry, layout, identity, and unrelated details unless the edit instruction says otherwise."
-            )
-        elif normalized_role == "material":
-            prefix = (
-                "Picture 1 is the source image to edit. Picture 2 is the material or texture reference. "
-                "Use the material appearance of Picture 2 only where requested while preserving the source "
-                "geometry, lighting, composition, identity, and unrelated areas."
-            )
-        elif normalized_role == "content":
-            prefix = (
-                "Picture 1 is the source image to edit. Picture 2 is the content reference. "
-                "Use Picture 2 as guidance for the requested object, subject, or content while preserving "
-                "the source scene and unrelated details."
-            )
-        else:
+        role_values = [roles] if isinstance(roles, str) else list(roles or [])
+        role_values = [str(role or "").strip().lower() for role in role_values][:2]
+        role_values = [role for role in role_values if role in KreaImageEditBridgeMixin._REFERENCE_ROLES]
+        if not role_values:
             return instruction
+
+        parts = ["Picture 1 is the source image to edit."]
+        for picture_number, role in enumerate(role_values, start=2):
+            if role == "style":
+                parts.append(
+                    f"Picture {picture_number} is the style reference. "
+                    f"Use Picture {picture_number} only as visual style guidance while preserving the source content, "
+                    "geometry, layout, identity, and unrelated details unless the edit instruction says otherwise."
+                )
+            elif role == "material":
+                parts.append(
+                    f"Picture {picture_number} is the material or texture reference. "
+                    f"Use the material appearance of Picture {picture_number} only where requested while preserving the source "
+                    "geometry, lighting, composition, identity, and unrelated areas."
+                )
+            elif role == "content":
+                parts.append(
+                    f"Picture {picture_number} is the content reference. "
+                    f"Use Picture {picture_number} as guidance for the requested object, subject, or content while preserving "
+                    "the source scene and unrelated details."
+                )
+        prefix = " ".join(parts)
         return f"{prefix} Edit instruction: {instruction}" if instruction else prefix
 
     def model_support(self) -> dict[str, Any]:
@@ -93,20 +99,20 @@ class KreaImageEditBridgeMixin:
                 "referenceScaler": "FluxKontextImageScale",
                 "sourceSizeOutput": True,
                 "referenceImages": {
-                    "max": 1,
+                    "max": 2,
                     "roles": list(self._REFERENCE_ROLES),
                 },
                 "tasks": [
                     {
                         "id": "general",
                         "label": "General edit",
-                        "referenceImages": 1,
+                        "referenceImages": 2,
                         "masked": False,
                     },
                     {
                         "id": "material-replace",
                         "label": "Material / texture",
-                        "referenceImages": 1,
+                        "referenceImages": 2,
                         "masked": False,
                     },
                 ],
@@ -156,7 +162,21 @@ class KreaImageEditBridgeMixin:
             current_model = ["10", 0]
         prompt = str(prompt_inputs.get("text") or "")
         image_name = str(context.get("image_name") or "").strip()
-        reference_name = str(context.get("reference_name") or "").strip()
+        raw_references = context.get("references")
+        references: list[dict[str, str]] = []
+        if isinstance(raw_references, list):
+            for item in raw_references[:2]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                role = str(item.get("role") or "").strip().lower()
+                if name:
+                    references.append({"name": name, "role": role})
+        else:
+            legacy_name = str(context.get("reference_name") or "").strip()
+            legacy_role = str(context.get("reference_role") or "").strip().lower()
+            if legacy_name:
+                references.append({"name": legacy_name, "role": legacy_role})
         if not image_name:
             raise base.StableAmdBridgeError("Krea 2 Image Edit source image is missing.")
 
@@ -186,12 +206,17 @@ class KreaImageEditBridgeMixin:
             "vae": ["84", 0],
             "image1": ["81", 0],
         }
-        if reference_name:
-            workflow["89"] = {
+        reference_bindings: list[tuple[str, list[Any]]] = []
+        for index, reference in enumerate(references):
+            node_id = str(89 + index)
+            input_name = f"image{index + 2}"
+            workflow[node_id] = {
                 "class_type": "LoadImage",
-                "inputs": {"image": reference_name},
+                "inputs": {"image": reference["name"]},
             }
-            positive_inputs["image2"] = ["89", 0]
+            binding = [node_id, 0]
+            positive_inputs[input_name] = binding
+            reference_bindings.append((input_name, binding))
         workflow["85"] = {
             "class_type": "TextEncodeKrea2OstrisEdit",
             "inputs": positive_inputs,
@@ -209,8 +234,8 @@ class KreaImageEditBridgeMixin:
         if not cfg_is_one:
             negative_inputs["vae"] = ["84", 0]
             negative_inputs["image1"] = ["81", 0]
-            if reference_name:
-                negative_inputs["image2"] = ["89", 0]
+            for input_name, binding in reference_bindings:
+                negative_inputs[input_name] = binding
         workflow["86"] = {
             "class_type": "TextEncodeKrea2OstrisEdit",
             "inputs": negative_inputs,
@@ -260,20 +285,45 @@ class KreaImageEditBridgeMixin:
             return None
         return width, height
 
+    @staticmethod
+    def _normalize_reference_metadata(
+        references: list[dict[str, Any]] | None = None,
+        reference_name: str | None = None,
+        reference_role: str | None = None,
+    ) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for item in references or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            role = str(item.get("role") or "").strip().lower()
+            if name and role:
+                normalized.append({"name": name, "role": role})
+        if not normalized and reference_name and reference_role:
+            normalized.append({"name": str(reference_name), "role": str(reference_role).lower()})
+        return normalized[:2]
+
     def _persist_krea_image_edit_metadata(
         self,
         result: dict[str, Any],
         source_name: str,
+        references: list[dict[str, Any]] | None = None,
         reference_name: str | None = None,
         reference_role: str | None = None,
     ) -> None:
+        normalized_references = self._normalize_reference_metadata(
+            references,
+            reference_name=reference_name,
+            reference_role=reference_role,
+        )
         result["Mode"] = "img2img"
         result["EditOperation"] = "image-edit"
         result["Provider"] = "krea2-ostris-edit"
         result["InputImageName"] = source_name
-        if reference_name and reference_role:
-            result["ReferenceImageName"] = reference_name
-            result["ReferenceRole"] = reference_role
+        if normalized_references:
+            result["ReferenceImages"] = normalized_references
+            result["ReferenceImageName"] = normalized_references[0]["name"]
+            result["ReferenceRole"] = normalized_references[0]["role"]
         result.pop("Denoise", None)
 
         raw_image = str(result.get("ImagePath") or "").strip()
@@ -297,9 +347,10 @@ class KreaImageEditBridgeMixin:
             record["editOperation"] = "image-edit"
             record["provider"] = "krea2-ostris-edit"
             record["inputImageName"] = source_name
-            if reference_name and reference_role:
-                record["referenceImageName"] = reference_name
-                record["referenceRole"] = reference_role
+            if normalized_references:
+                record["referenceImages"] = normalized_references
+                record["referenceImageName"] = normalized_references[0]["name"]
+                record["referenceRole"] = normalized_references[0]["role"]
             record.pop("denoise", None)
             if "Width" in result and "Height" in result:
                 record["width"] = int(result["Width"])
@@ -342,17 +393,24 @@ class KreaImageEditBridgeMixin:
         source_name = str(source.get("name") or "source-image") if isinstance(source, dict) else "source-image"
         staged = base.stage_input_image(self.repo_root, source)
 
-        reference_name: str | None = None
-        reference_role: str | None = None
-        staged_reference: Path | None = None
-        if isinstance(references, list) and references:
-            reference = references[0]
-            if isinstance(reference, dict):
-                reference_role = str(reference.get("role") or "").lower() or None
+        staged_references: list[dict[str, Any]] = []
+        metadata_references: list[dict[str, str]] = []
+        if isinstance(references, list):
+            for index, reference in enumerate(references[:2], start=1):
+                if not isinstance(reference, dict):
+                    continue
+                role = str(reference.get("role") or "").lower()
                 reference_image = reference.get("image")
-                if isinstance(reference_image, dict):
-                    reference_name = str(reference_image.get("name") or "reference-image")
-                    staged_reference = base.stage_input_image(self.repo_root, reference_image)
+                if not isinstance(reference_image, dict):
+                    continue
+                original_name = str(reference_image.get("name") or f"reference-{index}")
+                staged_reference = base.stage_input_image(self.repo_root, reference_image)
+                staged_references.append({
+                    "path": staged_reference,
+                    "name": staged_reference.name,
+                    "role": role,
+                })
+                metadata_references.append({"name": original_name, "role": role})
 
         clean = dict(request)
         clean["mode"] = "txt2img"
@@ -360,29 +418,33 @@ class KreaImageEditBridgeMixin:
         clean.pop("denoise", None)
         clean.pop("control", None)
         clean.pop("references", None)
-        if staged_reference is not None and reference_role:
-            clean["prompt"] = self._compose_reference_prompt(str(clean.get("prompt") or ""), reference_role)
+        if staged_references:
+            clean["prompt"] = self._compose_reference_prompt(
+                str(clean.get("prompt") or ""),
+                [item["role"] for item in staged_references],
+            )
 
         self._stableamd_krea_edit_context.value = {
             "image_name": staged.name,
             "source_name": source_name,
-            "reference_name": staged_reference.name if staged_reference is not None else None,
-            "reference_role": reference_role,
+            "references": [
+                {"name": item["name"], "role": item["role"]}
+                for item in staged_references
+            ],
         }
         try:
             result = super()._generate_krea2_turbo(clean, selected)
         finally:
             self._stableamd_krea_edit_context.value = None
             staged.unlink(missing_ok=True)
-            if staged_reference is not None:
-                staged_reference.unlink(missing_ok=True)
+            for item in staged_references:
+                item["path"].unlink(missing_ok=True)
 
         if not isinstance(result, dict):
             raise base.StableAmdBridgeError("Krea 2 Image Edit provider did not return a result object.")
         self._persist_krea_image_edit_metadata(
             result,
             source_name,
-            reference_name=reference_name,
-            reference_role=reference_role,
+            references=metadata_references,
         )
         return result
