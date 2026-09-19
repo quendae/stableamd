@@ -36,23 +36,27 @@ class StableAmdKreaReferenceEditTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
-    def test_final_api_accepts_exactly_one_valid_reference_for_img2img(self):
+    def test_final_api_accepts_up_to_two_valid_references_for_img2img(self):
         api = server.StableAmdApi(object())
         request = {
             "prompt": "change the sofa",
             "mode": "img2img",
             "inputImage": tiny_png("source.png"),
-            "references": [{"role": "style", "image": tiny_png("style.png")}],
+            "references": [
+                {"role": "style", "image": tiny_png("style.png")},
+                {"role": "material", "image": tiny_png("material.png")},
+            ],
         }
         validated = api._validate_generation(request)
-        self.assertEqual(validated["references"][0]["role"], "style")
+        self.assertEqual([item["role"] for item in validated["references"]], ["style", "material"])
 
-        with self.assertRaisesRegex(ValueError, "at most 1"):
+        with self.assertRaisesRegex(ValueError, "at most 2"):
             api._validate_generation({
                 **request,
                 "references": [
                     {"role": "style", "image": tiny_png("a.png")},
                     {"role": "material", "image": tiny_png("b.png")},
+                    {"role": "content", "image": tiny_png("c.png")},
                 ],
             })
         with self.assertRaisesRegex(ValueError, "style, material, or content"):
@@ -61,10 +65,10 @@ class StableAmdKreaReferenceEditTests(unittest.TestCase):
                 "references": [{"role": "other", "image": tiny_png("bad.png")}],
             })
 
-    def test_final_server_expands_request_budget_for_source_plus_reference(self):
-        self.assertGreaterEqual(server.base.MAX_REQUEST_BYTES, 64 * 1024 * 1024)
+    def test_final_server_expands_request_budget_for_source_plus_two_references(self):
+        self.assertGreaterEqual(server.base.MAX_REQUEST_BYTES, 96 * 1024 * 1024)
 
-    def test_krea_edit_policy_advertises_one_reference_roles(self):
+    def test_krea_edit_policy_advertises_two_reference_roles(self):
         module = self._load_edit_module()
 
         class Parent:
@@ -84,10 +88,10 @@ class StableAmdKreaReferenceEditTests(unittest.TestCase):
             pass
 
         policy = Bridge().model_support()["models"][0]["editPolicy"]
-        self.assertEqual(policy["referenceImages"]["max"], 1)
+        self.assertEqual(policy["referenceImages"]["max"], 2)
         self.assertEqual(policy["referenceImages"]["roles"], ["style", "material", "content"])
 
-    def test_krea_edit_graph_attaches_second_reference_as_image2(self):
+    def test_krea_edit_graph_attaches_two_references_as_image2_and_image3(self):
         module = self._load_edit_module()
 
         class Parent:
@@ -110,38 +114,75 @@ class StableAmdKreaReferenceEditTests(unittest.TestCase):
             workflow,
             {
                 "image_name": "source.png",
-                "reference_name": "reference.png",
-                "reference_role": "style",
+                "references": [
+                    {"name": "style.png", "role": "style"},
+                    {"name": "material.png", "role": "material"},
+                ],
             },
         )
         self.assertEqual(result["89"]["class_type"], "LoadImage")
-        self.assertEqual(result["89"]["inputs"]["image"], "reference.png")
+        self.assertEqual(result["89"]["inputs"]["image"], "style.png")
+        self.assertEqual(result["90"]["class_type"], "LoadImage")
+        self.assertEqual(result["90"]["inputs"]["image"], "material.png")
         self.assertEqual(result["85"]["inputs"]["image2"], ["89", 0])
+        self.assertEqual(result["85"]["inputs"]["image3"], ["90", 0])
         self.assertEqual(result["86"]["inputs"]["image2"], ["89", 0])
+        self.assertEqual(result["86"]["inputs"]["image3"], ["90", 0])
 
-    def test_reference_role_builds_picture_2_instruction(self):
+    def test_reference_roles_build_picture_2_and_picture_3_instruction(self):
         module = self._load_edit_module()
         compose = module.KreaImageEditBridgeMixin._compose_reference_prompt
-        style = compose("make the sofa blue", "style")
-        material = compose("replace the sofa fabric", "material")
-        content = compose("add a lamp", "content")
-        self.assertIn("Picture 1", style)
-        self.assertIn("Picture 2", style)
-        self.assertIn("style reference", style)
-        self.assertIn("material or texture reference", material)
-        self.assertIn("content reference", content)
-        self.assertTrue(style.endswith("make the sofa blue"))
+        prompt = compose("replace the sofa covering", ["style", "material"])
+        self.assertIn("Picture 1", prompt)
+        self.assertIn("Picture 2", prompt)
+        self.assertIn("style reference", prompt)
+        self.assertIn("Picture 3", prompt)
+        self.assertIn("material or texture reference", prompt)
+        self.assertTrue(prompt.endswith("replace the sofa covering"))
 
-    def test_frontend_exposes_one_reference_role_and_upload_contract(self):
+    def test_result_metadata_records_both_reference_names_and_roles(self):
+        module = self._load_edit_module()
+
+        class Parent:
+            pass
+
+        class Bridge(module.KreaImageEditBridgeMixin, Parent):
+            pass
+
+        bridge = object.__new__(Bridge)
+        result = {}
+        bridge._persist_krea_image_edit_metadata(
+            result,
+            "source.png",
+            references=[
+                {"name": "style.png", "role": "style"},
+                {"name": "material.png", "role": "material"},
+            ],
+        )
+        self.assertEqual(
+            result["ReferenceImages"],
+            [
+                {"name": "style.png", "role": "style"},
+                {"name": "material.png", "role": "material"},
+            ],
+        )
+
+    def test_frontend_exposes_second_reference_role_and_upload_contract(self):
         source = FRONTEND_PATH.read_text(encoding="utf-8")
         self.assertIn('id="krea-reference-enabled"', source)
         self.assertIn('id="krea-reference-role"', source)
         self.assertIn('id="krea-reference-image"', source)
+        self.assertIn('id="krea-reference-2-enabled"', source)
+        self.assertIn('id="krea-reference-role-2"', source)
+        self.assertIn('id="krea-reference-image-2"', source)
+        self.assertIn('Reference 1', source)
+        self.assertIn('Reference 2', source)
         self.assertIn('value="style"', source)
         self.assertIn('value="material"', source)
         self.assertIn('value="content"', source)
         self.assertIn("readReferenceImage", source)
         self.assertIn("payload.references", source)
+        self.assertIn("references.push", source)
 
 
 if __name__ == "__main__":
