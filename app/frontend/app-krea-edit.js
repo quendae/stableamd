@@ -88,6 +88,10 @@
     return document.querySelector("#krea-reference-enabled")?.checked === true;
   }
 
+  function reference2Enabled() {
+    return document.querySelector("#krea-reference-2-enabled")?.checked === true;
+  }
+
   // app-v02 owns the generic img2img transport. Load this adapter before it so
   // v02 captures this API wrapper as its base transport: v02 can collect the
   // source image normally, then this layer removes classic denoise semantics
@@ -104,9 +108,17 @@
           payload.prompt = materialInstruction;
         }
         if (referenceEnabled()) {
+          const references = [];
           const role = String(document.querySelector("#krea-reference-role")?.value || "style");
           const file = document.querySelector("#krea-reference-image")?.files?.[0];
-          payload.references = [{ role, image: await readReferenceImage(file) }];
+          references.push({ role, image: await readReferenceImage(file) });
+
+          if (reference2Enabled()) {
+            const role2 = String(document.querySelector("#krea-reference-role-2")?.value || "material");
+            const file2 = document.querySelector("#krea-reference-image-2")?.files?.[0];
+            references.push({ role: role2, image: await readReferenceImage(file2) });
+          }
+          payload.references = references;
         } else {
           delete payload.references;
         }
@@ -162,22 +174,46 @@
         <div class="field">
           <label class="checkbox-field">
             <input id="krea-reference-enabled" type="checkbox">
-            <span>Use one reference image</span>
+            <span>Use reference images</span>
           </label>
           <div id="krea-reference-controls" hidden>
-            <label class="field">
-              <span>Reference role</span>
-              <select id="krea-reference-role">
-                <option value="style">Style</option>
-                <option value="material">Material</option>
-                <option value="content">Content</option>
-              </select>
+            <div class="model-root-card">
+              <strong>Reference 1</strong>
+              <label class="field">
+                <span>Reference 1 role</span>
+                <select id="krea-reference-role">
+                  <option value="style">Style</option>
+                  <option value="material">Material</option>
+                  <option value="content">Content</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Reference 1 image · PNG, JPEG or WebP · max 20 MiB</span>
+                <input id="krea-reference-image" type="file" accept="image/png,image/jpeg,image/webp">
+              </label>
+              <p id="krea-reference-hint" class="history-model">Picture 1 remains the source image. Picture 2 is used according to the selected reference role.</p>
+            </div>
+
+            <label class="checkbox-field">
+              <input id="krea-reference-2-enabled" type="checkbox">
+              <span>Use Reference 2</span>
             </label>
-            <label class="field">
-              <span>Reference image · PNG, JPEG or WebP · max 20 MiB</span>
-              <input id="krea-reference-image" type="file" accept="image/png,image/jpeg,image/webp">
-            </label>
-            <p id="krea-reference-hint" class="history-model">Picture 1 remains the source image. Picture 2 is used according to the selected reference role.</p>
+            <div id="krea-reference-2-controls" class="model-root-card" hidden>
+              <strong>Reference 2</strong>
+              <label class="field">
+                <span>Reference 2 role</span>
+                <select id="krea-reference-role-2">
+                  <option value="material">Material</option>
+                  <option value="style">Style</option>
+                  <option value="content">Content</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Reference 2 image · PNG, JPEG or WebP · max 20 MiB</span>
+                <input id="krea-reference-image-2" type="file" accept="image/png,image/jpeg,image/webp">
+              </label>
+              <p id="krea-reference-hint-2" class="history-model">Picture 3 is used according to the selected second reference role.</p>
+            </div>
           </div>
         </div>
       </div>`;
@@ -185,6 +221,17 @@
     if (hint) hint.before(panel);
     else controls.append(panel);
     return panel;
+  }
+
+  function syncReferenceHint({ inputId, roleId, hintId, pictureNumber }) {
+    const input = document.querySelector(inputId);
+    const role = String(document.querySelector(roleId)?.value || "style");
+    const hint = document.querySelector(hintId);
+    if (!hint) return;
+    const file = input?.files?.[0];
+    hint.textContent = file
+      ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Picture ${pictureNumber} will be used as the ${role} reference.`
+      : `Choose Picture ${pictureNumber} to use as the ${role} reference.`;
   }
 
   function syncKreaEditUi() {
@@ -221,13 +268,27 @@
     const referenceInput = document.querySelector("#krea-reference-image");
     if (referenceControls) referenceControls.hidden = !referenceOn;
     if (referenceInput) referenceInput.required = referenceOn;
-    const referenceHint = document.querySelector("#krea-reference-hint");
-    if (referenceHint && referenceOn) {
-      const role = String(document.querySelector("#krea-reference-role")?.value || "style");
-      const file = referenceInput?.files?.[0];
-      referenceHint.textContent = file
-        ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Picture 2 will be used as the ${role} reference.`
-        : `Choose Picture 2 to use as the ${role} reference.`;
+    if (referenceOn) {
+      syncReferenceHint({
+        inputId: "#krea-reference-image",
+        roleId: "#krea-reference-role",
+        hintId: "#krea-reference-hint",
+        pictureNumber: 2,
+      });
+    }
+
+    const reference2On = referenceOn && reference2Enabled();
+    const reference2Controls = document.querySelector("#krea-reference-2-controls");
+    const reference2Input = document.querySelector("#krea-reference-image-2");
+    if (reference2Controls) reference2Controls.hidden = !reference2On;
+    if (reference2Input) reference2Input.required = reference2On;
+    if (reference2On) {
+      syncReferenceHint({
+        inputId: "#krea-reference-image-2",
+        roleId: "#krea-reference-role-2",
+        hintId: "#krea-reference-hint-2",
+        pictureNumber: 3,
+      });
     }
 
     const prompt = document.querySelector("#prompt");
@@ -284,6 +345,9 @@
       document.querySelector("#krea-reference-enabled")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-reference-role")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-reference-image")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-reference-2-enabled")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-reference-role-2")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-reference-image-2")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       new MutationObserver(() => queueMicrotask(syncKreaEditUi)).observe(model, { childList: true });
     }
     syncKreaEditUi();
