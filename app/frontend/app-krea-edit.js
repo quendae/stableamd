@@ -20,6 +20,7 @@
     { id: "side", label: "Side" },
     { id: "back", label: "Back" },
   ];
+  const CHARACTER_SHEET_IDENTITY_REFINE_VIEWS = new Set(["front", "three-quarter", "side"]);
   const CHARACTER_SHEET_JOB_POLL_MS = 1000;
 
   function modelFamily(modelId = "") {
@@ -122,11 +123,15 @@
     return Math.floor(Math.random() * 0x100000000);
   }
 
-  function updateCharacterSheetProgress(index, view) {
+  function updateCharacterSheetProgress(index, view, phase = "base") {
     const title = document.querySelector("#result-empty strong");
     const detail = document.querySelector("#result-empty p");
     if (title) title.textContent = `Character sheet · ${index + 1}/${CHARACTER_SHEET_VIEWS.length}`;
-    if (detail) detail.textContent = `Generating ${view.label}. Each view is rendered separately at full quality.`;
+    if (detail) {
+      detail.textContent = phase === "identity-refine"
+        ? `Refining ${view.label} against the original face and FACE anchor.`
+        : `Generating ${view.label}. Each view is rendered separately at full quality.`;
+    }
   }
 
   function sleepCharacterSheet(ms) {
@@ -151,6 +156,12 @@
     }
   }
 
+  async function submitCharacterSheetJob(path, options, payload) {
+    const submitted = await baseKreaEditApi(path, { ...options, body: JSON.stringify(payload) });
+    const jobId = String(submitted?.jobId || "");
+    return jobId ? waitForCharacterSheetGenerationJob(jobId) : submitted;
+  }
+
   function compactCharacterSheetItems(items) {
     return items.map((item, index) => ({
       CharacterSheetView: String(getValue(item, "CharacterSheetView", "characterSheetView") || CHARACTER_SHEET_VIEWS[index]?.id || ""),
@@ -170,7 +181,7 @@
     const title = document.querySelector("#result-empty strong");
     const detail = document.querySelector("#result-empty p");
     if (title) title.textContent = "Character sheet · composing";
-    if (detail) detail.textContent = "Combining the five full-quality views into one persisted character-sheet PNG.";
+    if (detail) detail.textContent = "Combining the five identity-anchored views into one persisted character-sheet PNG.";
   }
 
   // app-v02 owns the generic img2img transport. Load this adapter before it so
@@ -191,28 +202,55 @@
           const requestedFraming = selectedCharacterSheetFraming();
           const sharedSeed = characterSheetSharedSeed(payload);
           const items = [];
+          let faceAnchorPath = "";
+
           for (const view of CHARACTER_SHEET_VIEWS) {
-            updateCharacterSheetProgress(items.length, view);
+            updateCharacterSheetProgress(items.length, view, "base");
             const viewPayload = {
               ...payload,
               editTask: "character-sheet",
               characterSheetView: view.id,
               characterSheetFraming: requestedFraming,
+              characterSheetPhase: "base",
               prompt: identityPrompt,
               seed: sharedSeed,
             };
             delete viewPayload.width;
             delete viewPayload.height;
             viewPayload.asyncJob = true;
-            const submitted = await baseKreaEditApi(path, { ...options, body: JSON.stringify(viewPayload) });
-            const jobId = String(submitted?.jobId || "");
-            const result = jobId
-              ? await waitForCharacterSheetGenerationJob(jobId)
-              : submitted;
-            const imagePath = String(getValue(result, "ImagePath", "imagePath") || "");
+            let result = await submitCharacterSheetJob(path, options, viewPayload);
+            let imagePath = String(getValue(result, "ImagePath", "imagePath") || "");
             if (!imagePath) {
               throw new Error("Character Sheet child generation did not return an image path.");
             }
+
+            if (view.id === "face-close-up") {
+              faceAnchorPath = imagePath;
+            } else if (faceAnchorPath && CHARACTER_SHEET_IDENTITY_REFINE_VIEWS.has(view.id)) {
+              updateCharacterSheetProgress(items.length, view, "identity-refine");
+              const baseHistoryPath = String(getValue(result, "HistoryPath", "historyPath") || "");
+              const refinePayload = {
+                ...payload,
+                editTask: "character-sheet",
+                characterSheetView: view.id,
+                characterSheetFraming: requestedFraming,
+                characterSheetPhase: "identity-refine",
+                characterSheetAnchorImagePath: faceAnchorPath,
+                characterSheetBaseImagePath: imagePath,
+                characterSheetBaseHistoryPath: baseHistoryPath,
+                prompt: identityPrompt,
+                seed: sharedSeed,
+              };
+              delete refinePayload.width;
+              delete refinePayload.height;
+              refinePayload.asyncJob = true;
+              result = await submitCharacterSheetJob(path, options, refinePayload);
+              imagePath = String(getValue(result, "ImagePath", "imagePath") || "");
+              if (!imagePath) {
+                throw new Error(`Character Sheet identity refinement for ${view.label} did not return an image path.`);
+              }
+            }
+
             items.push({
               ...result,
               CharacterSheetView: view.id,
@@ -389,7 +427,7 @@
               <option value="full-body">Full body · head to toe</option>
             </select>
           </label>
-          <p class="history-model">Identity-focused mode uses one shared seed for all five generations and, when DWPose finds a face, adds an automatic tight face crop as Picture 2 while Picture 1 supplies clothing and body proportions. Face is rendered at 1024 × 1024. Portrait views use 896 × 1152; full-body views use 832 × 1216. The final 3 × 2 sheet is composed locally.</p>
+          <p class="history-model">Strict identity mode first renders FACE as an anchor. Front, 3/4 and Side are then rendered normally and passed through a second identity-refinement edit using the original tight face crop plus the FACE anchor. Back stays a single rear-view pass so no extra face is introduced. Krea memory is released between jobs; the final 3 × 2 sheet is composed locally.</p>
         </div>
         <div id="krea-reference-section" class="field">
           <label class="checkbox-field">
@@ -559,8 +597,8 @@
       const file = input?.files?.[0];
       if (characterSheet) {
         hint.textContent = file
-          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Identity-focused Character Sheet uses a shared seed and an automatic face crop when available, then persists one final composite PNG.`
-          : "Choose one clear character image. Auto framing uses DWPose for people; when a face is found, StableAMD adds a private face identity reference for the body views and uses one seed across all five generations.";
+          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Strict identity Character Sheet uses the FACE result as an anchor and performs a second face-focused edit on Front / 3/4 / Side before composing the final PNG.`
+          : "Choose one clear character image. FACE becomes the generated identity anchor; Front / 3/4 / Side then receive a second refinement pass against the original face crop and that anchor.";
       } else if (material) {
         hint.textContent = file
           ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Material / texture replacement uses the source as the preserved scene reference.`
