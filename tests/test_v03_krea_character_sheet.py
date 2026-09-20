@@ -12,7 +12,6 @@ FRONTEND = ROOT / "app" / "frontend"
 KREA_EDIT_PATH = BACKEND / "stableamd_v03_krea_edit.py"
 FINAL_SERVER_PATH = BACKEND / "stableamd_v03_edit_server.py"
 KREA_FRONTEND_PATH = FRONTEND / "app-krea-edit.js"
-APP_FRONTEND_PATH = FRONTEND / "app.js"
 
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
@@ -116,7 +115,7 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
         self.assertNotIn('value="character-turnaround"', source)
 
     def test_generation_result_renders_character_sheet_as_grid(self):
-        source = APP_FRONTEND_PATH.read_text(encoding="utf-8")
+        source = KREA_FRONTEND_PATH.read_text(encoding="utf-8")
         self.assertIn("CharacterSheetItems", source)
         self.assertIn("character-sheet-grid", source)
         self.assertIn("character-sheet-item", source)
