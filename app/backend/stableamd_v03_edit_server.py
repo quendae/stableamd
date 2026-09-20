@@ -270,15 +270,30 @@ class StableAmdApi(
     product.StableAmdApi,
 ):
     _generation_fields = set(product.StableAmdApi._generation_fields) | {
-        "control", "asyncJob", "references", "editTask", "characterSheetView"
+        "control", "asyncJob", "references", "editTask", "characterSheetView", "characterSheetFraming"
     }
     _reference_roles = {"style", "material", "content"}
     _edit_tasks = {"character-turnaround", "character-sheet"}
     _character_sheet_views = {"face-close-up", "front", "three-quarter", "side", "back"}
+    _character_sheet_framing = {"auto", "portrait", "full-body"}
 
     def dispatch(self, method: str, target: str, body: bytes | None = None):
-        if method.upper() == "GET" and target.split("?", 1)[0] == "/api/comfyui-runtime":
+        path = target.split("?", 1)[0]
+        if method.upper() == "GET" and path == "/api/comfyui-runtime":
             return 200, self.bridge.comfyui_runtime()
+        if method.upper() == "POST" and path == "/api/character-sheet/compose":
+            try:
+                request = self._decode_json(body)
+                unsupported = sorted(set(request) - {"items", "prompt", "sourceFraming", "requestedFraming"})
+                if unsupported:
+                    raise ValueError("Unsupported Character Sheet compose field(s): " + ", ".join(unsupported))
+                if "items" not in request:
+                    raise ValueError("Character Sheet composition requires items.")
+                return 200, self.bridge.compose_character_sheet(request)
+            except ValueError as exc:
+                return 400, {"error": str(exc)}
+            except base.StableAmdBridgeError as exc:
+                return 409, {"error": str(exc)}
         return super().dispatch(method, target, body)
 
     def _validate_generation(self, request):
@@ -286,11 +301,13 @@ class StableAmdApi(
         references = request.get("references")
         edit_task = request.get("editTask")
         character_sheet_view = request.get("characterSheetView")
+        character_sheet_framing = request.get("characterSheetFraming")
 
         clean = dict(request)
         clean.pop("references", None)
         clean.pop("editTask", None)
         clean.pop("characterSheetView", None)
+        clean.pop("characterSheetFraming", None)
         validated = super()._validate_generation(clean)
 
         if edit_task is not None:
@@ -306,8 +323,15 @@ class StableAmdApi(
                     "characterSheetView must be face-close-up, front, three-quarter, side, or back for character-sheet."
                 )
             validated["characterSheetView"] = character_sheet_view
-        elif character_sheet_view is not None:
-            raise ValueError("characterSheetView is valid only when editTask is character-sheet.")
+            framing = "auto" if character_sheet_framing is None else character_sheet_framing
+            if not isinstance(framing, str) or framing not in self._character_sheet_framing:
+                raise ValueError("characterSheetFraming must be auto, portrait, or full-body for character-sheet.")
+            validated["characterSheetFraming"] = framing
+        else:
+            if character_sheet_view is not None:
+                raise ValueError("characterSheetView is valid only when editTask is character-sheet.")
+            if character_sheet_framing is not None:
+                raise ValueError("characterSheetFraming is valid only when editTask is character-sheet.")
 
         if not has_references:
             return validated
