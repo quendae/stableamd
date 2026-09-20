@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +94,11 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
         self.assertEqual(size("front", "full-body"), (832, 1216))
 
     def test_auto_framing_uses_dwpose_visibility_for_portrait_vs_full_body(self):
+        try:
+            import numpy  # noqa: F401
+        except ImportError:
+            self.skipTest("NumPy is supplied by the managed DWPose runtime, not generic API CI.")
+
         analyzer = character_sheet.CharacterSheetBridgeMixin._analyze_dwpose_candidates
         points = [[[0.0, 0.0] for _ in range(134)]]
         scores = [[0.0 for _ in range(134)]]
@@ -110,7 +118,17 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
         self.assertTrue(full_body["detected"])
 
     def test_subject_crop_matches_target_ratio_without_stretching(self):
-        source = Image.new("RGB", (1500, 1000), "white")
+        class FakeImage:
+            def __init__(self, width: int, height: int):
+                self.width = width
+                self.height = height
+                self.size = (width, height)
+
+            def crop(self, box):
+                left, top, right, bottom = box
+                return FakeImage(int(right - left), int(bottom - top))
+
+        source = FakeImage(1500, 1000)
         cropper = character_sheet.CharacterSheetBridgeMixin._crop_reference_to_subject
         cropped = cropper(source, (900, 100, 1450, 950), 896, 1152, margin=0.10)
         self.assertGreater(cropped.width, 0)
@@ -125,6 +143,7 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
         self.assertEqual(height % 16, 0)
         self.assertAlmostEqual(width / height, 1.5, delta=0.04)
 
+    @unittest.skipIf(Image is None, "Pillow is supplied by the managed StableAMD runtime, not generic API CI.")
     def test_composite_creates_one_png_and_hides_child_history_after_success(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir)
