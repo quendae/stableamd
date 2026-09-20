@@ -20,6 +20,7 @@
     { id: "side", label: "Side" },
     { id: "back", label: "Back" },
   ];
+  const CHARACTER_SHEET_JOB_POLL_MS = 1000;
 
   function modelFamily(modelId = "") {
     const id = String(modelId || document.querySelector("#model-select")?.value || "");
@@ -117,6 +118,28 @@
     if (detail) detail.textContent = `Generating ${view.label}. Each view is rendered separately at full quality.`;
   }
 
+  function sleepCharacterSheet(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function waitForCharacterSheetGenerationJob(jobId) {
+    const encoded = encodeURIComponent(jobId);
+    for (;;) {
+      const status = await baseKreaEditApi(`/api/generation-jobs/${encoded}`);
+      const state = String(status?.status || "").toLowerCase();
+      if (state === "completed") {
+        return baseKreaEditApi(`/api/generation-jobs/${encoded}/result`);
+      }
+      if (state === "failed") {
+        throw new Error(status?.error || "Character Sheet child generation failed.");
+      }
+      if (state !== "queued" && state !== "running") {
+        throw new Error(`Character Sheet child generation entered an unknown state: ${state || "missing"}.`);
+      }
+      await sleepCharacterSheet(CHARACTER_SHEET_JOB_POLL_MS);
+    }
+  }
+
   function compactCharacterSheetItems(items) {
     return items.map((item, index) => ({
       CharacterSheetView: String(getValue(item, "CharacterSheetView", "characterSheetView") || CHARACTER_SHEET_VIEWS[index]?.id || ""),
@@ -167,7 +190,16 @@
             };
             delete viewPayload.width;
             delete viewPayload.height;
-            const result = await baseKreaEditApi(path, { ...options, body: JSON.stringify(viewPayload) });
+            viewPayload.asyncJob = true;
+            const submitted = await baseKreaEditApi(path, { ...options, body: JSON.stringify(viewPayload) });
+            const jobId = String(submitted?.jobId || "");
+            const result = jobId
+              ? await waitForCharacterSheetGenerationJob(jobId)
+              : submitted;
+            const imagePath = String(getValue(result, "ImagePath", "imagePath") || "");
+            if (!imagePath) {
+              throw new Error("Character Sheet child generation did not return an image path.");
+            }
             items.push({
               ...result,
               CharacterSheetView: view.id,
