@@ -32,6 +32,10 @@
     return document.querySelector("#krea-edit-task")?.value === "material-replace";
   }
 
+  function isTurnaroundTask() {
+    return document.querySelector("#krea-edit-task")?.value === "character-turnaround";
+  }
+
   function selectedMaterialDescriptor() {
     const preset = String(document.querySelector("#krea-material-preset")?.value || "leather");
     if (preset === "custom") {
@@ -49,6 +53,12 @@
 
     const base = `Replace the material or texture of ${target} with ${material}. Preserve the object's shape, geometry, position, lighting, scene composition, and all unrelated areas.`;
     return additional ? `${base} ${additional}` : base;
+  }
+
+  function buildCharacterTurnaroundInstruction() {
+    const additional = String(document.querySelector("#prompt")?.value || "").trim();
+    const base = "Create a single character turnaround sheet using Picture 1 as the identity reference. Show the same character four times from left to right: front view, three-quarter view, side profile, and back view. Keep the character identity, face, hairstyle, clothing, accessories, body proportions, colors, and materials consistent in every view. Show the full body from head to toe at equal scale, aligned to a common ground line, with a neutral relaxed pose and consistent camera height. Use a clean neutral studio background with even lighting. Do not add text, labels, borders, extra characters, props, cropped body parts, or alternate outfits.";
+    return additional ? `${base} Additional character notes: ${additional}` : base;
   }
 
   function readReferenceImage(file) {
@@ -103,24 +113,34 @@
       catch { payload = {}; }
       if (isKreaEditRequest(payload)) {
         delete payload.denoise;
-        if (isMaterialTask()) {
-          const materialInstruction = buildMaterialInstruction();
-          payload.prompt = materialInstruction;
-        }
-        if (referenceEnabled()) {
-          const references = [];
-          const role = String(document.querySelector("#krea-reference-role")?.value || "style");
-          const file = document.querySelector("#krea-reference-image")?.files?.[0];
-          references.push({ role, image: await readReferenceImage(file) });
-
-          if (reference2Enabled()) {
-            const role2 = String(document.querySelector("#krea-reference-role-2")?.value || "material");
-            const file2 = document.querySelector("#krea-reference-image-2")?.files?.[0];
-            references.push({ role: role2, image: await readReferenceImage(file2) });
-          }
-          payload.references = references;
-        } else {
+        const turnaround = isTurnaroundTask();
+        if (turnaround) {
+          payload.editTask = "character-turnaround";
+          payload.prompt = buildCharacterTurnaroundInstruction();
+          payload.width = 1536;
+          payload.height = 768;
           delete payload.references;
+        } else {
+          delete payload.editTask;
+          if (isMaterialTask()) {
+            const materialInstruction = buildMaterialInstruction();
+            payload.prompt = materialInstruction;
+          }
+          if (referenceEnabled()) {
+            const references = [];
+            const role = String(document.querySelector("#krea-reference-role")?.value || "style");
+            const file = document.querySelector("#krea-reference-image")?.files?.[0];
+            references.push({ role, image: await readReferenceImage(file) });
+
+            if (reference2Enabled()) {
+              const role2 = String(document.querySelector("#krea-reference-role-2")?.value || "material");
+              const file2 = document.querySelector("#krea-reference-image-2")?.files?.[0];
+              references.push({ role: role2, image: await readReferenceImage(file2) });
+            }
+            payload.references = references;
+          } else {
+            delete payload.references;
+          }
         }
         return baseKreaEditApi(path, { ...options, body: JSON.stringify(payload) });
       }
@@ -145,6 +165,7 @@
           <select id="krea-edit-task">
             <option value="general">General edit</option>
             <option value="material-replace">Material / texture</option>
+            <option value="character-turnaround">Character turnaround</option>
           </select>
         </label>
         <div id="krea-material-controls" hidden>
@@ -171,7 +192,11 @@
           </label>
           <p class="history-model">StableAMD builds a focused replacement instruction and asks Krea to preserve geometry, lighting, composition and unrelated areas.</p>
         </div>
-        <div class="field">
+        <div id="krea-turnaround-controls" class="model-root-card" hidden>
+          <strong>Four-view character sheet</strong>
+          <p class="history-model">Fixed output: 1536 × 768 · front / 3/4 / side / back. The source image is the only identity reference; extra reference images are intentionally disabled for this task.</p>
+        </div>
+        <div id="krea-reference-section" class="field">
           <label class="checkbox-field">
             <input id="krea-reference-enabled" type="checkbox">
             <span>Use reference images</span>
@@ -242,6 +267,7 @@
     const krea = family === "krea2";
     const active = krea && mode.value === "img2img";
     const material = active && isMaterialTask();
+    const turnaround = active && isTurnaroundTask();
     const imageOption = Array.from(mode.options).find((option) => option.value === "img2img");
     if (imageOption && krea) {
       imageOption.textContent = imageOption.disabled
@@ -252,6 +278,8 @@
     if (taskPanel) taskPanel.hidden = !active;
     const materialControls = document.querySelector("#krea-material-controls");
     if (materialControls) materialControls.hidden = !material;
+    const turnaroundControls = document.querySelector("#krea-turnaround-controls");
+    if (turnaroundControls) turnaroundControls.hidden = !turnaround;
 
     const preset = document.querySelector("#krea-material-preset");
     const customField = document.querySelector("#krea-material-custom-field");
@@ -263,7 +291,9 @@
     const target = document.querySelector("#krea-material-target");
     if (target) target.required = Boolean(material);
 
-    const referenceOn = active && referenceEnabled();
+    const referenceSection = document.querySelector("#krea-reference-section");
+    if (referenceSection) referenceSection.hidden = turnaround;
+    const referenceOn = active && !turnaround && referenceEnabled();
     const referenceControls = document.querySelector("#krea-reference-controls");
     const referenceInput = document.querySelector("#krea-reference-image");
     if (referenceControls) referenceControls.hidden = !referenceOn;
@@ -294,20 +324,26 @@
     const prompt = document.querySelector("#prompt");
     const promptLabel = prompt?.closest(".field")?.querySelector(":scope > span");
     if (promptLabel) {
-      promptLabel.textContent = material
-        ? "Additional instruction (optional)"
-        : (active ? "Edit instruction" : "Prompt");
+      promptLabel.textContent = turnaround
+        ? "Additional character notes (optional)"
+        : (material ? "Additional instruction (optional)" : (active ? "Edit instruction" : "Prompt"));
     }
     if (prompt) {
-      prompt.required = !material;
-      prompt.placeholder = material
-        ? "Optional: add color, finish, grain, wear, reflectivity or other details…"
-        : "Describe the image you want to create…";
+      prompt.required = !(material || turnaround);
+      prompt.placeholder = turnaround
+        ? "Optional: preserve a signature accessory, expression, age, costume detail or other identity cue…"
+        : (material
+          ? "Optional: add color, finish, grain, wear, reflectivity or other details…"
+          : "Describe the image you want to create…");
     }
 
     const input = document.querySelector("#input-image");
     const inputLabel = input?.closest(".field")?.querySelector(":scope > span");
-    if (inputLabel && active) inputLabel.textContent = "Source image · PNG, JPEG or WebP · max 20 MiB";
+    if (inputLabel && active) {
+      inputLabel.textContent = turnaround
+        ? "Character reference image · PNG, JPEG or WebP · max 20 MiB"
+        : "Source image · PNG, JPEG or WebP · max 20 MiB";
+    }
 
     const denoise = document.querySelector("#img2img-denoise");
     const denoiseField = denoise?.closest(".field");
@@ -317,7 +353,11 @@
     const hint = document.querySelector("#img2img-source-hint");
     if (hint && active) {
       const file = input?.files?.[0];
-      if (material) {
+      if (turnaround) {
+        hint.textContent = file
+          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Character turnaround will use this image as the identity reference for all four views.`
+          : "Choose one clear character image. StableAMD will create one 1536 × 768 sheet with front / 3/4 / side / back views and consistent framing.";
+      } else if (material) {
         hint.textContent = file
           ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Material / texture replacement uses the source as the preserved scene reference.`
           : "Choose a source image, identify the target object/area and select the replacement material. Additional instruction is optional.";
