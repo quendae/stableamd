@@ -16,13 +16,14 @@ base = kreaedit.base
 
 
 class CharacterSheetBridgeMixin:
-    """Quality-oriented sequential Character Sheet generation for Krea Image Edit.
+    """Identity-focused sequential Character Sheet generation for Krea Image Edit.
 
-    One reference image is reused across five independent generation jobs. Human
-    sources can be framed with the already-managed DWPose runtime; non-human or
-    unrecognized sources fall back to the untouched source framing. The five
-    generated views are finally composed into one persisted PNG without another
-    diffusion pass.
+    A framing-aware body/source reference is reused across five independent
+    generation jobs. When DWPose detects a human face, StableAMD also creates a
+    private face crop and feeds it to Krea as Picture 2 so facial identity gets
+    substantially more reference pixels without asking the user for another
+    image. The five generated views are finally composed into one persisted PNG
+    without another diffusion pass.
     """
 
     _CHARACTER_SHEET_VIEWS = (
@@ -37,11 +38,14 @@ class CharacterSheetBridgeMixin:
     _CHARACTER_SHEET_FACE_SIZE = (1024, 1024)
     _CHARACTER_SHEET_PORTRAIT_SIZE = (896, 1152)
     _CHARACTER_SHEET_FULL_BODY_SIZE = (832, 1216)
+    _CHARACTER_SHEET_IDENTITY_SIZE = (768, 768)
     _CHARACTER_SHEET_DEFAULT_PROMPT = (
-        "Preserve the exact same character from Picture 1: identity, facial features, hairstyle or fur, "
-        "clothing, accessories, body proportions, colors, materials, and art style. Keep the design "
-        "consistent across every generated view. Use a clean neutral studio background with soft even "
-        "lighting. Do not add text, labels, props, alternate outfits, or extra characters."
+        "Preserve the exact same person or character from Picture 1. Treat identity as fixed, not approximate: "
+        "keep face shape, eyes, nose, mouth, age impression, hairstyle or fur, skin or fur tone, clothing, "
+        "accessories, body proportions, colors, materials, and art style consistent across every view. "
+        "Ignore background scenery, landmarks, furniture, statues, and other props from Picture 1. Use a clean "
+        "neutral studio background with soft even lighting. Do not add text, labels, props, alternate outfits, "
+        "extra characters, facial distortions, or identity drift."
     )
     _SCORE_THRESHOLD = 0.20
 
@@ -102,6 +106,14 @@ class CharacterSheetBridgeMixin:
             )
         user_prompt = str(notes or "").strip() or cls._CHARACTER_SHEET_DEFAULT_PROMPT
 
+        identity_prompt = (
+            "Picture 1 is the primary body, clothing, accessories, proportions, colors, and material reference. "
+            "When Picture 2 is present, Picture 2 is the identity reference and is authoritative for facial identity, "
+            "face shape, eyes, nose, mouth, skin tone, age impression, hairstyle or fur, and other head details. "
+            "Do not average the identity with another person or object. Ignore background scenery, landmarks, furniture, "
+            "statues, and other props from Picture 1; they are not part of the character."
+        )
+
         if normalized_view == "face-close-up":
             view_prompt = (
                 "Create a single close-up portrait of the same character, centered and facing the camera. "
@@ -133,8 +145,10 @@ class CharacterSheetBridgeMixin:
                 )
 
         return (
-            f"{user_prompt} Show only one character in the image. {view_prompt} "
-            "Keep camera perspective, character scale, design language, colors, and lighting consistent with the other character-sheet views."
+            f"{user_prompt} {identity_prompt} Show only one character in the image. {view_prompt} "
+            "Keep camera perspective, character scale, design language, colors, and lighting consistent with the other character-sheet views. "
+            "Keep the image clean and photographic or stylistically faithful to the source; avoid duplicate anatomy, smeared textures, "
+            "ghost details, background-object remnants, and malformed accessories."
         )
 
     @classmethod
@@ -314,12 +328,56 @@ class CharacterSheetBridgeMixin:
         right = left + crop_width
         bottom = top + crop_height
 
-        # Round after geometry is fixed; one-pixel corrections keep the intended ratio close.
         left_i = max(0, int(round(left)))
         top_i = max(0, int(round(top)))
         right_i = min(source_width, max(left_i + 1, int(round(right))))
         bottom_i = min(source_height, max(top_i + 1, int(round(bottom))))
         return image.crop((left_i, top_i, right_i, bottom_i))
+
+    @staticmethod
+    def _isolate_reference_subject(
+        image: Any,
+        bbox: tuple[float, float, float, float] | list[float],
+        target_width: int,
+        target_height: int,
+        margin: float = 0.12,
+    ) -> Any:
+        """Crop around the detected subject, then pad instead of widening into scene props."""
+        try:
+            from PIL import Image
+        except Exception as exc:
+            raise base.StableAmdBridgeError("Character Sheet preprocessing requires Pillow.") from exc
+
+        source_width, source_height = image.size
+        x0, y0, x1, y1 = (float(value) for value in bbox)
+        x0 = max(0.0, min(float(source_width), x0))
+        y0 = max(0.0, min(float(source_height), y0))
+        x1 = max(x0 + 1.0, min(float(source_width), x1))
+        y1 = max(y0 + 1.0, min(float(source_height), y1))
+        box_width = x1 - x0
+        box_height = y1 - y0
+        x0 = max(0.0, x0 - box_width * margin)
+        x1 = min(float(source_width), x1 + box_width * margin)
+        y0 = max(0.0, y0 - box_height * margin)
+        y1 = min(float(source_height), y1 + box_height * margin)
+
+        left = max(0, int(math.floor(x0)))
+        top = max(0, int(math.floor(y0)))
+        right = min(source_width, max(left + 1, int(math.ceil(x1))))
+        bottom = min(source_height, max(top + 1, int(math.ceil(y1))))
+        cropped = image.crop((left, top, right, bottom)).convert("RGB")
+
+        scale = min(float(target_width) / float(cropped.width), float(target_height) / float(cropped.height))
+        resized_size = (
+            max(1, int(round(cropped.width * scale))),
+            max(1, int(round(cropped.height * scale))),
+        )
+        resized = cropped.resize(resized_size, Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (target_width, target_height), (242, 242, 242))
+        paste_x = (target_width - resized.width) // 2
+        paste_y = (target_height - resized.height) // 2
+        canvas.paste(resized, (paste_x, paste_y))
+        return canvas
 
     @staticmethod
     def _image_to_payload(image: Any, name: str) -> dict[str, str]:
@@ -330,6 +388,54 @@ class CharacterSheetBridgeMixin:
             "mimeType": "image/png",
             "dataBase64": base64.b64encode(output.getvalue()).decode("ascii"),
         }
+
+    def _prepare_character_sheet_identity_reference(
+        self,
+        source: Any,
+        analysis: dict[str, Any],
+    ) -> dict[str, str] | None:
+        if not bool(analysis.get("detected")):
+            return None
+        try:
+            from PIL import Image
+        except Exception as exc:
+            raise base.StableAmdBridgeError("Character Sheet identity preprocessing requires Pillow.") from exc
+
+        _, image_bytes = base._decode_input_image(source)
+        try:
+            image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        except Exception as exc:
+            raise base.StableAmdBridgeError(f"Character Sheet identity source could not be decoded: {exc}") from exc
+
+        bbox = analysis.get("faceBox")
+        if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+            subject_box = analysis.get("subjectBox")
+            if not (isinstance(subject_box, (list, tuple)) and len(subject_box) == 4):
+                return None
+            sx0, sy0, sx1, sy1 = (float(value) for value in subject_box)
+            subject_width = max(1.0, sx1 - sx0)
+            subject_height = max(1.0, sy1 - sy0)
+            center_x = (sx0 + sx1) / 2.0
+            head_width = max(subject_width * 0.72, subject_height * 0.22)
+            head_height = max(subject_height * 0.34, head_width)
+            bbox = [
+                center_x - head_width / 2.0,
+                sy0,
+                center_x + head_width / 2.0,
+                min(sy1, sy0 + head_height),
+            ]
+
+        identity_width, identity_height = self._CHARACTER_SHEET_IDENTITY_SIZE
+        identity = self._isolate_reference_subject(
+            image,
+            bbox,
+            identity_width,
+            identity_height,
+            margin=0.55,
+        )
+        source_name = str(source.get("name") or "character-reference") if isinstance(source, dict) else "character-reference"
+        safe_stem = Path(source_name).stem[:64] or "character-reference"
+        return self._image_to_payload(identity, f"{safe_stem}-identity-face.png")
 
     def _prepare_character_sheet_reference(
         self,
@@ -363,14 +469,14 @@ class CharacterSheetBridgeMixin:
         if bool(analysis.get("detected")):
             if view == "face-close-up":
                 crop_box = analysis.get("faceBox") or analysis.get("subjectBox")
-                margin = 0.75
+                margin = 0.55
             elif resolved_framing in {"portrait", "full-body"}:
                 crop_box = analysis.get("subjectBox")
-                margin = 0.28 if resolved_framing == "portrait" else 0.16
+                margin = 0.14 if resolved_framing == "portrait" else 0.08
 
         prepared = image
         if isinstance(crop_box, (list, tuple)) and len(crop_box) == 4:
-            prepared = self._crop_reference_to_subject(image, crop_box, width, height, margin=margin)
+            prepared = self._isolate_reference_subject(image, crop_box, width, height, margin=margin)
 
         safe_stem = Path(source_name).stem[:64] or "character-reference"
         payload = self._image_to_payload(prepared, f"{safe_stem}-{view}-reference.png")
@@ -379,7 +485,7 @@ class CharacterSheetBridgeMixin:
         enriched["resolvedFraming"] = resolved_framing
         enriched["referenceSize"] = [prepared.width, prepared.height]
         enriched["outputSize"] = [width, height]
-        enriched["referenceCropped"] = prepared.size != image.size
+        enriched["referenceCropped"] = prepared.size != image.size or bool(crop_box)
         return payload, resolved_framing, enriched, width, height
 
     def model_support(self) -> dict[str, Any]:
@@ -402,6 +508,8 @@ class CharacterSheetBridgeMixin:
                 "masked": False,
                 "sourceSizeOutput": False,
                 "generationMode": "sequential",
+                "identityMode": "face-plus-source",
+                "identityReference": "auto-face-crop",
                 "views": list(self._CHARACTER_SHEET_VIEWS),
                 "framingModes": list(self._CHARACTER_SHEET_FRAMING_MODES),
                 "defaultFraming": "auto",
@@ -424,6 +532,7 @@ class CharacterSheetBridgeMixin:
         width: int,
         height: int,
         analysis: dict[str, Any],
+        identity_reference: bool = False,
     ) -> None:
         result["EditOperation"] = "character-sheet-view"
         result["CharacterSheetView"] = view
@@ -434,6 +543,8 @@ class CharacterSheetBridgeMixin:
         result["CharacterSheetHeight"] = height
         result["CharacterSheetReferenceCropped"] = bool(analysis.get("referenceCropped"))
         result["CharacterSheetSubjectDetected"] = bool(analysis.get("detected"))
+        result["CharacterSheetIdentityMode"] = "face-plus-source"
+        result["CharacterSheetIdentityReference"] = bool(identity_reference)
 
         raw_history = str(result.get("HistoryPath") or "").strip()
         if not raw_history:
@@ -459,6 +570,8 @@ class CharacterSheetBridgeMixin:
                 "characterSheetSubjectBox": analysis.get("subjectBox"),
                 "characterSheetFaceBox": analysis.get("faceBox"),
                 "characterSheetReferenceSize": analysis.get("referenceSize"),
+                "characterSheetIdentityMode": "face-plus-source",
+                "characterSheetIdentityReference": bool(identity_reference),
             })
             temporary = history_path.with_suffix(history_path.suffix + ".tmp-character-sheet")
             temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -578,6 +691,7 @@ class CharacterSheetBridgeMixin:
                 "width": item.get("Width") or item.get("width") or item.get("CharacterSheetWidth"),
                 "height": item.get("Height") or item.get("height") or item.get("CharacterSheetHeight"),
                 "sourceFraming": item.get("CharacterSheetSourceFraming") or item.get("characterSheetSourceFraming"),
+                "identityReference": bool(item.get("CharacterSheetIdentityReference") or item.get("characterSheetIdentityReference")),
             })
 
         output_root = (self.repo_root / ".runtime" / "stableamd" / "output").resolve()
@@ -597,6 +711,7 @@ class CharacterSheetBridgeMixin:
         requested_framing = str(request.get("requestedFraming") or "auto")
         source_framing = str(request.get("sourceFraming") or "source")
         created_at = datetime.now(timezone.utc).isoformat()
+        shared_seed = first.get("Seed") if "Seed" in first else first.get("seed")
         record = {
             "schemaVersion": 3,
             "createdAtUtc": created_at,
@@ -609,13 +724,14 @@ class CharacterSheetBridgeMixin:
             "modelName": str(first.get("ModelName") or first.get("modelName") or "Krea 2 Turbo"),
             "width": canvas_width,
             "height": canvas_height,
-            "seed": None,
+            "seed": shared_seed,
             "generationSeconds": round(generation_seconds, 3),
             "imagePath": str(image_path),
             "characterSheetLayout": self._CHARACTER_SHEET_COMPOSITE_LAYOUT,
             "characterSheetViews": list(self._CHARACTER_SHEET_VIEWS),
             "characterSheetRequestedFraming": requested_framing,
             "characterSheetSourceFraming": source_framing,
+            "characterSheetIdentityMode": "face-plus-source",
             "characterSheetItems": sanitized_items,
             "galleryHidden": False,
         }
@@ -638,7 +754,7 @@ class CharacterSheetBridgeMixin:
             "ModelName": record["modelName"],
             "Width": canvas_width,
             "Height": canvas_height,
-            "Seed": None,
+            "Seed": shared_seed,
             "GenerationSeconds": record["generationSeconds"],
             "ImagePath": str(image_path),
             "HistoryPath": str(history_path),
@@ -646,6 +762,7 @@ class CharacterSheetBridgeMixin:
             "CharacterSheetViews": list(self._CHARACTER_SHEET_VIEWS),
             "CharacterSheetRequestedFraming": requested_framing,
             "CharacterSheetSourceFraming": source_framing,
+            "CharacterSheetIdentityMode": "face-plus-source",
             "CharacterSheetItems": ordered,
             "CharacterSheetComposite": composite,
         }
@@ -676,7 +793,7 @@ class CharacterSheetBridgeMixin:
             )
         if request.get("references"):
             raise base.StableAmdBridgeError(
-                "Character sheet uses only the source character image and does not accept extra references."
+                "Character sheet uses managed source/identity references and does not accept extra user references."
             )
         control_reader = getattr(self, "_control_request", None)
         if callable(control_reader) and control_reader(request) is not None:
@@ -700,7 +817,14 @@ class CharacterSheetBridgeMixin:
             view,
             requested_framing,
         )
+        identity_payload = None
+        if view != "face-close-up":
+            identity_payload = self._prepare_character_sheet_identity_reference(source, analysis)
+
         staged = base.stage_input_image(self.repo_root, prepared_source)
+        staged_identity = None
+        if identity_payload is not None:
+            staged_identity = base.stage_input_image(self.repo_root, identity_payload)
 
         clean = dict(request)
         clean["mode"] = "txt2img"
@@ -719,10 +843,13 @@ class CharacterSheetBridgeMixin:
         clean.pop("characterSheetView", None)
         clean.pop("characterSheetFraming", None)
 
+        internal_references = []
+        if staged_identity is not None:
+            internal_references.append({"name": staged_identity.name, "role": "content"})
         self._stableamd_krea_edit_context.value = {
             "image_name": staged.name,
             "source_name": source_name,
-            "references": [],
+            "references": internal_references,
             "output_size": {"width": width, "height": height},
         }
         try:
@@ -730,12 +857,15 @@ class CharacterSheetBridgeMixin:
         finally:
             self._stableamd_krea_edit_context.value = None
             staged.unlink(missing_ok=True)
+            if staged_identity is not None:
+                staged_identity.unlink(missing_ok=True)
 
         if not isinstance(result, dict):
             raise base.StableAmdBridgeError("Krea 2 Character Sheet provider did not return a result object.")
         self._persist_krea_image_edit_metadata(
             result,
             source_name,
+            references=internal_references,
             edit_operation="character-sheet-view",
         )
         self._persist_character_sheet_view_metadata(
@@ -746,5 +876,6 @@ class CharacterSheetBridgeMixin:
             width,
             height,
             analysis,
+            identity_reference=staged_identity is not None,
         )
         return result
