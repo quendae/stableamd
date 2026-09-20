@@ -25,6 +25,7 @@ import stableamd_v03_depth_control as depthcontrol  # noqa: E402
 import stableamd_v03_pose_extract as poseextract  # noqa: E402
 import stableamd_v03_krea_edit as kreaedit  # noqa: E402
 import stableamd_v03_character_sheet as charactersheet  # noqa: E402
+import stableamd_v03_character_sheet_anchor as characteranchor  # noqa: E402
 from stableamd_generation_jobs import GenerationJobsApiMixin, GenerationTimeoutBridgeMixin  # noqa: E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
@@ -32,6 +33,7 @@ from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridge
 from stableamd_v03_pose_extract import PoseExtractApiMixin, PoseExtractBridgeMixin  # noqa: E402
 from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: E402
 from stableamd_v03_character_sheet import CharacterSheetBridgeMixin  # noqa: E402
+from stableamd_v03_character_sheet_anchor import CharacterSheetAnchorBridgeMixin  # noqa: E402
 
 COMFYUI_RELEASES_URL = "https://api.github.com/repos/Comfy-Org/ComfyUI/releases/latest"
 
@@ -136,6 +138,7 @@ def _read_comfy_version(comfy_root: Path) -> str | None:
 
 
 class PowerShellBridge(
+    CharacterSheetAnchorBridgeMixin,
     CharacterSheetBridgeMixin,
     KreaImageEditBridgeMixin,
     PoseExtractBridgeMixin,
@@ -270,12 +273,23 @@ class StableAmdApi(
     product.StableAmdApi,
 ):
     _generation_fields = set(product.StableAmdApi._generation_fields) | {
-        "control", "asyncJob", "references", "editTask", "characterSheetView", "characterSheetFraming"
+        "control",
+        "asyncJob",
+        "references",
+        "editTask",
+        "characterSheetView",
+        "characterSheetFraming",
+        "characterSheetPhase",
+        "characterSheetAnchorImagePath",
+        "characterSheetBaseImagePath",
+        "characterSheetBaseHistoryPath",
     }
     _reference_roles = {"style", "material", "content"}
     _edit_tasks = {"character-turnaround", "character-sheet"}
     _character_sheet_views = {"face-close-up", "front", "three-quarter", "side", "back"}
     _character_sheet_framing = {"auto", "portrait", "full-body"}
+    _character_sheet_phases = {"base", "identity-refine"}
+    _character_sheet_refine_views = {"front", "three-quarter", "side"}
 
     def dispatch(self, method: str, target: str, body: bytes | None = None):
         path = target.split("?", 1)[0]
@@ -302,12 +316,20 @@ class StableAmdApi(
         edit_task = request.get("editTask")
         character_sheet_view = request.get("characterSheetView")
         character_sheet_framing = request.get("characterSheetFraming")
+        character_sheet_phase = request.get("characterSheetPhase")
+        character_sheet_anchor_path = request.get("characterSheetAnchorImagePath")
+        character_sheet_base_path = request.get("characterSheetBaseImagePath")
+        character_sheet_base_history = request.get("characterSheetBaseHistoryPath")
 
         clean = dict(request)
         clean.pop("references", None)
         clean.pop("editTask", None)
         clean.pop("characterSheetView", None)
         clean.pop("characterSheetFraming", None)
+        clean.pop("characterSheetPhase", None)
+        clean.pop("characterSheetAnchorImagePath", None)
+        clean.pop("characterSheetBaseImagePath", None)
+        clean.pop("characterSheetBaseHistoryPath", None)
         validated = super()._validate_generation(clean)
 
         if edit_task is not None:
@@ -327,11 +349,36 @@ class StableAmdApi(
             if not isinstance(framing, str) or framing not in self._character_sheet_framing:
                 raise ValueError("characterSheetFraming must be auto, portrait, or full-body for character-sheet.")
             validated["characterSheetFraming"] = framing
+
+            phase = "base" if character_sheet_phase is None else character_sheet_phase
+            if not isinstance(phase, str) or phase not in self._character_sheet_phases:
+                raise ValueError("characterSheetPhase must be base or identity-refine for character-sheet.")
+            validated["characterSheetPhase"] = phase
+            if phase == "identity-refine":
+                if character_sheet_view not in self._character_sheet_refine_views:
+                    raise ValueError("identity-refine is valid only for front, three-quarter, or side Character Sheet views.")
+                for field_name, value in (
+                    ("characterSheetAnchorImagePath", character_sheet_anchor_path),
+                    ("characterSheetBaseImagePath", character_sheet_base_path),
+                    ("characterSheetBaseHistoryPath", character_sheet_base_history),
+                ):
+                    if not isinstance(value, str) or not value.strip():
+                        raise ValueError(f"{field_name} is required for Character Sheet identity-refine.")
+                    validated[field_name] = value
+            elif any(value is not None for value in (character_sheet_anchor_path, character_sheet_base_path, character_sheet_base_history)):
+                raise ValueError("Character Sheet anchor/base paths are valid only for identity-refine.")
         else:
             if character_sheet_view is not None:
                 raise ValueError("characterSheetView is valid only when editTask is character-sheet.")
             if character_sheet_framing is not None:
                 raise ValueError("characterSheetFraming is valid only when editTask is character-sheet.")
+            if any(value is not None for value in (
+                character_sheet_phase,
+                character_sheet_anchor_path,
+                character_sheet_base_path,
+                character_sheet_base_history,
+            )):
+                raise ValueError("Character Sheet refinement fields are valid only when editTask is character-sheet.")
 
         if not has_references:
             return validated
