@@ -55,9 +55,9 @@ Describe 'StableAMD v0.3 provider-aware ControlNet' {
         $plan | Should -Match 'SDXL is deferred'
         $plan | Should -Match 'Canny'
         $plan | Should -Match 'OpenPose map'
-        $plan | Should -Match 'Character turnaround sheet generator'
+        $plan | Should -Match 'Character Sheet.*active quality gate'
         $plan | Should -Match 'Text-to-SVG'
-        $plan | Should -Match 'Infographic-oriented'
+        $plan | Should -Match 'infographic-oriented'
         $plan | Should -Match 'MiniMax H3'
     }
 }
