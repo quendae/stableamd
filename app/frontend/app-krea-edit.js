@@ -46,6 +46,10 @@
     return document.querySelector("#krea-edit-task")?.value === "character-sheet";
   }
 
+  function selectedCharacterSheetFraming() {
+    return String(document.querySelector("#krea-character-sheet-framing")?.value || "auto");
+  }
+
   function selectedMaterialDescriptor() {
     const preset = String(document.querySelector("#krea-material-preset")?.value || "leather");
     if (preset === "custom") {
@@ -113,21 +117,26 @@
     if (detail) detail.textContent = `Generating ${view.label}. Each view is rendered separately at full quality.`;
   }
 
-  function aggregateCharacterSheetResults(items) {
-    const first = items[0] || {};
-    const seconds = items.reduce((total, item) => {
-      const value = Number(getValue(item, "GenerationSeconds", "generationSeconds"));
-      return total + (Number.isFinite(value) ? value : 0);
-    }, 0);
-    return {
-      ...first,
-      EditOperation: "character-sheet",
-      CharacterSheetItems: items,
-      CharacterSheetViews: CHARACTER_SHEET_VIEWS.map((view) => view.id),
-      Width: 1024,
-      Height: 1024,
-      GenerationSeconds: seconds || getValue(first, "GenerationSeconds", "generationSeconds"),
-    };
+  function compactCharacterSheetItems(items) {
+    return items.map((item, index) => ({
+      CharacterSheetView: String(getValue(item, "CharacterSheetView", "characterSheetView") || CHARACTER_SHEET_VIEWS[index]?.id || ""),
+      CharacterSheetLabel: String(getValue(item, "CharacterSheetLabel", "characterSheetLabel") || CHARACTER_SHEET_VIEWS[index]?.label || ""),
+      CharacterSheetSourceFraming: String(getValue(item, "CharacterSheetSourceFraming", "characterSheetSourceFraming") || "source"),
+      CharacterSheetWidth: Number(getValue(item, "CharacterSheetWidth", "characterSheetWidth") || getValue(item, "Width", "width") || 0),
+      CharacterSheetHeight: Number(getValue(item, "CharacterSheetHeight", "characterSheetHeight") || getValue(item, "Height", "height") || 0),
+      ModelId: String(getValue(item, "ModelId", "modelId") || ""),
+      ModelName: String(getValue(item, "ModelName", "modelName") || "Krea 2 Turbo"),
+      GenerationSeconds: Number(getValue(item, "GenerationSeconds", "generationSeconds") || 0),
+      ImagePath: String(getValue(item, "ImagePath", "imagePath") || ""),
+      HistoryPath: String(getValue(item, "HistoryPath", "historyPath") || ""),
+    }));
+  }
+
+  function updateCharacterSheetComposeProgress() {
+    const title = document.querySelector("#result-empty strong");
+    const detail = document.querySelector("#result-empty p");
+    if (title) title.textContent = "Character sheet · composing";
+    if (detail) detail.textContent = "Combining the five full-quality views into one persisted character-sheet PNG.";
   }
 
   // app-v02 owns the generic img2img transport. Load this adapter before it so
@@ -145,6 +154,7 @@
         if (characterSheet) {
           delete payload.references;
           const identityPrompt = String(payload.prompt || "").trim() || CHARACTER_SHEET_DEFAULT_PROMPT;
+          const requestedFraming = selectedCharacterSheetFraming();
           const items = [];
           for (const view of CHARACTER_SHEET_VIEWS) {
             updateCharacterSheetProgress(items.length, view);
@@ -152,10 +162,11 @@
               ...payload,
               editTask: "character-sheet",
               characterSheetView: view.id,
+              characterSheetFraming: requestedFraming,
               prompt: identityPrompt,
-              width: 1024,
-              height: 1024,
             };
+            delete viewPayload.width;
+            delete viewPayload.height;
             const result = await baseKreaEditApi(path, { ...options, body: JSON.stringify(viewPayload) });
             items.push({
               ...result,
@@ -163,7 +174,28 @@
               CharacterSheetLabel: view.label,
             });
           }
-          return aggregateCharacterSheetResults(items);
+          updateCharacterSheetComposeProgress();
+          const compactItems = compactCharacterSheetItems(items);
+          const sourceFraming = String(getValue(items[0], "CharacterSheetSourceFraming", "characterSheetSourceFraming") || "source");
+          const composite = await baseKreaEditApi("/api/character-sheet/compose", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              items: compactItems,
+              prompt: identityPrompt,
+              sourceFraming,
+              requestedFraming,
+            }),
+          });
+          return {
+            ...composite,
+            CharacterSheetItems: items,
+            CharacterSheetComposite: getValue(composite, "CharacterSheetComposite", "characterSheetComposite") || {
+              ImagePath: getValue(composite, "ImagePath", "imagePath"),
+              Width: getValue(composite, "Width", "width"),
+              Height: getValue(composite, "Height", "height"),
+            },
+          };
         }
 
         delete payload.editTask;
@@ -198,18 +230,16 @@
     const style = document.createElement("style");
     style.id = "character-sheet-styles";
     style.textContent = `
-      .character-sheet-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; width:100%; }
-      .character-sheet-item { margin:0; display:grid; gap:7px; min-width:0; }
-      .character-sheet-item img { display:block; width:100%; aspect-ratio:1 / 1; object-fit:contain; border-radius:12px; background:rgba(255,255,255,.035); }
-      .character-sheet-item figcaption { font-size:.82rem; font-weight:650; text-align:center; opacity:.82; }
+      .character-sheet-composite { display:block; width:100%; max-height:72vh; object-fit:contain; border-radius:12px; background:rgba(255,255,255,.035); }
       .character-sheet-summary { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-top:12px; }
     `;
     document.head.append(style);
   }
 
   function renderCharacterSheetResult(result) {
-    const items = getValue(result, "CharacterSheetItems", "characterSheetItems");
-    if (!Array.isArray(items) || !items.length) {
+    const composite = getValue(result, "CharacterSheetComposite", "characterSheetComposite") || result;
+    const imagePath = getValue(composite, "ImagePath", "imagePath") || getValue(result, "ImagePath", "imagePath");
+    if (!imagePath) {
       baseRenderGenerationResult(result);
       return;
     }
@@ -225,23 +255,10 @@
     target.hidden = false;
     target.replaceChildren();
 
-    const grid = document.createElement("div");
-    grid.className = "character-sheet-grid";
-    items.forEach((item, index) => {
-      const frame = document.createElement("figure");
-      frame.className = "character-sheet-item";
-      const imagePath = getValue(item, "ImagePath", "imagePath");
-      if (imagePath) {
-        const image = document.createElement("img");
-        image.src = imageUrl(String(imagePath));
-        image.alt = String(getValue(item, "CharacterSheetLabel", "characterSheetLabel") || CHARACTER_SHEET_VIEWS[index]?.label || "Character sheet view");
-        frame.append(image);
-      }
-      const caption = document.createElement("figcaption");
-      caption.textContent = String(getValue(item, "CharacterSheetLabel", "characterSheetLabel") || CHARACTER_SHEET_VIEWS[index]?.label || `View ${index + 1}`);
-      frame.append(caption);
-      grid.append(frame);
-    });
+    const image = document.createElement("img");
+    image.className = "character-sheet-composite";
+    image.src = imageUrl(String(imagePath));
+    image.alt = "Completed five-view character sheet";
 
     const title = document.createElement("strong");
     title.className = "result-title";
@@ -251,17 +268,22 @@
     const model = document.createElement("span");
     model.textContent = String(getValue(result, "ModelName", "modelName") || "Krea 2");
     const size = document.createElement("span");
-    size.textContent = `${items.length} views · 1024 × 1024 each`;
+    const width = getValue(composite, "Width", "width") || getValue(result, "Width", "width") || "?";
+    const height = getValue(composite, "Height", "height") || getValue(result, "Height", "height") || "?";
+    size.textContent = `5 views · composite ${width} × ${height}`;
+    const framing = document.createElement("span");
+    framing.textContent = `framing: ${String(getValue(result, "CharacterSheetSourceFraming", "characterSheetSourceFraming") || "source")}`;
     const seconds = Number(getValue(result, "GenerationSeconds", "generationSeconds"));
     const time = document.createElement("span");
-    time.textContent = Number.isFinite(seconds) && seconds > 0 ? `${seconds.toFixed(1)} s total` : "Sequential generation";
-    summary.append(model, size, time);
-    target.append(grid, title, summary);
+    time.textContent = Number.isFinite(seconds) && seconds > 0 ? `${seconds.toFixed(1)} s generation total` : "Sequential generation";
+    summary.append(model, size, framing, time);
+    target.append(image, title, summary);
   }
 
   renderGenerationResult = function kreaRenderGenerationResult(result) {
     const items = getValue(result, "CharacterSheetItems", "characterSheetItems");
-    if (Array.isArray(items) && items.length) {
+    const composite = getValue(result, "CharacterSheetComposite", "characterSheetComposite");
+    if (composite || (Array.isArray(items) && items.length)) {
       renderCharacterSheetResult(result);
       return;
     }
@@ -314,7 +336,15 @@
         </div>
         <div id="krea-character-sheet-controls" class="model-root-card" hidden>
           <strong>Five-view character sheet</strong>
-          <p class="history-model">5 sequential 1024 × 1024 generations · Face / Front / 3/4 / Side / Back. One view is rendered per generation, then StableAMD shows the results together as a grid.</p>
+          <label class="field">
+            <span>Sheet framing</span>
+            <select id="krea-character-sheet-framing">
+              <option value="auto">Auto · detect portrait / full body</option>
+              <option value="portrait">Portrait · head / shoulders / torso</option>
+              <option value="full-body">Full body · head to toe</option>
+            </select>
+          </label>
+          <p class="history-model">Face is rendered at 1024 × 1024. Portrait views use 896 × 1152; full-body views use 832 × 1216. Auto uses DWPose when a person is detected, preserves unknown/non-human source framing otherwise, and writes one final 3 × 2 composite PNG after the five separate generations.</p>
         </div>
         <div id="krea-reference-section" class="field">
           <label class="checkbox-field">
@@ -484,8 +514,8 @@
       const file = input?.files?.[0];
       if (characterSheet) {
         hint.textContent = file
-          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · This identity reference will be reused for five separate high-quality generations.`
-          : "Choose one clear character image. StableAMD will render Face / Front / 3/4 / Side / Back separately at 1024 × 1024, then show them together as a grid.";
+          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · StableAMD reuses this identity reference, adapts framing per view, then persists one final composite PNG.`
+          : "Choose one clear character image. Auto framing uses DWPose for people, preserves unknown/non-human source framing, renders five views separately, then composes one final sheet PNG.";
       } else if (material) {
         hint.textContent = file
           ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Material / texture replacement uses the source as the preserved scene reference.`
@@ -511,6 +541,7 @@
       model.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#input-image")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-edit-task")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#krea-character-sheet-framing")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-material-preset")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-reference-enabled")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-reference-role")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
