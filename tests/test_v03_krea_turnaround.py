@@ -82,14 +82,6 @@ class StableAmdKreaTurnaroundTests(unittest.TestCase):
         request = {
             "prompt": "optional notes",
             "mode": "img2img",
-            "modelId": "krea",
-            "width": 1024,
-            "height": 1024,
-            "steps": 8,
-            "cfg": 1.0,
-            "sampler": "euler",
-            "scheduler": "simple",
-            "seed": 1,
             "inputImage": {
                 "name": "character.png",
                 "mimeType": "image/png",
