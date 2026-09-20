@@ -35,6 +35,11 @@ class KreaImageEditBridgeMixin:
         "SelectVAEDevice",
     )
     _REFERENCE_ROLES = ("style", "material", "content")
+    _TURNAROUND_WIDTH = 1536
+    _TURNAROUND_HEIGHT = 768
+    _TURNAROUND_LAYOUT = "four-view-horizontal"
+    _TURNAROUND_VIEWS = ("front", "three-quarter", "side", "back")
+    _TURNAROUND_PROMPT_PREFIX = "Create a single character turnaround sheet using Picture 1 as the identity reference."
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -79,6 +84,19 @@ class KreaImageEditBridgeMixin:
         prefix = " ".join(parts)
         return f"{prefix} Edit instruction: {instruction}" if instruction else prefix
 
+    @staticmethod
+    def _build_character_turnaround_instruction(notes: str = "") -> str:
+        additional = str(notes or "").strip()
+        instruction = (
+            f"{KreaImageEditBridgeMixin._TURNAROUND_PROMPT_PREFIX} "
+            "Show the same character four times from left to right: front view, three-quarter view, side profile, and back view. "
+            "Keep the character identity, face, hairstyle, clothing, accessories, body proportions, colors, and materials consistent in every view. "
+            "Show the full body from head to toe at equal scale, aligned to a common ground line, with a neutral relaxed pose and consistent camera height. "
+            "Use a clean neutral studio background with even lighting. "
+            "Do not add text, labels, borders, extra characters, props, cropped body parts, or alternate outfits."
+        )
+        return f"{instruction} Additional character notes: {additional}" if additional else instruction
+
     def model_support(self) -> dict[str, Any]:
         support = super().model_support()
         if not isinstance(support, dict):
@@ -114,6 +132,19 @@ class KreaImageEditBridgeMixin:
                         "label": "Material / texture",
                         "referenceImages": 2,
                         "masked": False,
+                    },
+                    {
+                        "id": "character-turnaround",
+                        "label": "Character turnaround",
+                        "referenceImages": 0,
+                        "masked": False,
+                        "sourceSizeOutput": False,
+                        "outputSize": {
+                            "width": self._TURNAROUND_WIDTH,
+                            "height": self._TURNAROUND_HEIGHT,
+                        },
+                        "layout": self._TURNAROUND_LAYOUT,
+                        "views": list(self._TURNAROUND_VIEWS),
                     },
                 ],
             }
@@ -179,6 +210,20 @@ class KreaImageEditBridgeMixin:
                 references.append({"name": legacy_name, "role": legacy_role})
         if not image_name:
             raise base.StableAmdBridgeError("Krea 2 Image Edit source image is missing.")
+
+        output_width: int | None = None
+        output_height: int | None = None
+        raw_output_size = context.get("output_size")
+        if isinstance(raw_output_size, dict):
+            try:
+                output_width = int(raw_output_size.get("width"))
+                output_height = int(raw_output_size.get("height"))
+            except (TypeError, ValueError):
+                output_width = None
+                output_height = None
+            if output_width is not None and output_height is not None:
+                if output_width <= 0 or output_height <= 0 or output_width % 16 or output_height % 16:
+                    raise base.StableAmdBridgeError("Krea 2 Image Edit output size must use positive dimensions divisible by 16.")
 
         workflow["80"] = {
             "class_type": "LoadImage",
@@ -255,8 +300,12 @@ class KreaImageEditBridgeMixin:
             },
         }
 
-        latent_inputs["width"] = ["82", 0]
-        latent_inputs["height"] = ["82", 1]
+        if output_width is not None and output_height is not None:
+            latent_inputs["width"] = output_width
+            latent_inputs["height"] = output_height
+        else:
+            latent_inputs["width"] = ["82", 0]
+            latent_inputs["height"] = ["82", 1]
         sampler_inputs["model"] = ["83", 0]
         sampler_inputs["positive"] = ["87", 0]
         sampler_inputs["negative"] = ["88", 0]
@@ -310,6 +359,8 @@ class KreaImageEditBridgeMixin:
         references: list[dict[str, Any]] | None = None,
         reference_name: str | None = None,
         reference_role: str | None = None,
+        edit_operation: str = "image-edit",
+        turnaround: dict[str, Any] | None = None,
     ) -> None:
         normalized_references = self._normalize_reference_metadata(
             references,
@@ -318,12 +369,31 @@ class KreaImageEditBridgeMixin:
         )
         result["Mode"] = "img2img"
         result["EditOperation"] = "image-edit"
+        if edit_operation != "image-edit":
+            result["EditOperation"] = edit_operation
         result["Provider"] = "krea2-ostris-edit"
         result["InputImageName"] = source_name
         if normalized_references:
             result["ReferenceImages"] = normalized_references
             result["ReferenceImageName"] = normalized_references[0]["name"]
             result["ReferenceRole"] = normalized_references[0]["role"]
+        if isinstance(turnaround, dict):
+            layout = str(turnaround.get("layout") or "").strip()
+            views = [str(view) for view in turnaround.get("views", []) if str(view).strip()]
+            try:
+                width = int(turnaround.get("width"))
+                height = int(turnaround.get("height"))
+            except (TypeError, ValueError):
+                width = 0
+                height = 0
+            if layout:
+                result["TurnaroundLayout"] = layout
+            if views:
+                result["TurnaroundViews"] = views
+            if width > 0:
+                result["TurnaroundWidth"] = width
+            if height > 0:
+                result["TurnaroundHeight"] = height
         result.pop("Denoise", None)
 
         raw_image = str(result.get("ImagePath") or "").strip()
@@ -344,13 +414,30 @@ class KreaImageEditBridgeMixin:
             if not isinstance(record, dict):
                 return
             record["mode"] = "img2img"
-            record["editOperation"] = "image-edit"
+            record["editOperation"] = edit_operation
             record["provider"] = "krea2-ostris-edit"
             record["inputImageName"] = source_name
             if normalized_references:
                 record["referenceImages"] = normalized_references
                 record["referenceImageName"] = normalized_references[0]["name"]
                 record["referenceRole"] = normalized_references[0]["role"]
+            if isinstance(turnaround, dict):
+                layout = str(turnaround.get("layout") or "").strip()
+                views = [str(view) for view in turnaround.get("views", []) if str(view).strip()]
+                try:
+                    width = int(turnaround.get("width"))
+                    height = int(turnaround.get("height"))
+                except (TypeError, ValueError):
+                    width = 0
+                    height = 0
+                if layout:
+                    record["turnaroundLayout"] = layout
+                if views:
+                    record["turnaroundViews"] = views
+                if width > 0:
+                    record["turnaroundWidth"] = width
+                if height > 0:
+                    record["turnaroundHeight"] = height
             record.pop("denoise", None)
             if "Width" in result and "Height" in result:
                 record["width"] = int(result["Width"])
@@ -372,6 +459,12 @@ class KreaImageEditBridgeMixin:
             asset_mode = str(selected.get("assetMode") or selected.get("AssetMode") or "").lower()
         mode = str(request.get("mode") or "txt2img").lower()
         references = request.get("references")
+        edit_task = str(request.get("editTask") or "").strip().lower()
+        turnaround_active = edit_task == "character-turnaround"
+        if references and turnaround_active:
+            raise base.StableAmdBridgeError(
+                "Character turnaround uses only the source character image and does not accept extra references."
+            )
         if references and (family != "krea2" or asset_mode != "bundle" or mode != "img2img"):
             raise base.StableAmdBridgeError(
                 "Reference images are currently supported only by Krea 2 Image Edit."
@@ -395,7 +488,7 @@ class KreaImageEditBridgeMixin:
 
         staged_references: list[dict[str, Any]] = []
         metadata_references: list[dict[str, str]] = []
-        if isinstance(references, list):
+        if isinstance(references, list) and not turnaround_active:
             for index, reference in enumerate(references[:2], start=1):
                 if not isinstance(reference, dict):
                     continue
@@ -418,13 +511,28 @@ class KreaImageEditBridgeMixin:
         clean.pop("denoise", None)
         clean.pop("control", None)
         clean.pop("references", None)
-        if staged_references:
+        clean.pop("editTask", None)
+
+        turnaround_metadata: dict[str, Any] | None = None
+        if turnaround_active:
+            current_prompt = str(clean.get("prompt") or "").strip()
+            if not current_prompt.startswith(self._TURNAROUND_PROMPT_PREFIX):
+                clean["prompt"] = self._build_character_turnaround_instruction(current_prompt)
+            clean["width"] = self._TURNAROUND_WIDTH
+            clean["height"] = self._TURNAROUND_HEIGHT
+            turnaround_metadata = {
+                "layout": self._TURNAROUND_LAYOUT,
+                "views": list(self._TURNAROUND_VIEWS),
+                "width": self._TURNAROUND_WIDTH,
+                "height": self._TURNAROUND_HEIGHT,
+            }
+        elif staged_references:
             clean["prompt"] = self._compose_reference_prompt(
                 str(clean.get("prompt") or ""),
                 [item["role"] for item in staged_references],
             )
 
-        self._stableamd_krea_edit_context.value = {
+        context: dict[str, Any] = {
             "image_name": staged.name,
             "source_name": source_name,
             "references": [
@@ -432,6 +540,12 @@ class KreaImageEditBridgeMixin:
                 for item in staged_references
             ],
         }
+        if turnaround_active:
+            context["output_size"] = {
+                "width": self._TURNAROUND_WIDTH,
+                "height": self._TURNAROUND_HEIGHT,
+            }
+        self._stableamd_krea_edit_context.value = context
         try:
             result = super()._generate_krea2_turbo(clean, selected)
         finally:
@@ -446,5 +560,7 @@ class KreaImageEditBridgeMixin:
             result,
             source_name,
             references=metadata_references,
+            edit_operation="character-turnaround" if turnaround_active else "image-edit",
+            turnaround=turnaround_metadata,
         )
         return result
