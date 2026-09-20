@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,9 +22,7 @@ import stableamd_v03_edit_server as server
 
 
 class StableAmdKreaCharacterSheetTests(unittest.TestCase):
-    def test_krea_policy_advertises_sequential_character_sheet(self):
-        module = character_sheet
-
+    def test_krea_policy_advertises_quality_character_sheet_contract(self):
         class Parent:
             def model_support(self):
                 return {
@@ -32,23 +34,23 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
                     }]
                 }
 
-        class Bridge(module.CharacterSheetBridgeMixin, Parent):
+        class Bridge(character_sheet.CharacterSheetBridgeMixin, Parent):
             pass
 
         policy = Bridge().model_support()["models"][0]["editPolicy"]
-        tasks = {item["id"]: item for item in policy["tasks"]}
-        task = tasks["character-sheet"]
+        task = {item["id"]: item for item in policy["tasks"]}["character-sheet"]
         self.assertEqual(task["label"], "Character sheet")
         self.assertEqual(task["referenceImages"], 0)
-        self.assertEqual(task["outputSize"], {"width": 1024, "height": 1024})
-        self.assertEqual(
-            task["views"],
-            ["face-close-up", "front", "three-quarter", "side", "back"],
-        )
         self.assertEqual(task["generationMode"], "sequential")
-        self.assertFalse(task["sourceSizeOutput"])
+        self.assertEqual(task["framingModes"], ["auto", "portrait", "full-body"])
+        self.assertEqual(task["defaultFraming"], "auto")
+        self.assertEqual(task["compositeLayout"], "grid-3x2")
+        self.assertEqual(task["views"], ["face-close-up", "front", "three-quarter", "side", "back"])
+        self.assertEqual(task["viewSizes"]["face-close-up"], {"width": 1024, "height": 1024})
+        self.assertEqual(task["viewSizes"]["portrait"], {"width": 896, "height": 1152})
+        self.assertEqual(task["viewSizes"]["full-body"], {"width": 832, "height": 1216})
 
-    def test_api_accepts_character_sheet_view_and_rejects_unknown_view(self):
+    def test_api_accepts_framing_mode_and_rejects_unknown_mode(self):
         api = server.StableAmdApi(object())
         request = {
             "prompt": "Preserve the exact same character.",
@@ -60,52 +62,121 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
             },
             "editTask": "character-sheet",
             "characterSheetView": "side",
+            "characterSheetFraming": "auto",
         }
         validated = api._validate_generation(request)
-        self.assertEqual(validated["editTask"], "character-sheet")
-        self.assertEqual(validated["characterSheetView"], "side")
+        self.assertEqual(validated["characterSheetFraming"], "auto")
 
-        with self.assertRaisesRegex(ValueError, "characterSheetView"):
-            api._validate_generation({**request, "characterSheetView": "diagonal"})
+        for framing in ("portrait", "full-body"):
+            validated = api._validate_generation({**request, "characterSheetFraming": framing})
+            self.assertEqual(validated["characterSheetFraming"], framing)
 
-    def test_each_sheet_view_builds_a_single_view_instruction(self):
+        with self.assertRaisesRegex(ValueError, "characterSheetFraming"):
+            api._validate_generation({**request, "characterSheetFraming": "cinematic"})
+
+    def test_prompt_and_output_size_follow_resolved_framing(self):
         builder = character_sheet.CharacterSheetBridgeMixin._build_character_sheet_instruction
+        size = character_sheet.CharacterSheetBridgeMixin._character_sheet_output_size
 
-        face = builder("face-close-up", "keep the red scarf")
-        front = builder("front", "keep the red scarf")
-        side = builder("side", "keep the red scarf")
-        back = builder("back", "keep the red scarf")
+        portrait = builder("front", "keep the red scarf", "portrait")
+        full_body = builder("front", "keep the red scarf", "full-body")
+        face = builder("face-close-up", "keep the red scarf", "portrait")
 
-        for instruction in (face, front, side, back):
-            lowered = instruction.lower()
-            self.assertIn("same character", lowered)
-            self.assertIn("only one character", lowered)
-            self.assertIn("neutral", lowered)
-            self.assertIn("keep the red scarf", instruction)
-            self.assertNotIn("show the same character four times", lowered)
-
+        self.assertIn("upper body", portrait.lower())
+        self.assertNotIn("head to toe", portrait.lower())
+        self.assertIn("head to toe", full_body.lower())
         self.assertIn("close-up", face.lower())
-        self.assertIn("front", front.lower())
-        self.assertIn("side profile", side.lower())
-        self.assertIn("back view", back.lower())
+        self.assertEqual(size("face-close-up", "portrait"), (1024, 1024))
+        self.assertEqual(size("front", "portrait"), (896, 1152))
+        self.assertEqual(size("front", "full-body"), (832, 1216))
 
-    def test_frontend_prefills_prompt_runs_five_sequential_views_and_returns_grid_payload(self):
-        source = KREA_FRONTEND_PATH.read_text(encoding="utf-8")
-        self.assertIn('value="character-sheet"', source)
-        self.assertIn("Character sheet", source)
-        self.assertIn("CHARACTER_SHEET_DEFAULT_PROMPT", source)
-        self.assertIn("face-close-up", source)
-        self.assertIn("three-quarter", source)
-        self.assertIn("characterSheetView", source)
-        self.assertIn("for (const view of CHARACTER_SHEET_VIEWS)", source)
-        self.assertIn("CharacterSheetItems", source)
-        self.assertNotIn('value="character-turnaround"', source)
+    def test_subject_crop_matches_target_ratio_without_stretching(self):
+        source = Image.new("RGB", (1500, 1000), "white")
+        cropper = character_sheet.CharacterSheetBridgeMixin._crop_reference_to_subject
+        cropped = cropper(source, (900, 100, 1450, 950), 896, 1152, margin=0.10)
+        self.assertGreater(cropped.width, 0)
+        self.assertGreater(cropped.height, 0)
+        self.assertAlmostEqual(cropped.width / cropped.height, 896 / 1152, places=2)
+        self.assertLess(cropped.width, source.width)
 
-    def test_generation_result_renders_character_sheet_as_grid(self):
+    def test_auto_unknown_source_preserves_source_ratio_for_nonhuman_fallback(self):
+        resolver = character_sheet.CharacterSheetBridgeMixin._character_sheet_output_size
+        width, height = resolver("front", "source", (1500, 1000))
+        self.assertEqual(width % 16, 0)
+        self.assertEqual(height % 16, 0)
+        self.assertAlmostEqual(width / height, 1.5, delta=0.04)
+
+    def test_composite_creates_one_png_and_hides_child_history_after_success(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            output = repo / ".runtime" / "stableamd" / "output"
+            history = repo / ".runtime" / "stableamd" / "history"
+            output.mkdir(parents=True)
+            history.mkdir(parents=True)
+
+            items = []
+            for index, view in enumerate(("face-close-up", "front", "three-quarter", "side", "back")):
+                image_path = output / f"{index}.png"
+                Image.new("RGB", (512 + index * 16, 640), (40 + index * 20, 80, 120)).save(image_path)
+                history_path = history / f"{index}.json"
+                history_path.write_text(json.dumps({"imagePath": str(image_path), "editOperation": "character-sheet-view"}), encoding="utf-8")
+                items.append({
+                    "CharacterSheetView": view,
+                    "CharacterSheetLabel": view,
+                    "ImagePath": str(image_path),
+                    "HistoryPath": str(history_path),
+                    "GenerationSeconds": 1.0,
+                    "ModelId": "krea",
+                    "ModelName": "Krea 2 Turbo",
+                })
+
+            class Parent:
+                repo_root = repo
+
+                def _save_bundle_history(self, record):
+                    path = history / "composite.json"
+                    path.write_text(json.dumps(record), encoding="utf-8")
+                    return path
+
+                def history(self, limit=0):
+                    records = [json.loads(path.read_text(encoding="utf-8")) for path in history.glob("*.json")]
+                    return records[:limit] if limit else records
+
+            class Bridge(character_sheet.CharacterSheetBridgeMixin, Parent):
+                pass
+
+            result = Bridge().compose_character_sheet({
+                "items": items,
+                "prompt": "same character",
+                "sourceFraming": "portrait",
+                "requestedFraming": "auto",
+            })
+            composite_path = Path(result["ImagePath"])
+            self.assertTrue(composite_path.is_file())
+            self.assertEqual(result["EditOperation"], "character-sheet")
+            self.assertEqual(result["CharacterSheetLayout"], "grid-3x2")
+            self.assertEqual(len(result["CharacterSheetItems"]), 5)
+            with Image.open(composite_path) as composite:
+                self.assertGreater(composite.width, 2000)
+                self.assertGreater(composite.height, 1800)
+            for item in items:
+                record = json.loads(Path(item["HistoryPath"]).read_text(encoding="utf-8"))
+                self.assertTrue(record["galleryHidden"])
+                self.assertEqual(record["characterSheetParentPromptId"], result["PromptId"])
+
+            visible = Bridge().history()
+            self.assertTrue(all(not record.get("galleryHidden") for record in visible))
+            self.assertTrue(any(record.get("editOperation") == "character-sheet" for record in visible))
+
+    def test_frontend_exposes_framing_and_requests_persisted_composite(self):
         source = KREA_FRONTEND_PATH.read_text(encoding="utf-8")
-        self.assertIn("CharacterSheetItems", source)
-        self.assertIn("character-sheet-grid", source)
-        self.assertIn("character-sheet-item", source)
+        self.assertIn('id="krea-character-sheet-framing"', source)
+        self.assertIn('value="auto"', source)
+        self.assertIn('value="portrait"', source)
+        self.assertIn('value="full-body"', source)
+        self.assertIn("characterSheetFraming", source)
+        self.assertIn('/api/character-sheet/compose', source)
+        self.assertIn("CharacterSheetComposite", source)
         self.assertIn("Character sheet complete", source)
 
 
