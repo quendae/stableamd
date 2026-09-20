@@ -90,6 +90,25 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
         self.assertEqual(size("front", "portrait"), (896, 1152))
         self.assertEqual(size("front", "full-body"), (832, 1216))
 
+    def test_auto_framing_uses_dwpose_visibility_for_portrait_vs_full_body(self):
+        analyzer = character_sheet.CharacterSheetBridgeMixin._analyze_dwpose_candidates
+        points = [[[0.0, 0.0] for _ in range(134)]]
+        scores = [[0.0 for _ in range(134)]]
+        # Head/shoulders/hips on the right side of a landscape source; no knees/ankles.
+        for index, xy in {0: (1180, 160), 1: (1180, 260), 2: (1260, 300), 5: (1100, 300), 8: (1240, 650), 11: (1120, 650)}.items():
+            points[0][index] = list(xy)
+            scores[0][index] = 0.95
+        portrait = analyzer(points, scores, 1500, 1000)
+        self.assertEqual(portrait["framing"], "portrait")
+        self.assertGreater(portrait["subjectBox"][0], 900)
+
+        for index, xy in {9: (1240, 790), 10: (1240, 950), 12: (1120, 790), 13: (1120, 950)}.items():
+            points[0][index] = list(xy)
+            scores[0][index] = 0.95
+        full_body = analyzer(points, scores, 1500, 1000)
+        self.assertEqual(full_body["framing"], "full-body")
+        self.assertTrue(full_body["detected"])
+
     def test_subject_crop_matches_target_ratio_without_stretching(self):
         source = Image.new("RGB", (1500, 1000), "white")
         cropper = character_sheet.CharacterSheetBridgeMixin._crop_reference_to_subject
