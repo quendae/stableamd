@@ -773,6 +773,28 @@ class CharacterSheetBridgeMixin:
         visible = [record for record in values if not (isinstance(record, dict) and bool(record.get("galleryHidden")))]
         return visible[:limit] if limit > 0 else visible
 
+    def _release_character_sheet_runtime(self) -> bool:
+        """Reset Krea's retained edit working set before the next sheet view.
+
+        Character Sheet intentionally runs five reference-conditioned Krea jobs
+        back-to-back. On the RX 6950 XT target, retained DynamicVRAM/offload state
+        can fragment badly between those jobs; the same ComfyUI /free reset is
+        already target-proven for repeated Krea OpenPose generations. Keep this
+        cleanup scoped to Character Sheet so normal Krea caching stays unchanged.
+        """
+        post = getattr(self, "_post_comfy_no_content", None)
+        if not callable(post):
+            return False
+        try:
+            post(
+                "free",
+                {"unload_models": True, "free_memory": True},
+                timeout=10,
+            )
+        except (OSError, base.StableAmdBridgeError):
+            return False
+        return True
+
     def generate(self, request: dict[str, Any]) -> Any:
         edit_task = str(request.get("editTask") or "").strip().lower()
         if edit_task != "character-sheet":
@@ -859,6 +881,7 @@ class CharacterSheetBridgeMixin:
             staged.unlink(missing_ok=True)
             if staged_identity is not None:
                 staged_identity.unlink(missing_ok=True)
+            self._release_character_sheet_runtime()
 
         if not isinstance(result, dict):
             raise base.StableAmdBridgeError("Krea 2 Character Sheet provider did not return a result object.")
