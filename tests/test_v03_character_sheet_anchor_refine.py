@@ -18,6 +18,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 import stableamd_v03_character_sheet as character_sheet
+import stableamd_v03_character_sheet_anchor as anchor
 import stableamd_v03_edit_server as server
 
 
@@ -118,7 +119,7 @@ class StableAmdCharacterSheetAnchorRefineTests(unittest.TestCase):
                 def _post_comfy_no_content(self, *_args, **_kwargs):
                     return None
 
-            class Bridge(character_sheet.CharacterSheetBridgeMixin, Parent):
+            class Bridge(anchor.CharacterSheetAnchorBridgeMixin, character_sheet.CharacterSheetBridgeMixin, Parent):
                 def _prepare_character_sheet_reference(self, source, view, requested_framing):
                     return (
                         source,
