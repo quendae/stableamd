@@ -1,5 +1,6 @@
 (() => {
   const baseKreaEditApi = api;
+  const baseRenderGenerationResult = renderGenerationResult;
 
   const MATERIAL_PRESETS = {
     leather: 'leather',
@@ -10,6 +11,15 @@
     fabric: 'fabric',
     glass: 'glass',
   };
+
+  const CHARACTER_SHEET_DEFAULT_PROMPT = "Preserve the exact same character from Picture 1: identity, facial features, hairstyle or fur, clothing, accessories, body proportions, colors, materials, and art style. Keep the design consistent across every generated view. Use a clean neutral studio background with soft even lighting. Do not add text, labels, props, alternate outfits, or extra characters.";
+  const CHARACTER_SHEET_VIEWS = [
+    { id: "face-close-up", label: "Face close-up" },
+    { id: "front", label: "Front" },
+    { id: "three-quarter", label: "3/4" },
+    { id: "side", label: "Side" },
+    { id: "back", label: "Back" },
+  ];
 
   function modelFamily(modelId = "") {
     const id = String(modelId || document.querySelector("#model-select")?.value || "");
@@ -32,8 +42,8 @@
     return document.querySelector("#krea-edit-task")?.value === "material-replace";
   }
 
-  function isTurnaroundTask() {
-    return document.querySelector("#krea-edit-task")?.value === "character-turnaround";
+  function isCharacterSheetTask() {
+    return document.querySelector("#krea-edit-task")?.value === "character-sheet";
   }
 
   function selectedMaterialDescriptor() {
@@ -53,12 +63,6 @@
 
     const base = `Replace the material or texture of ${target} with ${material}. Preserve the object's shape, geometry, position, lighting, scene composition, and all unrelated areas.`;
     return additional ? `${base} ${additional}` : base;
-  }
-
-  function buildCharacterTurnaroundInstruction() {
-    const additional = String(document.querySelector("#prompt")?.value || "").trim();
-    const base = "Create a single character turnaround sheet using Picture 1 as the identity reference. Show the same character four times from left to right: front view, three-quarter view, side profile, and back view. Keep the character identity, face, hairstyle, clothing, accessories, body proportions, colors, and materials consistent in every view. Show the full body from head to toe at equal scale, aligned to a common ground line, with a neutral relaxed pose and consistent camera height. Use a clean neutral studio background with even lighting. Do not add text, labels, borders, extra characters, props, cropped body parts, or alternate outfits.";
-    return additional ? `${base} Additional character notes: ${additional}` : base;
   }
 
   function readReferenceImage(file) {
@@ -102,6 +106,30 @@
     return document.querySelector("#krea-reference-2-enabled")?.checked === true;
   }
 
+  function updateCharacterSheetProgress(index, view) {
+    const title = document.querySelector("#result-empty strong");
+    const detail = document.querySelector("#result-empty p");
+    if (title) title.textContent = `Character sheet · ${index + 1}/${CHARACTER_SHEET_VIEWS.length}`;
+    if (detail) detail.textContent = `Generating ${view.label}. Each view is rendered separately at full quality.`;
+  }
+
+  function aggregateCharacterSheetResults(items) {
+    const first = items[0] || {};
+    const seconds = items.reduce((total, item) => {
+      const value = Number(getValue(item, "GenerationSeconds", "generationSeconds"));
+      return total + (Number.isFinite(value) ? value : 0);
+    }, 0);
+    return {
+      ...first,
+      EditOperation: "character-sheet",
+      CharacterSheetItems: items,
+      CharacterSheetViews: CHARACTER_SHEET_VIEWS.map((view) => view.id),
+      Width: 1024,
+      Height: 1024,
+      GenerationSeconds: seconds || getValue(first, "GenerationSeconds", "generationSeconds"),
+    };
+  }
+
   // app-v02 owns the generic img2img transport. Load this adapter before it so
   // v02 captures this API wrapper as its base transport: v02 can collect the
   // source image normally, then this layer removes classic denoise semantics
@@ -113,39 +141,131 @@
       catch { payload = {}; }
       if (isKreaEditRequest(payload)) {
         delete payload.denoise;
-        const turnaround = isTurnaroundTask();
-        if (turnaround) {
-          payload.editTask = "character-turnaround";
-          payload.prompt = buildCharacterTurnaroundInstruction();
-          payload.width = 1536;
-          payload.height = 768;
+        const characterSheet = isCharacterSheetTask();
+        if (characterSheet) {
           delete payload.references;
-        } else {
-          delete payload.editTask;
-          if (isMaterialTask()) {
-            const materialInstruction = buildMaterialInstruction();
-            payload.prompt = materialInstruction;
+          const identityPrompt = String(payload.prompt || "").trim() || CHARACTER_SHEET_DEFAULT_PROMPT;
+          const items = [];
+          for (const view of CHARACTER_SHEET_VIEWS) {
+            updateCharacterSheetProgress(items.length, view);
+            const viewPayload = {
+              ...payload,
+              editTask: "character-sheet",
+              characterSheetView: view.id,
+              prompt: identityPrompt,
+              width: 1024,
+              height: 1024,
+            };
+            const result = await baseKreaEditApi(path, { ...options, body: JSON.stringify(viewPayload) });
+            items.push({
+              ...result,
+              CharacterSheetView: view.id,
+              CharacterSheetLabel: view.label,
+            });
           }
-          if (referenceEnabled()) {
-            const references = [];
-            const role = String(document.querySelector("#krea-reference-role")?.value || "style");
-            const file = document.querySelector("#krea-reference-image")?.files?.[0];
-            references.push({ role, image: await readReferenceImage(file) });
+          return aggregateCharacterSheetResults(items);
+        }
 
-            if (reference2Enabled()) {
-              const role2 = String(document.querySelector("#krea-reference-role-2")?.value || "material");
-              const file2 = document.querySelector("#krea-reference-image-2")?.files?.[0];
-              references.push({ role: role2, image: await readReferenceImage(file2) });
-            }
-            payload.references = references;
-          } else {
-            delete payload.references;
+        delete payload.editTask;
+        delete payload.characterSheetView;
+        if (isMaterialTask()) {
+          const materialInstruction = buildMaterialInstruction();
+          payload.prompt = materialInstruction;
+        }
+        if (referenceEnabled()) {
+          const references = [];
+          const role = String(document.querySelector("#krea-reference-role")?.value || "style");
+          const file = document.querySelector("#krea-reference-image")?.files?.[0];
+          references.push({ role, image: await readReferenceImage(file) });
+
+          if (reference2Enabled()) {
+            const role2 = String(document.querySelector("#krea-reference-role-2")?.value || "material");
+            const file2 = document.querySelector("#krea-reference-image-2")?.files?.[0];
+            references.push({ role: role2, image: await readReferenceImage(file2) });
           }
+          payload.references = references;
+        } else {
+          delete payload.references;
         }
         return baseKreaEditApi(path, { ...options, body: JSON.stringify(payload) });
       }
     }
     return baseKreaEditApi(path, options);
+  };
+
+  function ensureCharacterSheetStyles() {
+    if (document.querySelector("#character-sheet-styles")) return;
+    const style = document.createElement("style");
+    style.id = "character-sheet-styles";
+    style.textContent = `
+      .character-sheet-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; width:100%; }
+      .character-sheet-item { margin:0; display:grid; gap:7px; min-width:0; }
+      .character-sheet-item img { display:block; width:100%; aspect-ratio:1 / 1; object-fit:contain; border-radius:12px; background:rgba(255,255,255,.035); }
+      .character-sheet-item figcaption { font-size:.82rem; font-weight:650; text-align:center; opacity:.82; }
+      .character-sheet-summary { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-top:12px; }
+    `;
+    document.head.append(style);
+  }
+
+  function renderCharacterSheetResult(result) {
+    const items = getValue(result, "CharacterSheetItems", "characterSheetItems");
+    if (!Array.isArray(items) || !items.length) {
+      baseRenderGenerationResult(result);
+      return;
+    }
+
+    ensureCharacterSheetStyles();
+    const empty = document.querySelector("#result-empty");
+    if (empty) empty.hidden = true;
+    const target = document.querySelector("#result-details");
+    if (!target) {
+      baseRenderGenerationResult(result);
+      return;
+    }
+    target.hidden = false;
+    target.replaceChildren();
+
+    const grid = document.createElement("div");
+    grid.className = "character-sheet-grid";
+    items.forEach((item, index) => {
+      const frame = document.createElement("figure");
+      frame.className = "character-sheet-item";
+      const imagePath = getValue(item, "ImagePath", "imagePath");
+      if (imagePath) {
+        const image = document.createElement("img");
+        image.src = imageUrl(String(imagePath));
+        image.alt = String(getValue(item, "CharacterSheetLabel", "characterSheetLabel") || CHARACTER_SHEET_VIEWS[index]?.label || "Character sheet view");
+        frame.append(image);
+      }
+      const caption = document.createElement("figcaption");
+      caption.textContent = String(getValue(item, "CharacterSheetLabel", "characterSheetLabel") || CHARACTER_SHEET_VIEWS[index]?.label || `View ${index + 1}`);
+      frame.append(caption);
+      grid.append(frame);
+    });
+
+    const title = document.createElement("strong");
+    title.className = "result-title";
+    title.textContent = "Character sheet complete";
+    const summary = document.createElement("div");
+    summary.className = "character-sheet-summary";
+    const model = document.createElement("span");
+    model.textContent = String(getValue(result, "ModelName", "modelName") || "Krea 2");
+    const size = document.createElement("span");
+    size.textContent = `${items.length} views · 1024 × 1024 each`;
+    const seconds = Number(getValue(result, "GenerationSeconds", "generationSeconds"));
+    const time = document.createElement("span");
+    time.textContent = Number.isFinite(seconds) && seconds > 0 ? `${seconds.toFixed(1)} s total` : "Sequential generation";
+    summary.append(model, size, time);
+    target.append(grid, title, summary);
+  }
+
+  renderGenerationResult = function kreaRenderGenerationResult(result) {
+    const items = getValue(result, "CharacterSheetItems", "characterSheetItems");
+    if (Array.isArray(items) && items.length) {
+      renderCharacterSheetResult(result);
+      return;
+    }
+    baseRenderGenerationResult(result);
   };
 
   function ensureKreaEditTaskUi() {
@@ -165,7 +285,7 @@
           <select id="krea-edit-task">
             <option value="general">General edit</option>
             <option value="material-replace">Material / texture</option>
-            <option value="character-turnaround">Character turnaround</option>
+            <option value="character-sheet">Character sheet</option>
           </select>
         </label>
         <div id="krea-material-controls" hidden>
@@ -192,9 +312,9 @@
           </label>
           <p class="history-model">StableAMD builds a focused replacement instruction and asks Krea to preserve geometry, lighting, composition and unrelated areas.</p>
         </div>
-        <div id="krea-turnaround-controls" class="model-root-card" hidden>
-          <strong>Four-view character sheet</strong>
-          <p class="history-model">Fixed output: 1536 × 768 · front / 3/4 / side / back. The source image is the only identity reference; extra reference images are intentionally disabled for this task.</p>
+        <div id="krea-character-sheet-controls" class="model-root-card" hidden>
+          <strong>Five-view character sheet</strong>
+          <p class="history-model">5 sequential 1024 × 1024 generations · Face / Front / 3/4 / Side / Back. One view is rendered per generation, then StableAMD shows the results together as a grid.</p>
         </div>
         <div id="krea-reference-section" class="field">
           <label class="checkbox-field">
@@ -267,7 +387,7 @@
     const krea = family === "krea2";
     const active = krea && mode.value === "img2img";
     const material = active && isMaterialTask();
-    const turnaround = active && isTurnaroundTask();
+    const characterSheet = active && isCharacterSheetTask();
     const imageOption = Array.from(mode.options).find((option) => option.value === "img2img");
     if (imageOption && krea) {
       imageOption.textContent = imageOption.disabled
@@ -278,8 +398,8 @@
     if (taskPanel) taskPanel.hidden = !active;
     const materialControls = document.querySelector("#krea-material-controls");
     if (materialControls) materialControls.hidden = !material;
-    const turnaroundControls = document.querySelector("#krea-turnaround-controls");
-    if (turnaroundControls) turnaroundControls.hidden = !turnaround;
+    const characterSheetControls = document.querySelector("#krea-character-sheet-controls");
+    if (characterSheetControls) characterSheetControls.hidden = !characterSheet;
 
     const preset = document.querySelector("#krea-material-preset");
     const customField = document.querySelector("#krea-material-custom-field");
@@ -292,8 +412,8 @@
     if (target) target.required = Boolean(material);
 
     const referenceSection = document.querySelector("#krea-reference-section");
-    if (referenceSection) referenceSection.hidden = turnaround;
-    const referenceOn = active && !turnaround && referenceEnabled();
+    if (referenceSection) referenceSection.hidden = characterSheet;
+    const referenceOn = active && !characterSheet && referenceEnabled();
     const referenceControls = document.querySelector("#krea-reference-controls");
     const referenceInput = document.querySelector("#krea-reference-image");
     if (referenceControls) referenceControls.hidden = !referenceOn;
@@ -324,14 +444,23 @@
     const prompt = document.querySelector("#prompt");
     const promptLabel = prompt?.closest(".field")?.querySelector(":scope > span");
     if (promptLabel) {
-      promptLabel.textContent = turnaround
-        ? "Additional character notes (optional)"
+      promptLabel.textContent = characterSheet
+        ? "Character identity prompt"
         : (material ? "Additional instruction (optional)" : (active ? "Edit instruction" : "Prompt"));
     }
     if (prompt) {
-      prompt.required = !(material || turnaround);
-      prompt.placeholder = turnaround
-        ? "Optional: preserve a signature accessory, expression, age, costume detail or other identity cue…"
+      if (characterSheet) {
+        if (!prompt.value.trim() || prompt.dataset.characterSheetDefault === "true") {
+          prompt.value = CHARACTER_SHEET_DEFAULT_PROMPT;
+          prompt.dataset.characterSheetDefault = "true";
+        }
+      } else if (prompt.dataset.characterSheetDefault === "true" && prompt.value === CHARACTER_SHEET_DEFAULT_PROMPT) {
+        prompt.value = "";
+        delete prompt.dataset.characterSheetDefault;
+      }
+      prompt.required = !material;
+      prompt.placeholder = characterSheet
+        ? "Describe identity details that must remain consistent across Face / Front / 3/4 / Side / Back…"
         : (material
           ? "Optional: add color, finish, grain, wear, reflectivity or other details…"
           : "Describe the image you want to create…");
@@ -340,7 +469,7 @@
     const input = document.querySelector("#input-image");
     const inputLabel = input?.closest(".field")?.querySelector(":scope > span");
     if (inputLabel && active) {
-      inputLabel.textContent = turnaround
+      inputLabel.textContent = characterSheet
         ? "Character reference image · PNG, JPEG or WebP · max 20 MiB"
         : "Source image · PNG, JPEG or WebP · max 20 MiB";
     }
@@ -353,10 +482,10 @@
     const hint = document.querySelector("#img2img-source-hint");
     if (hint && active) {
       const file = input?.files?.[0];
-      if (turnaround) {
+      if (characterSheet) {
         hint.textContent = file
-          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Character turnaround will use this image as the identity reference for all four views.`
-          : "Choose one clear character image. StableAMD will create one 1536 × 768 sheet with front / 3/4 / side / back views and consistent framing.";
+          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · This identity reference will be reused for five separate high-quality generations.`
+          : "Choose one clear character image. StableAMD will render Face / Front / 3/4 / Side / Back separately at 1024 × 1024, then show them together as a grid.";
       } else if (material) {
         hint.textContent = file
           ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Material / texture replacement uses the source as the preserved scene reference.`
@@ -375,6 +504,7 @@
     const model = document.querySelector("#model-select");
     if (!mode || !model) return false;
     ensureKreaEditTaskUi();
+    ensureCharacterSheetStyles();
     if (mode.dataset.kreaEditBound !== "true") {
       mode.dataset.kreaEditBound = "true";
       mode.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
@@ -388,6 +518,11 @@
       document.querySelector("#krea-reference-2-enabled")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-reference-role-2")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
       document.querySelector("#krea-reference-image-2")?.addEventListener("change", () => queueMicrotask(syncKreaEditUi));
+      document.querySelector("#prompt")?.addEventListener("input", (event) => {
+        if (event.target.dataset.characterSheetDefault === "true" && event.target.value !== CHARACTER_SHEET_DEFAULT_PROMPT) {
+          delete event.target.dataset.characterSheetDefault;
+        }
+      });
       new MutationObserver(() => queueMicrotask(syncKreaEditUi)).observe(model, { childList: true });
     }
     syncKreaEditUi();
