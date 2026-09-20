@@ -162,7 +162,7 @@ class StableAmdKreaTurnaroundTests(unittest.TestCase):
         self.assertEqual(result["TurnaroundWidth"], 1536)
         self.assertEqual(result["TurnaroundHeight"], 768)
 
-    def test_frontend_replaces_turnaround_ui_with_sequential_character_sheet(self):
+    def test_frontend_replaces_turnaround_ui_with_quality_character_sheet(self):
         source = FRONTEND_PATH.read_text(encoding="utf-8")
         self.assertNotIn('value="character-turnaround"', source)
         self.assertIn('value="character-sheet"', source)
@@ -170,8 +170,12 @@ class StableAmdKreaTurnaroundTests(unittest.TestCase):
         self.assertIn("CHARACTER_SHEET_DEFAULT_PROMPT", source)
         self.assertIn("for (const view of CHARACTER_SHEET_VIEWS)", source)
         self.assertIn("CharacterSheetItems", source)
-        self.assertIn("5 sequential 1024 × 1024 generations", source)
-        self.assertIn("Face / Front / 3/4 / Side / Back", source)
+        self.assertIn('id="krea-character-sheet-framing"', source)
+        self.assertIn("Face is rendered at 1024 × 1024", source)
+        self.assertIn("Portrait views use 896 × 1152", source)
+        self.assertIn("full-body views use 832 × 1216", source)
+        self.assertIn('/api/character-sheet/compose', source)
+        self.assertIn("CharacterSheetComposite", source)
 
 
 if __name__ == "__main__":
