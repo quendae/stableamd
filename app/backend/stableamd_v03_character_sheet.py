@@ -76,23 +76,21 @@ class CharacterSheetBridgeMixin:
             policy = entry.get("editPolicy")
             if not isinstance(policy, dict):
                 continue
-            tasks = [
-                item for item in policy.get("tasks", [])
-                if isinstance(item, dict) and item.get("id") != "character-turnaround"
-            ]
-            tasks.append({
-                "id": "character-sheet",
-                "label": "Character sheet",
-                "referenceImages": 0,
-                "masked": False,
-                "sourceSizeOutput": False,
-                "outputSize": {
-                    "width": self._CHARACTER_SHEET_WIDTH,
-                    "height": self._CHARACTER_SHEET_HEIGHT,
-                },
-                "generationMode": "sequential",
-                "views": list(self._CHARACTER_SHEET_VIEWS),
-            })
+            tasks = [item for item in policy.get("tasks", []) if isinstance(item, dict)]
+            if not any(item.get("id") == "character-sheet" for item in tasks):
+                tasks.append({
+                    "id": "character-sheet",
+                    "label": "Character sheet",
+                    "referenceImages": 0,
+                    "masked": False,
+                    "sourceSizeOutput": False,
+                    "outputSize": {
+                        "width": self._CHARACTER_SHEET_WIDTH,
+                        "height": self._CHARACTER_SHEET_HEIGHT,
+                    },
+                    "generationMode": "sequential",
+                    "views": list(self._CHARACTER_SHEET_VIEWS),
+                })
             policy["tasks"] = tasks
         return support
 
