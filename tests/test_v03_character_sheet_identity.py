@@ -147,6 +147,80 @@ class StableAmdCharacterSheetIdentityTests(unittest.TestCase):
             self.assertEqual(references[0].get("name"), "staged-1.png")
             self.assertTrue(result.get("CharacterSheetIdentityReference"))
 
+    def test_character_sheet_releases_krea_runtime_after_each_child_generation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir)
+            staged = repo / "staged-source.png"
+
+            class Parent:
+                repo_root = repo
+
+                def __init__(self):
+                    self._stableamd_krea_edit_context = SimpleNamespace(value=None)
+                    self.posts = []
+
+                def _selected_product_model(self, _request):
+                    return {"id": "krea", "family": "krea2", "assetMode": "bundle"}
+
+                def _krea_image_edit_ready(self):
+                    return True
+
+                def _control_request(self, _request):
+                    return None
+
+                def _generate_krea2_turbo(self, request, _selected):
+                    return {
+                        "PromptId": "child",
+                        "Prompt": request["prompt"],
+                        "ModelId": "krea",
+                        "ModelName": "Krea 2 Turbo",
+                        "Width": request["width"],
+                        "Height": request["height"],
+                        "Seed": request.get("seed", 123),
+                        "GenerationSeconds": 1.0,
+                        "ImagePath": str(repo / "child.png"),
+                    }
+
+                def _persist_krea_image_edit_metadata(self, *_args, **_kwargs):
+                    return None
+
+                def _post_comfy_no_content(self, path, payload, timeout=60):
+                    self.posts.append((path, payload, timeout))
+
+            class Bridge(character_sheet.CharacterSheetBridgeMixin, Parent):
+                def _prepare_character_sheet_reference(self, source, view, requested_framing):
+                    return (
+                        source,
+                        "portrait",
+                        {"detected": False, "referenceCropped": False},
+                        1024,
+                        1024,
+                    )
+
+            bridge = Bridge()
+            request = {
+                "modelId": "krea",
+                "mode": "img2img",
+                "prompt": "Preserve the exact same subject.",
+                "inputImage": {
+                    "name": "source.png",
+                    "mimeType": "image/png",
+                    "dataBase64": "c291cmNl",
+                },
+                "editTask": "character-sheet",
+                "characterSheetView": "face-close-up",
+                "characterSheetFraming": "auto",
+                "seed": 424242,
+            }
+
+            with patch.object(character_sheet.base, "stage_input_image", return_value=staged):
+                bridge.generate(request)
+
+            self.assertEqual(
+                bridge.posts,
+                [("free", {"unload_models": True, "free_memory": True}, 10)],
+            )
+
     def test_frontend_reuses_one_random_seed_for_all_five_views(self):
         source = KREA_FRONTEND_PATH.read_text(encoding="utf-8")
         self.assertIn("characterSheetSharedSeed", source)
