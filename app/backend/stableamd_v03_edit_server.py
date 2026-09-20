@@ -266,8 +266,9 @@ class StableAmdApi(
     ControlNetApiMixin,
     product.StableAmdApi,
 ):
-    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob", "references"}
+    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob", "references", "editTask"}
     _reference_roles = {"style", "material", "content"}
+    _edit_tasks = {"character-turnaround"}
 
     def dispatch(self, method: str, target: str, body: bytes | None = None):
         if method.upper() == "GET" and target.split("?", 1)[0] == "/api/comfyui-runtime":
@@ -275,13 +276,24 @@ class StableAmdApi(
         return super().dispatch(method, target, body)
 
     def _validate_generation(self, request):
-        if "references" not in request:
-            return super()._validate_generation(request)
-
+        has_references = "references" in request
         references = request.get("references")
+        edit_task = request.get("editTask")
+
         clean = dict(request)
         clean.pop("references", None)
+        clean.pop("editTask", None)
         validated = super()._validate_generation(clean)
+
+        if edit_task is not None:
+            if not isinstance(edit_task, str) or edit_task not in self._edit_tasks:
+                raise ValueError("editTask must be character-turnaround when provided.")
+            if validated.get("mode", "txt2img") != "img2img":
+                raise ValueError("editTask is valid only for img2img generation.")
+            validated["editTask"] = edit_task
+
+        if not has_references:
+            return validated
 
         if validated.get("mode", "txt2img") != "img2img":
             raise ValueError("Reference images are valid only for img2img generation.")
@@ -289,6 +301,8 @@ class StableAmdApi(
             raise ValueError("references must be an array.")
         if len(references) > 2:
             raise ValueError("Krea Image Edit currently accepts at most 2 reference images.")
+        if edit_task == "character-turnaround" and references:
+            raise ValueError("Character turnaround does not accept extra reference images.")
 
         for reference in references:
             if not isinstance(reference, dict):
