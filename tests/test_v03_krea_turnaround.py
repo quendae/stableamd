@@ -171,9 +171,9 @@ class StableAmdKreaTurnaroundTests(unittest.TestCase):
         self.assertIn("for (const view of CHARACTER_SHEET_VIEWS)", source)
         self.assertIn("CharacterSheetItems", source)
         self.assertIn('id="krea-character-sheet-framing"', source)
-        self.assertIn("Face is rendered at 1024 × 1024", source)
-        self.assertIn("Portrait views use 896 × 1152", source)
-        self.assertIn("full-body views use 832 × 1216", source)
+        self.assertIn("Strict identity mode first renders FACE as an anchor", source)
+        self.assertIn("CHARACTER_SHEET_IDENTITY_REFINE_VIEWS", source)
+        self.assertIn('characterSheetPhase: "identity-refine"', source)
         self.assertIn('/api/character-sheet/compose', source)
         self.assertIn("CharacterSheetComposite", source)
 
