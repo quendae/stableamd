@@ -77,7 +77,7 @@ class StableAmdKreaTurnaroundTests(unittest.TestCase):
         self.assertEqual(task["views"], ["front", "three-quarter", "side", "back"])
         self.assertFalse(task["sourceSizeOutput"])
 
-    def test_api_accepts_only_character_turnaround_edit_task_on_img2img(self):
+    def test_api_accepts_legacy_character_turnaround_edit_task_on_img2img(self):
         api = server.StableAmdApi(object())
         request = {
             "prompt": "optional notes",
@@ -162,16 +162,16 @@ class StableAmdKreaTurnaroundTests(unittest.TestCase):
         self.assertEqual(result["TurnaroundWidth"], 1536)
         self.assertEqual(result["TurnaroundHeight"], 768)
 
-    def test_frontend_exposes_turnaround_task_and_suppresses_extra_references(self):
+    def test_frontend_replaces_turnaround_ui_with_sequential_character_sheet(self):
         source = FRONTEND_PATH.read_text(encoding="utf-8")
-        self.assertIn('value="character-turnaround"', source)
-        self.assertIn("Character turnaround", source)
-        self.assertIn("function buildCharacterTurnaroundInstruction", source)
-        self.assertIn('payload.editTask = "character-turnaround"', source)
-        self.assertIn("payload.prompt = buildCharacterTurnaroundInstruction()", source)
-        self.assertIn("delete payload.references", source)
-        self.assertIn("1536 × 768", source)
-        self.assertIn("front / 3/4 / side / back", source)
+        self.assertNotIn('value="character-turnaround"', source)
+        self.assertIn('value="character-sheet"', source)
+        self.assertIn("Character sheet", source)
+        self.assertIn("CHARACTER_SHEET_DEFAULT_PROMPT", source)
+        self.assertIn("for (const view of CHARACTER_SHEET_VIEWS)", source)
+        self.assertIn("CharacterSheetItems", source)
+        self.assertIn("5 sequential 1024 × 1024 generations", source)
+        self.assertIn("Face / Front / 3/4 / Side / Back", source)
 
 
 if __name__ == "__main__":
