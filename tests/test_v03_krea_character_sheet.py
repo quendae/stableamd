@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import sys
 import unittest
 from pathlib import Path
@@ -9,27 +8,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "app" / "backend"
 FRONTEND = ROOT / "app" / "frontend"
-KREA_EDIT_PATH = BACKEND / "stableamd_v03_krea_edit.py"
-FINAL_SERVER_PATH = BACKEND / "stableamd_v03_edit_server.py"
 KREA_FRONTEND_PATH = FRONTEND / "app-krea-edit.js"
 
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
+import stableamd_v03_character_sheet as character_sheet
 import stableamd_v03_edit_server as server
 
 
 class StableAmdKreaCharacterSheetTests(unittest.TestCase):
-    def _load_edit_module(self):
-        spec = importlib.util.spec_from_file_location("stableamd_v03_krea_character_sheet_test", KREA_EDIT_PATH)
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
     def test_krea_policy_advertises_sequential_character_sheet(self):
-        module = self._load_edit_module()
+        module = character_sheet
 
         class Parent:
             def model_support(self):
@@ -38,13 +28,11 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
                         "id": "krea",
                         "family": "krea2",
                         "capabilities": {"txt2img": "supported", "img2img": "planned"},
+                        "editPolicy": {"tasks": []},
                     }]
                 }
 
-            def _node_available(self, _name):
-                return True
-
-        class Bridge(module.KreaImageEditBridgeMixin, Parent):
+        class Bridge(module.CharacterSheetBridgeMixin, Parent):
             pass
 
         policy = Bridge().model_support()["models"][0]["editPolicy"]
@@ -81,8 +69,7 @@ class StableAmdKreaCharacterSheetTests(unittest.TestCase):
             api._validate_generation({**request, "characterSheetView": "diagonal"})
 
     def test_each_sheet_view_builds_a_single_view_instruction(self):
-        module = self._load_edit_module()
-        builder = module.KreaImageEditBridgeMixin._build_character_sheet_instruction
+        builder = character_sheet.CharacterSheetBridgeMixin._build_character_sheet_instruction
 
         face = builder("face-close-up", "keep the red scarf")
         front = builder("front", "keep the red scarf")
