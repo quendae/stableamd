@@ -14,8 +14,10 @@ class StableAmdCharacterSheetAsyncFrontendTests(unittest.TestCase):
 
         self.assertIn("waitForCharacterSheetGenerationJob", source)
         self.assertIn("/api/generation-jobs/${encoded}/result", source)
+        self.assertIn("async function submitCharacterSheetJob", source)
+        self.assertIn("waitForCharacterSheetGenerationJob(jobId)", source)
         self.assertIn("viewPayload.asyncJob = true", source)
-        self.assertIn("await waitForCharacterSheetGenerationJob", source)
+        self.assertIn("await submitCharacterSheetJob(path, options, viewPayload)", source)
         self.assertIn("Character Sheet child generation did not return an image path", source)
 
 
