@@ -12,7 +12,7 @@
     glass: 'glass',
   };
 
-  const CHARACTER_SHEET_DEFAULT_PROMPT = "Preserve the exact same character from Picture 1: identity, facial features, hairstyle or fur, clothing, accessories, body proportions, colors, materials, and art style. Keep the design consistent across every generated view. Use a clean neutral studio background with soft even lighting. Do not add text, labels, props, alternate outfits, or extra characters.";
+  const CHARACTER_SHEET_DEFAULT_PROMPT = "Preserve the exact same person or character from Picture 1. Treat identity as fixed, not approximate: keep face shape, eyes, nose, mouth, age impression, hairstyle or fur, skin or fur tone, clothing, accessories, body proportions, colors, materials, and art style consistent across every view. Ignore background scenery, landmarks, furniture, statues, and other props from Picture 1. Use a clean neutral studio background with soft even lighting. Do not add text, labels, props, alternate outfits, extra characters, facial distortions, or identity drift.";
   const CHARACTER_SHEET_VIEWS = [
     { id: "face-close-up", label: "Face close-up" },
     { id: "front", label: "Front" },
@@ -111,6 +111,17 @@
     return document.querySelector("#krea-reference-2-enabled")?.checked === true;
   }
 
+  function characterSheetSharedSeed(payload) {
+    const explicit = Number(payload?.seed);
+    if (Number.isSafeInteger(explicit) && explicit >= 0) return explicit;
+    const values = new Uint32Array(1);
+    if (globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(values);
+      return Number(values[0]);
+    }
+    return Math.floor(Math.random() * 0x100000000);
+  }
+
   function updateCharacterSheetProgress(index, view) {
     const title = document.querySelector("#result-empty strong");
     const detail = document.querySelector("#result-empty p");
@@ -178,6 +189,7 @@
           delete payload.references;
           const identityPrompt = String(payload.prompt || "").trim() || CHARACTER_SHEET_DEFAULT_PROMPT;
           const requestedFraming = selectedCharacterSheetFraming();
+          const sharedSeed = characterSheetSharedSeed(payload);
           const items = [];
           for (const view of CHARACTER_SHEET_VIEWS) {
             updateCharacterSheetProgress(items.length, view);
@@ -187,6 +199,7 @@
               characterSheetView: view.id,
               characterSheetFraming: requestedFraming,
               prompt: identityPrompt,
+              seed: sharedSeed,
             };
             delete viewPayload.width;
             delete viewPayload.height;
@@ -376,7 +389,7 @@
               <option value="full-body">Full body · head to toe</option>
             </select>
           </label>
-          <p class="history-model">Face is rendered at 1024 × 1024. Portrait views use 896 × 1152; full-body views use 832 × 1216. Auto uses DWPose when a person is detected, preserves unknown/non-human source framing otherwise, and writes one final 3 × 2 composite PNG after the five separate generations.</p>
+          <p class="history-model">Identity-focused mode uses one shared seed for all five generations and, when DWPose finds a face, adds an automatic tight face crop as Picture 2 while Picture 1 supplies clothing and body proportions. Face is rendered at 1024 × 1024. Portrait views use 896 × 1152; full-body views use 832 × 1216. The final 3 × 2 sheet is composed locally.</p>
         </div>
         <div id="krea-reference-section" class="field">
           <label class="checkbox-field">
@@ -546,8 +559,8 @@
       const file = input?.files?.[0];
       if (characterSheet) {
         hint.textContent = file
-          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · StableAMD reuses this identity reference, adapts framing per view, then persists one final composite PNG.`
-          : "Choose one clear character image. Auto framing uses DWPose for people, preserves unknown/non-human source framing, renders five views separately, then composes one final sheet PNG.";
+          ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Identity-focused Character Sheet uses a shared seed and an automatic face crop when available, then persists one final composite PNG.`
+          : "Choose one clear character image. Auto framing uses DWPose for people; when a face is found, StableAMD adds a private face identity reference for the body views and uses one seed across all five generations.";
       } else if (material) {
         hint.textContent = file
           ? `${file.name} · ${(file.size / (1024 * 1024)).toFixed(1)} MiB · Material / texture replacement uses the source as the preserved scene reference.`
