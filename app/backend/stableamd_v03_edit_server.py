@@ -24,12 +24,14 @@ import stableamd_v03_pose_control as posecontrol  # noqa: E402
 import stableamd_v03_depth_control as depthcontrol  # noqa: E402
 import stableamd_v03_pose_extract as poseextract  # noqa: E402
 import stableamd_v03_krea_edit as kreaedit  # noqa: E402
+import stableamd_v03_character_sheet as charactersheet  # noqa: E402
 from stableamd_generation_jobs import GenerationJobsApiMixin, GenerationTimeoutBridgeMixin  # noqa: E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: E402
 from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: E402
 from stableamd_v03_pose_extract import PoseExtractApiMixin, PoseExtractBridgeMixin  # noqa: E402
 from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: E402
+from stableamd_v03_character_sheet import CharacterSheetBridgeMixin  # noqa: E402
 
 COMFYUI_RELEASES_URL = "https://api.github.com/repos/Comfy-Org/ComfyUI/releases/latest"
 
@@ -134,6 +136,7 @@ def _read_comfy_version(comfy_root: Path) -> str | None:
 
 
 class PowerShellBridge(
+    CharacterSheetBridgeMixin,
     KreaImageEditBridgeMixin,
     PoseExtractBridgeMixin,
     DepthControlBridgeMixin,
@@ -266,9 +269,12 @@ class StableAmdApi(
     ControlNetApiMixin,
     product.StableAmdApi,
 ):
-    _generation_fields = set(product.StableAmdApi._generation_fields) | {"control", "asyncJob", "references", "editTask"}
+    _generation_fields = set(product.StableAmdApi._generation_fields) | {
+        "control", "asyncJob", "references", "editTask", "characterSheetView"
+    }
     _reference_roles = {"style", "material", "content"}
-    _edit_tasks = {"character-turnaround"}
+    _edit_tasks = {"character-turnaround", "character-sheet"}
+    _character_sheet_views = {"face-close-up", "front", "three-quarter", "side", "back"}
 
     def dispatch(self, method: str, target: str, body: bytes | None = None):
         if method.upper() == "GET" and target.split("?", 1)[0] == "/api/comfyui-runtime":
@@ -279,18 +285,29 @@ class StableAmdApi(
         has_references = "references" in request
         references = request.get("references")
         edit_task = request.get("editTask")
+        character_sheet_view = request.get("characterSheetView")
 
         clean = dict(request)
         clean.pop("references", None)
         clean.pop("editTask", None)
+        clean.pop("characterSheetView", None)
         validated = super()._validate_generation(clean)
 
         if edit_task is not None:
             if not isinstance(edit_task, str) or edit_task not in self._edit_tasks:
-                raise ValueError("editTask must be character-turnaround when provided.")
+                raise ValueError("editTask must be character-turnaround or character-sheet when provided.")
             if validated.get("mode", "txt2img") != "img2img":
                 raise ValueError("editTask is valid only for img2img generation.")
             validated["editTask"] = edit_task
+
+        if edit_task == "character-sheet":
+            if not isinstance(character_sheet_view, str) or character_sheet_view not in self._character_sheet_views:
+                raise ValueError(
+                    "characterSheetView must be face-close-up, front, three-quarter, side, or back for character-sheet."
+                )
+            validated["characterSheetView"] = character_sheet_view
+        elif character_sheet_view is not None:
+            raise ValueError("characterSheetView is valid only when editTask is character-sheet.")
 
         if not has_references:
             return validated
@@ -301,8 +318,8 @@ class StableAmdApi(
             raise ValueError("references must be an array.")
         if len(references) > 2:
             raise ValueError("Krea Image Edit currently accepts at most 2 reference images.")
-        if edit_task == "character-turnaround" and references:
-            raise ValueError("Character turnaround does not accept extra reference images.")
+        if edit_task in {"character-turnaround", "character-sheet"} and references:
+            raise ValueError("Character sheet tasks do not accept extra reference images.")
 
         for reference in references:
             if not isinstance(reference, dict):
