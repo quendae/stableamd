@@ -8,6 +8,7 @@ Describe 'StableAMD one-click launcher' {
         $stopPath = Join-Path $repoRoot 'scripts/Stop-StableAMD.ps1'
         $watchPath = Join-Path $repoRoot 'scripts/Watch-StableAMD.ps1'
         $runtimeModulePath = Join-Path $repoRoot 'scripts/StableAmd.Runtime.psm1'
+        $syncRequirementsPath = Join-Path $repoRoot 'scripts/Sync-StableAmdComfyRequirements.ps1'
         $acceptancePath = Join-Path $repoRoot 'scripts/Test-StableAMDPackage.ps1'
     }
 
@@ -36,6 +37,20 @@ Describe 'StableAMD one-click launcher' {
         $script | Should -Not -Match 'resolvedCacheClassic\s*=\s*\$true'
         $script | Should -Match 'LowVram and HighVram cannot be enabled together'
         $script | Should -Match 'CacheClassic and CacheNone cannot be enabled together'
+    }
+
+    It 'syncs changed managed ComfyUI requirements before backend startup without replacing ROCm torch' {
+        Test-Path $syncRequirementsPath | Should -BeTrue
+        $launcher = Get-Content $launcherPath -Raw
+        $sync = Get-Content $syncRequirementsPath -Raw
+
+        $launcher | Should -Match 'Sync-StableAmdComfyRequirements\.ps1'
+        $sync | Should -Match 'Get-FileHash'
+        $sync | Should -Match 'comfy-requirements\.sha256'
+        $sync | Should -Match "'torch\|torchvision\|torchaudio'"
+        $sync | Should -Match "'-m',\s*'pip',\s*'install'"
+        $sync | Should -Match 'Status\s*=\s*''current'''
+        $sync | Should -Match 'Status\s*=\s*''updated'''
     }
 
     It 'starts the managed compute backend before the application server' {
