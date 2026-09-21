@@ -9,6 +9,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from stableamd_v03_edit_server_legacy import *  # noqa: F401,F403,E402
 import stableamd_v03_edit_server_legacy as legacy  # noqa: E402
+import stableamd_v03_product_server as product  # noqa: F401,E402
 import stableamd_v03_krea_edit as kreaedit  # noqa: E402
 from stableamd_generation_jobs import GenerationJobsApiMixin, GenerationTimeoutBridgeMixin  # noqa: F401,E402
 from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: F401,E402
