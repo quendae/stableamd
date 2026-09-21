@@ -7,6 +7,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SERVER = REPO_ROOT / "app" / "backend" / "stableamd_v03_server.py"
 FINAL_SERVER = REPO_ROOT / "app" / "backend" / "stableamd_v03_edit_server.py"
+IDENTITY_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_krea_identity_edit.py"
+CHARACTER_SHEET_V2_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_character_sheet_v2.py"
 
 
 class StableAmdV03IsolatedServerImportTests(unittest.TestCase):
@@ -37,6 +39,30 @@ class StableAmdV03IsolatedServerImportTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
         self.assertIn("StableAMD", completed.stdout)
+
+    def test_character_sheet_v2_modules_exist_and_import_without_pillow_or_numpy(self):
+        self.assertTrue(IDENTITY_MODULE.is_file())
+        self.assertTrue(CHARACTER_SHEET_V2_MODULE.is_file())
+        probe = f'''
+import runpy
+import sys
+runpy.run_path(r"{FINAL_SERVER}", run_name="stableamd_v03_import_probe")
+print("pillow=" + str(any(name == "PIL" or name.startswith("PIL.") for name in sys.modules)))
+print("numpy=" + str(any(name == "numpy" or name.startswith("numpy.") for name in sys.modules)))
+'''
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", probe],
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
+        self.assertIn("pillow=False", completed.stdout)
+        self.assertIn("numpy=False", completed.stdout)
 
     def test_isolated_v03_server_exposes_upscale_route_without_test_import_side_effects(self):
         probe = f'''
