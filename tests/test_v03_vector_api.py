@@ -11,7 +11,6 @@ BACKEND_ROOT = REPO_ROOT / "app" / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-import stableamd_server as base
 from stableamd_generation_jobs import GenerationJobsApiMixin
 import stableamd_v03_vector as vector
 
@@ -33,7 +32,27 @@ class VectorApiBridge:
         return {"assetType": "svg", "provider": "zimage-vtrace", "prompt": request["prompt"]}
 
 
-class TestVectorApi(vector.VectorApiMixin, GenerationJobsApiMixin, base.StableAmdApi):
+class MinimalApiBase:
+    def __init__(self, bridge):
+        self.bridge = bridge
+
+    @staticmethod
+    def _decode_json(body):
+        if body is None:
+            return {}
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Request body must contain valid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object.")
+        return payload
+
+    def dispatch(self, method, target, body=None):
+        return 404, {"error": "Not found."}
+
+
+class TestVectorApi(vector.VectorApiMixin, GenerationJobsApiMixin, MinimalApiBase):
     def _validate_generation(self, request):
         raise AssertionError("Vector API must not route its request through generation validation")
 
