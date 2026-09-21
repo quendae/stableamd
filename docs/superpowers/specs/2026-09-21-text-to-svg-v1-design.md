@@ -54,7 +54,7 @@ It uses the already accepted Z-Image Turbo path to create a vector-friendly rast
 - logo marks / symbols without text;
 - flat illustrations;
 - transparent or solid backgrounds;
-- limited palettes;
+- bounded/limited palettes;
 - Simple / Medium / Detailed vectorization profiles;
 - deterministic seed reuse;
 - SVG persistence and PNG preview;
@@ -84,6 +84,7 @@ user prompt
   -> vector prompt builder
   -> existing Z-Image Turbo generation
   -> raster intermediate
+  -> optional background-to-alpha preprocessing
   -> release ComfyUI / model runtime memory
   -> VTracer
   -> SVG sanitizer / normalizer
@@ -124,9 +125,30 @@ StableAMD appends server-owned vector-style constraints to the user's content pr
 
 No SVG-specific LoRA is required for v1 acceptance. A curated vector-domain LoRA may be evaluated later as an optional quality enhancement only after the baseline provider is accepted.
 
+### Background semantics
+
+`Solid` and `Transparent` are product settings, not guesses made after SVG generation.
+
+For `Solid`, the raster stage uses a server-owned flat background instruction. The background remains ordinary vector geometry in the final SVG.
+
+For `Transparent`, the raster stage is instructed to use a plain uniform background chosen by StableAMD. Before VTracer runs, StableAMD converts only the **border-connected background region** to alpha zero using a conservative local flood-fill/color-distance rule seeded from the image border. This preserves same/similar-colored shapes that are enclosed inside the subject instead of globally deleting a color from the image.
+
+If the background cannot be identified confidently enough for the transparent profile, the operation fails with a stage-specific preprocessing/quality error rather than publishing a misleading opaque SVG as `transparent`.
+
+The resulting PNG passed to VTracer carries actual alpha. The pinned VTracer color-cluster path supports transparency keying for substantially transparent input, so transparent pixels become discardable background instead of a painted vector layer.
+
+### Palette semantics
+
+The user-facing `Colors` control means **maximum palette size**, not exactly N colors.
+
+- `Auto` -> no StableAMD-requested palette cap beyond the profile defaults;
+- `2` / `4` / `8` / `16` -> pass the corresponding maximum-color constraint to the pinned VTracer CLI (`--max-colors N`).
+
+The final SVG may contain fewer colors than the selected maximum. StableAMD must not claim an exact color count unless a later dedicated fixed-palette feature is introduced.
+
 ### Stage B — runtime release
 
-After the raster image exists, release the Z-Image / ComfyUI generation memory before vectorization.
+After the raster image exists (and any local background-to-alpha preprocessing is complete), release the Z-Image / ComfyUI generation memory before vectorization.
 
 VTracer is CPU-side post-processing and must not hold the Radeon model runtime or reserve VRAM. This separation is part of the 16 GiB stability policy.
 
@@ -266,7 +288,7 @@ Every successful SVG asset also receives a PNG preview for the existing Gallery 
 
 The preview is derived from the **sanitized final SVG**, not from the Z-Image raster intermediate. This makes preview rendering part of the acceptance check: if the final SVG cannot render correctly, the operation is not successful.
 
-The concrete local renderer is selected during implementation planning based on already shipped runtime capabilities. It must not require a browser automation stack merely to create Gallery thumbnails.
+The concrete local renderer is selected during implementation planning based on already shipped runtime capabilities or a separately managed, pinned renderer. It must not require browser automation merely to create Gallery thumbnails.
 
 ## API contract
 
@@ -300,7 +322,7 @@ Validation:
 - `prompt`: required, non-empty, bounded length;
 - `style`: `icon` or `illustration`;
 - `detail`: `simple`, `medium`, `detailed`;
-- `colors`: `auto` or a supported bounded palette count such as `2`, `4`, `8`, `16`;
+- `colors`: `auto` or maximum palette size `2`, `4`, `8`, `16`;
 - `background`: `transparent` or `solid`;
 - solid background may carry one validated color value when implemented;
 - `seed`: existing StableAMD integer seed semantics.
@@ -331,8 +353,8 @@ History additionally records:
 - effective vector prompt/version;
 - style;
 - detail profile;
-- palette setting;
-- background setting;
+- palette maximum/auto setting;
+- background setting and background-preprocess status;
 - seed;
 - provider id;
 - vectorizer dependency/version;
@@ -340,7 +362,7 @@ History additionally records:
 - SVG path;
 - preview path;
 - hidden raster-intermediate relationship where retained for diagnostics;
-- generation, vectorization and total elapsed time.
+- generation, preprocessing, vectorization and total elapsed time.
 
 ## Asset serving
 
@@ -385,7 +407,7 @@ Initial controls:
 Prompt
 Style       Icon / Logo mark | Vector Illustration
 Detail      Simple | Medium | Detailed
-Colors      Auto | 2 | 4 | 8 | 16
+Colors      Auto | 2 | 4 | 8 | 16   (maximum palette)
 Background  Transparent | Solid
 Seed
 Generate SVG
@@ -426,6 +448,7 @@ Prefer small focused modules:
   - normalization;
   - complexity accounting;
   - deterministic serialization;
+- optional focused background preprocessing helper if it would otherwise make `stableamd_v03_vector.py` responsible for image segmentation;
 - frontend module such as `app/frontend/app-vector.js`
   - Vector workspace state;
   - dependency UX;
@@ -434,7 +457,7 @@ Prefer small focused modules:
 
 The final v0.3 server composes the Vector API/bridge as a thin additional layer. Existing provider request behavior delegates unchanged.
 
-Do not place sanitizer, VTracer process management or UI-specific mapping into `stableamd_v03_edit_server.py`.
+Do not place sanitizer, VTracer process management, background segmentation or UI-specific mapping into `stableamd_v03_edit_server.py`.
 
 ## Dependency management
 
@@ -456,6 +479,7 @@ Install into a StableAMD-managed private runtime directory. Validate the expecte
 Failures are stage-specific and must remain actionable:
 
 - raster generation failure -> fail job as Z-Image generation error;
+- transparent-background preprocessing cannot identify a safe border-connected background -> preprocessing/quality error;
 - vectorizer missing -> dependency error before raster generation where possible;
 - vectorizer non-zero exit / timeout -> vectorization error; do not publish PNG as SVG success;
 - malformed SVG -> sanitization error;
@@ -475,11 +499,13 @@ Implementation uses TDD.
 1. vector route accepts only the supported request contract;
 2. prompt/style/detail/palette/background/seed validation;
 3. vector route uses the accepted Z-Image provider rather than creating a second raster generator;
-4. vector workflow releases generation runtime before CPU vectorization;
-5. provider result records `zimage-vtrace`;
-6. vectorizer missing/invalid states are actionable;
-7. installer rejects wrong hash / wrong asset and never promotes partial installs;
-8. Simple / Medium / Detailed map to stable internal vectorizer profiles.
+4. transparent mode converts only border-connected background to alpha and preserves enclosed same-color geometry;
+5. `colors=2/4/8/16` maps to VTracer's maximum-color constraint rather than exact-color claims;
+6. vector workflow releases generation runtime before CPU vectorization;
+7. provider result records `zimage-vtrace`;
+8. vectorizer missing/invalid states are actionable;
+9. installer rejects wrong hash / wrong asset and never promotes partial installs;
+10. Simple / Medium / Detailed map to stable internal vectorizer profiles.
 
 ### Sanitizer security/validity tests
 
@@ -543,6 +569,7 @@ For each result verify:
 
 ```text
 [ ] Z-Image raster stage completes on the accepted AMD path
+[ ] transparent mode, when selected, yields actual alpha before vectorization
 [ ] runtime is released before vectorization
 [ ] VTracer completes without GPU/NVIDIA dependency
 [ ] final file is valid SVG/XML
@@ -550,6 +577,7 @@ For each result verify:
 [ ] no forbidden element/resource survives
 [ ] SVG opens in a normal browser
 [ ] SVG remains editable as vector paths/shapes
+[ ] selected color count behaves as an upper bound, not an exact-count promise
 [ ] PNG preview visually corresponds to the final sanitized SVG
 [ ] Gallery shows one vector result card, not the raster intermediate
 [ ] Reuse restores the Vector settings
@@ -597,6 +625,8 @@ A future provider that produces SVG directly still passes through the same sanit
 - StableAMD current v0.3 roadmap and provider/runtime contracts in this repository;
 - `visioncortex/vtracer`, which provides raster-to-SVG conversion, a CLI and Python bindings;
 - VTracer release `1.0.0-alpha.4`, including an x86_64 Windows MSVC CLI archive;
+- the pinned CLI exposes `--max-colors N` for auto-quantization to at most N colors;
+- VTracer's color-cluster frontend supports transparency keying for sufficiently transparent RGBA input;
 - VTracer crate licensing declared as `MIT OR Apache-2.0`.
 
 The implementation plan must re-check any external dependency identity/hash before writing installer production code if the pinned release changes.
