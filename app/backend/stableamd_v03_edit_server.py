@@ -16,6 +16,7 @@ from stableamd_v03_krea_edit import KreaImageEditBridgeMixin  # noqa: F401,E402
 from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  # noqa: F401,E402
 from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: F401,E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: F401,E402
+from stableamd_v03_vector import VectorApiMixin, VectorBridgeMixin  # noqa: E402
 from stableamd_v03_krea_identity_edit import (  # noqa: E402
     KreaIdentityEditApiMixin,
     KreaIdentityEditBridgeMixin,
@@ -48,7 +49,7 @@ COMFYUI_RELEASES_URL = legacy.COMFYUI_RELEASES_URL
 
 # Keep the source-level composition contract visible in the final wrapper. The
 # actual legacy instances are inherited once through legacy.PowerShellBridge;
-# v2 layers ahead of them without duplicating the accepted provider mixins.
+# product-specific layers ahead of them do not duplicate accepted providers.
 _FINAL_PROVIDER_ORDER = (
     KreaImageEditBridgeMixin,
     DepthControlBridgeMixin,
@@ -59,6 +60,7 @@ _FINAL_ASYNC_FIELDS = ("asyncJob",)
 
 
 class PowerShellBridge(
+    VectorBridgeMixin,
     CharacterSheetV2FacePanelGuardBridgeMixin,
     CharacterSheetV2FaceRefineBridgeMixin,
     CharacterSheetV2IdentityTuningBridgeMixin,
@@ -68,18 +70,19 @@ class PowerShellBridge(
     KreaIdentityEditBridgeMixin,
     legacy.PowerShellBridge,
 ):
-    """Final v0.3 bridge with guarded two-stage Character Sheet v2 refinement."""
+    """Final v0.3 bridge with Vector and guarded Character Sheet v2 flows."""
 
     def comfyui_runtime(self):
         return super().comfyui_runtime()
 
 
 class StableAmdApi(
+    VectorApiMixin,
     CharacterSheetV2ApiMixin,
     KreaIdentityEditApiMixin,
     legacy.StableAmdApi,
 ):
-    """Final v0.3 API with Character Sheet v2 and Krea Identity dependency management."""
+    """Final v0.3 API with Vector, Character Sheet v2 and pinned dependencies."""
 
     _generation_fields = set(legacy.StableAmdApi._generation_fields) | {
         "characterSheetVersion",
