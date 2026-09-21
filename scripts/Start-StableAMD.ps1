@@ -104,6 +104,19 @@ if ($null -ne $existingState) {
     }
 }
 
+# Existing managed runtimes can outlive a ComfyUI requirements update. Keep a
+# hash marker and repair dependencies once before a fresh backend process is
+# started. A healthy already-running backend returns above and is never mutated
+# underneath an active generation session.
+$requirementsSyncScript = Join-Path $PSScriptRoot 'Sync-StableAmdComfyRequirements.ps1'
+if (-not (Test-Path $requirementsSyncScript -PathType Leaf)) {
+    throw "StableAMD ComfyUI requirements synchronizer is missing: '$requirementsSyncScript'."
+}
+$requirementsSync = & $requirementsSyncScript -RepoRoot $RepoRoot
+if ($null -ne $requirementsSync -and [string]$requirementsSync.Status -eq 'updated') {
+    Write-Host 'Managed ComfyUI dependencies synchronized for the pinned runtime.' -ForegroundColor Green
+}
+
 function Get-StableAmdExistingRoots {
     param(
         [AllowEmptyCollection()][object[]]$RawRoots,
