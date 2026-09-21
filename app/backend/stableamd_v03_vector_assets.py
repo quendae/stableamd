@@ -9,6 +9,30 @@ import stableamd_server as base
 import stableamd_v03_svg_sanitize as svg_sanitize
 
 
+def resolve_output_svg(repo_root: Path, requested_path: str) -> Path:
+    """Resolve only SVG files inside StableAMD's managed Vector output root."""
+    if not requested_path or not str(requested_path).strip():
+        raise ValueError("Vector SVG path is required.")
+
+    vector_root = (
+        Path(repo_root).resolve() / ".runtime" / "stableamd" / "output" / "vector"
+    ).resolve()
+    candidate = Path(requested_path).expanduser().resolve()
+    if candidate == vector_root or vector_root not in candidate.parents:
+        raise ValueError("Vector SVG path is outside the StableAMD Vector output directory.")
+    if candidate.suffix.lower() != ".svg":
+        raise ValueError("Requested Vector output is not an SVG file.")
+    if not candidate.is_file():
+        raise ValueError("Vector SVG file was not found.")
+    return candidate
+
+
+# Compatibility export for callers that use the established stableamd_server
+# path helpers. Keeping the implementation here prevents Vector from changing
+# the accepted base HTTP server lifecycle.
+base.resolve_output_svg = resolve_output_svg
+
+
 def _managed_output_path(repo_root: Path, requested_path: str) -> Path:
     if not requested_path or not str(requested_path).strip():
         raise ValueError("Managed output path is required.")
@@ -41,7 +65,7 @@ class VectorAssetsBridgeMixin:
             if not raw_svg:
                 continue
             try:
-                persisted_svg = base.resolve_output_svg(self.repo_root, raw_svg)
+                persisted_svg = resolve_output_svg(self.repo_root, raw_svg)
             except ValueError:
                 continue
             if persisted_svg == svg_path:
@@ -49,7 +73,7 @@ class VectorAssetsBridgeMixin:
         return None
 
     def vector_source(self, requested_path: str) -> dict[str, str]:
-        svg_path = base.resolve_output_svg(self.repo_root, requested_path)
+        svg_path = resolve_output_svg(self.repo_root, requested_path)
         persisted = self._vector_history_record_for_svg(svg_path)
         if persisted is None:
             raise base.StableAmdBridgeError("Vector SVG is not a persisted sanitized Gallery asset.")
@@ -104,7 +128,7 @@ class VectorAssetsBridgeMixin:
         raw_svg = str(record.get("svgPath") or "").strip()
         if raw_svg:
             try:
-                svg_path = base.resolve_output_svg(self.repo_root, raw_svg)
+                svg_path = resolve_output_svg(self.repo_root, raw_svg)
                 svg_path.unlink(missing_ok=True)
             except ValueError:
                 refused_paths.append(raw_svg)
