@@ -20,6 +20,7 @@ from stableamd_v03_krea_identity_edit import (  # noqa: E402
     KreaIdentityEditApiMixin,
     KreaIdentityEditBridgeMixin,
 )
+from stableamd_v03_krea_identity_graph import KreaIdentityGraphBridgeMixin  # noqa: F401,E402
 from stableamd_v03_character_sheet_v2 import (  # noqa: E402
     CharacterSheetV2ApiMixin,
     CharacterSheetV2BridgeMixin,
@@ -51,6 +52,7 @@ _FINAL_ASYNC_FIELDS = ("asyncJob",)
 class PowerShellBridge(
     CharacterSheetV2BridgeMixin,
     KreaIdentityGenerationBridgeMixin,
+    KreaIdentityGraphBridgeMixin,
     KreaIdentityEditBridgeMixin,
     legacy.PowerShellBridge,
 ):
