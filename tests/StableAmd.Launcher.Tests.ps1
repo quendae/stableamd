@@ -41,10 +41,10 @@ Describe 'StableAMD one-click launcher' {
 
     It 'syncs changed managed ComfyUI requirements before backend startup without replacing ROCm torch' {
         Test-Path $syncRequirementsPath | Should -BeTrue
-        $launcher = Get-Content $launcherPath -Raw
+        $start = Get-Content $startPath -Raw
         $sync = Get-Content $syncRequirementsPath -Raw
 
-        $launcher | Should -Match 'Sync-StableAmdComfyRequirements\.ps1'
+        $start | Should -Match 'Sync-StableAmdComfyRequirements\.ps1'
         $sync | Should -Match 'Get-FileHash'
         $sync | Should -Match 'comfy-requirements\.sha256'
         $sync | Should -Match "'torch\|torchvision\|torchaudio'"
