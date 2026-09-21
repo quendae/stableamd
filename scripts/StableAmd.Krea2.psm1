@@ -15,7 +15,7 @@ function New-StableAmdKrea2Workflow {
         [string]$SamplerName = 'euler',
         [string]$Scheduler = 'simple',
         [string]$FilenamePrefix = 'StableAMD_KREA2_TURBO',
-        [ValidateSet('default', 'cpu')][string]$TextEncoderDevice = 'cpu'
+        [ValidateSet('default', 'cpu')][string]$TextEncoderDevice = 'default'
     )
 
     foreach ($value in @(
@@ -40,8 +40,10 @@ function New-StableAmdKrea2Workflow {
 
     # Flat equivalent of Comfy-Org/workflow_templates image_krea2_turbo_t2i.
     # The official Turbo path is 8 steps, CFG 1, Euler + simple scheduler.
-    # Keep Qwen3-VL on CPU by default for the first 16 GiB AMD acceptance pass;
-    # this can be relaxed later if target measurements show enough headroom.
+    # Let ComfyUI place/offload Qwen3-VL through the managed GPU/DynamicVRAM
+    # policy by default. Physical v2 testing showed that forcing the ~5 GB text
+    # encoder to CPU can saturate the host for many minutes before sampling.
+    # An explicit CPU fallback remains available for constrained hosts.
     return [ordered]@{
         '10' = [ordered]@{
             class_type = 'UNETLoader'
