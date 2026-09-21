@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
+from threading import local
 from typing import Any
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -32,6 +33,14 @@ KREA_IDENTITY_REQUIRED_NODES = (
     "Krea2EditGroundedEncode",
     "LoraLoaderModelOnly",
 )
+KREA_IDENTITY_LORA_STRENGTH = 1.0
+KREA_IDENTITY_REF_BOOST = 4.0
+KREA_IDENTITY_SCENE_REF_BOOST = 1.0
+KREA_IDENTITY_GROUNDING_PX = 1024
+KREA_IDENTITY_BASE_WIDTH = 1792
+KREA_IDENTITY_BASE_HEIGHT = 1024
+KREA_IDENTITY_BASE_STEPS = 10
+KREA_IDENTITY_MAX_PIXELS = 2_000_000
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 
@@ -95,6 +104,15 @@ def _download_pinned_identity_lora(destination: Path) -> bool:
 
 
 class KreaIdentityEditBridgeMixin:
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self._stableamd_krea_identity_context = local()
+
+    def _active_krea_identity_context(self) -> dict[str, Any] | None:
+        storage = getattr(self, "_stableamd_krea_identity_context", None)
+        value = getattr(storage, "value", None) if storage is not None else None
+        return value if isinstance(value, dict) else None
+
     @staticmethod
     def _dependency_descriptor_static() -> dict[str, Any]:
         return {
@@ -176,6 +194,144 @@ class KreaIdentityEditBridgeMixin:
         return all(self._node_available(name) for name in KREA_IDENTITY_REQUIRED_NODES) and (
             self._lora_choice_by_leaf(KREA_IDENTITY_LORA_FILENAME) is not None
         )
+
+    @staticmethod
+    def _validate_identity_target(width: Any, height: Any) -> tuple[int, int]:
+        try:
+            w = int(width)
+            h = int(height)
+        except (TypeError, ValueError) as exc:
+            raise base.StableAmdBridgeError("Krea Identity Edit dimensions must be integers.") from exc
+        if w <= 0 or h <= 0 or w % 16 or h % 16:
+            raise base.StableAmdBridgeError("Krea Identity Edit dimensions must be positive and divisible by 16.")
+        if w * h >= KREA_IDENTITY_MAX_PIXELS:
+            raise base.StableAmdBridgeError("Krea Identity Edit target must stay below the 2 MP quality ceiling.")
+        return w, h
+
+    def _inject_krea_identity_edit(
+        self,
+        workflow: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        for node_id in ("3", "5", "6", "7", "8", "10", "11", "12"):
+            if not isinstance(workflow.get(node_id), dict):
+                raise base.StableAmdBridgeError(
+                    "Krea 2 workflow anchors are missing for Identity Edit."
+                )
+        for node_name in KREA_IDENTITY_REQUIRED_NODES:
+            if not self._node_available(node_name):
+                raise base.StableAmdBridgeError(
+                    f"Krea Identity Edit requires ComfyUI node '{node_name}'. Install the pinned dependency and restart ComfyUI."
+                )
+
+        lora_name = self._lora_choice_by_leaf(KREA_IDENTITY_LORA_FILENAME)
+        if not lora_name:
+            raise base.StableAmdBridgeError(
+                f"ComfyUI does not expose '{KREA_IDENTITY_LORA_FILENAME}'. Install the Krea Identity Edit dependency and restart ComfyUI."
+            )
+
+        image_name = str(context.get("image_name") or "").strip()
+        identity_image_name = str(context.get("identity_image_name") or "").strip()
+        if not image_name:
+            raise base.StableAmdBridgeError("Krea Identity Edit source image is missing.")
+        width, height = self._validate_identity_target(
+            context.get("width", KREA_IDENTITY_BASE_WIDTH),
+            context.get("height", KREA_IDENTITY_BASE_HEIGHT),
+        )
+        prompt = str(context.get("prompt") or "").strip()
+        if not prompt:
+            raise base.StableAmdBridgeError("Krea Identity Edit prompt is required.")
+
+        sampler_inputs = workflow["3"].get("inputs")
+        latent_inputs = workflow["5"].get("inputs")
+        decode_inputs = workflow["8"].get("inputs")
+        if not all(isinstance(value, dict) for value in (sampler_inputs, latent_inputs, decode_inputs)):
+            raise base.StableAmdBridgeError("Krea 2 workflow inputs are incomplete for Identity Edit.")
+
+        current_model = sampler_inputs.get("model")
+        if not isinstance(current_model, list):
+            current_model = ["10", 0]
+
+        latent_inputs["width"] = width
+        latent_inputs["height"] = height
+        latent_inputs["batch_size"] = 1
+        sampler_inputs["steps"] = KREA_IDENTITY_BASE_STEPS
+        sampler_inputs["cfg"] = 1.0
+        sampler_inputs["sampler_name"] = "euler"
+        sampler_inputs["scheduler"] = "simple"
+        sampler_inputs["denoise"] = 1.0
+
+        workflow["120"] = {
+            "class_type": "LoadImage",
+            "inputs": {"image": image_name},
+        }
+        workflow["121"] = {
+            "class_type": "VAEEncode",
+            "inputs": {"pixels": ["120", 0], "vae": ["12", 0]},
+        }
+        if identity_image_name:
+            workflow["122"] = {
+                "class_type": "LoadImage",
+                "inputs": {"image": identity_image_name},
+            }
+            workflow["123"] = {
+                "class_type": "VAEEncode",
+                "inputs": {"pixels": ["122", 0], "vae": ["12", 0]},
+            }
+
+        workflow["124"] = {
+            "class_type": "LoraLoaderModelOnly",
+            "inputs": {
+                "model": current_model,
+                "lora_name": lora_name,
+                "strength_model": KREA_IDENTITY_LORA_STRENGTH,
+            },
+        }
+        patch_inputs: dict[str, Any] = {
+            "model": ["124", 0],
+            "source_latent": ["121", 0],
+            "ref_boost": KREA_IDENTITY_REF_BOOST,
+            "ref_boost_a": KREA_IDENTITY_SCENE_REF_BOOST,
+            "fit_mode": "fit",
+            "vae": ["12", 0],
+            "source_image": ["120", 0],
+            "target_latent": ["5", 0],
+        }
+        if identity_image_name:
+            patch_inputs["source_latent_b"] = ["123", 0]
+            patch_inputs["source_image_b"] = ["122", 0]
+        workflow["125"] = {
+            "class_type": "Krea2EditModelPatch",
+            "inputs": patch_inputs,
+        }
+
+        grounded_inputs: dict[str, Any] = {
+            "clip": ["11", 0],
+            "prompt": prompt,
+            "image": ["120", 0],
+            "grounding_px": KREA_IDENTITY_GROUNDING_PX,
+        }
+        if identity_image_name:
+            grounded_inputs["image_b"] = ["122", 0]
+        workflow["126"] = {
+            "class_type": "Krea2EditGroundedEncode",
+            "inputs": grounded_inputs,
+        }
+
+        sampler_inputs["model"] = ["125", 0]
+        sampler_inputs["positive"] = ["126", 0]
+        # CFG 1 uses the accepted empty text conditioning and avoids needless
+        # duplicate image-grounded encoding on the negative branch.
+        sampler_inputs["negative"] = ["7", 0]
+        decode_inputs["vae"] = ["12", 0]
+        return workflow
+
+    def _run_script(self, name: str, parameters: list[tuple[str, Any]] | None = None) -> Any:
+        result = super()._run_script(name, parameters)
+        context = self._active_krea_identity_context()
+        if name != "Build-StableAmdWorkflow.ps1" or not context or not isinstance(result, dict):
+            return result
+        return self._inject_krea_identity_edit(result, context)
 
     def krea_identity_dependency(self) -> dict[str, Any]:
         descriptor = self._dependency_descriptor_static()
