@@ -36,6 +36,25 @@ class BlockingBridge:
             self.finished.set()
 
 
+class MultiMethodBridge:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+        self.first_started = threading.Event()
+        self.first_release = threading.Event()
+        self.second_started = threading.Event()
+
+    def generate(self, request):
+        self.calls.append(("generate", dict(request)))
+        self.first_started.set()
+        self.first_release.wait(5)
+        return {"kind": "generation"}
+
+    def text_to_svg(self, request):
+        self.calls.append(("text_to_svg", dict(request)))
+        self.second_started.set()
+        return {"kind": "vector", "prompt": request.get("prompt")}
+
+
 class TestApi(GenerationJobsApiMixin, base.StableAmdApi):
     _generation_fields = set(base.StableAmdApi._generation_fields) | {"asyncJob"}
 
@@ -66,6 +85,7 @@ class StableAmdGenerationJobTests(unittest.TestCase):
 
         self.assertEqual(code, 202)
         self.assertTrue(submitted.get("jobId"))
+        self.assertEqual(submitted.get("jobKind"), "generation")
         self.assertIn(submitted.get("status"), {"queued", "running"})
         self.assertFalse(bridge.finished.is_set())
         self.assertTrue(bridge.started.wait(1))
@@ -77,6 +97,7 @@ class StableAmdGenerationJobTests(unittest.TestCase):
         bridge.release.set()
         completed = self._wait_status(api, job_id, "completed")
         self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["jobKind"], "generation")
 
         result_code, result = api.dispatch("GET", f"/api/generation-jobs/{job_id}/result")
         self.assertEqual(result_code, 200)
@@ -84,6 +105,37 @@ class StableAmdGenerationJobTests(unittest.TestCase):
         self.assertEqual(len(bridge.requests), 1)
         self.assertNotIn("asyncJob", bridge.requests[0])
         self.assertEqual(bridge.requests[0]["_generationTimeoutSeconds"], 21600)
+
+    def test_generic_bridge_jobs_share_the_same_serialization_lock(self):
+        bridge = MultiMethodBridge()
+        api = TestApi(bridge)
+
+        generation = api._submit_bridge_job(
+            {"prompt": "first"},
+            "generate",
+            job_kind="generation",
+        )
+        self.assertTrue(bridge.first_started.wait(1))
+
+        vector = api._submit_bridge_job(
+            {"prompt": "second"},
+            "text_to_svg",
+            job_kind="vector",
+        )
+        time.sleep(0.05)
+        self.assertFalse(bridge.second_started.is_set(), "second bridge job must wait for the shared run lock")
+        self.assertEqual(generation["jobKind"], "generation")
+        self.assertEqual(vector["jobKind"], "vector")
+
+        bridge.first_release.set()
+        self.assertTrue(bridge.second_started.wait(1))
+        self._wait_status(api, generation["jobId"], "completed")
+        self._wait_status(api, vector["jobId"], "completed")
+
+        result_code, result = api.dispatch("GET", f"/api/generation-jobs/{vector['jobId']}/result")
+        self.assertEqual(result_code, 200)
+        self.assertEqual(result, {"kind": "vector", "prompt": "second"})
+        self.assertNotIn("_generationTimeoutSeconds", bridge.calls[1][1])
 
     def test_async_failed_job_reports_error_without_hanging_request(self):
         bridge = BlockingBridge(fail=True)
