@@ -63,6 +63,24 @@ Describe 'StableAMD v0.1 release packaging' {
         Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_edit_server.py') | Should -BeTrue
     }
 
+    It 'packages the Text-to-SVG backend and Vector workspace assets' {
+        $buildScript = Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1'
+        $output = Join-Path $TestDrive 'v03-vector-dist'
+        $result = & $buildScript -RepoRoot $repoRoot -OutputDirectory $output -Version '0.3.0-vector-test'
+
+        @(
+            'app/backend/stableamd_v03_vector.py',
+            'app/backend/stableamd_v03_vector_assets.py',
+            'app/backend/stableamd_v03_svg_vectorizer.py',
+            'app/backend/stableamd_v03_svg_sanitize.py',
+            'app/backend/stableamd_v03_svg_preview.py',
+            'app/frontend/app-vector.js',
+            'app/frontend/vector.css'
+        ) | ForEach-Object {
+            Test-Path (Join-Path $result.PackageRoot $_) | Should -BeTrue
+        }
+    }
+
     It 'documents the completed RX 6950 XT clean-package and product-flow acceptance' {
         $validation = Get-Content -Path (Join-Path $repoRoot 'docs/v0.1-validation.md') -Raw
         $validation | Should -Match 'RX 6950 XT'
