@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/extras.css">
   <link rel="stylesheet" href="/progress.css">
+  <link rel="stylesheet" href="/vector.css">
 </head>
 <body>
   <div id="startup-gate" class="startup-gate" role="status" aria-live="polite">
@@ -31,6 +32,7 @@
 
       <nav class="nav-list">
         <button class="nav-item is-active" type="button" data-page="generate" aria-current="page">Generate</button>
+        <button class="nav-item" type="button" data-page="vector">Vector</button>
         <button class="nav-item" type="button" data-page="models">Models</button>
         <button class="nav-item" type="button" data-page="gallery">Gallery</button>
         <button class="nav-item" type="button" data-page="settings">Settings</button>
@@ -125,6 +127,80 @@
               <p>Your newest result and generation details will appear here.</p>
             </div>
             <div class="result-details" id="result-details" hidden></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="page" id="page-vector" data-page="vector">
+        <div class="vector-dependency" id="vector-dependency" data-state="missing">
+          <div class="vector-dependency-main">
+            <strong id="vector-dependency-status">Checking Vectorizer…</strong>
+            <p id="vector-dependency-detail">StableAMD is checking the managed local vector toolchain.</p>
+          </div>
+          <button class="button button-secondary" id="vector-install" type="button" hidden>Install Vectorizer</button>
+        </div>
+
+        <div class="vector-layout">
+          <form id="vector-form" class="vector-form">
+            <label class="field field-prompt">
+              <span>Prompt</span>
+              <textarea id="vector-prompt" rows="6" required placeholder="Describe the icon, mark, or vector illustration…"></textarea>
+            </label>
+
+            <div class="vector-control-grid">
+              <label class="field">
+                <span>Style</span>
+                <select id="vector-style">
+                  <option value="icon">Icon / Logo mark</option>
+                  <option value="illustration">Vector Illustration</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Detail</span>
+                <select id="vector-detail">
+                  <option value="simple">Simple</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Colors</span>
+                <select id="vector-colors">
+                  <option value="auto">Auto</option>
+                  <option value="2">2</option>
+                  <option value="4">4</option>
+                  <option value="8">8</option>
+                  <option value="16">16</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Background</span>
+                <select id="vector-background">
+                  <option value="transparent">Transparent</option>
+                  <option value="solid">Solid</option>
+                </select>
+              </label>
+            </div>
+
+            <label class="field" id="vector-background-color-field" hidden>
+              <span>Solid color</span>
+              <input id="vector-background-color" type="color" value="#ffffff">
+            </label>
+
+            <label class="field">
+              <span>Seed <small>leave blank for random</small></span>
+              <input id="vector-seed" type="number" min="0" placeholder="Random">
+            </label>
+
+            <button class="button button-primary generate-button" id="vector-generate" type="submit" disabled>Generate SVG</button>
+          </form>
+
+          <aside class="vector-result-panel" aria-live="polite">
+            <div class="result-empty" id="vector-result-empty">
+              <strong>Ready to create SVG</strong>
+              <p>The preview, vector metadata, source, and download controls will appear here.</p>
+            </div>
+            <div class="vector-result-details" id="vector-result" hidden></div>
           </aside>
         </div>
       </section>
@@ -269,5 +345,6 @@
   <script src="/app-outpaint-context.js" defer></script>
   <script src="/app-generate-upscale.js" defer></script>
   <script src="/app-generate-workspace.js" defer></script>
+  <script src="/app-vector.js" defer></script>
 </body>
 </html>
