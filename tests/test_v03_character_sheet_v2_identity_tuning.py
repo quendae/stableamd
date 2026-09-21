@@ -10,6 +10,8 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 import stableamd_v03_character_sheet_v2 as sheetv2
+import stableamd_v03_character_sheet_identity_tuning as tuning
+import stableamd_v03_edit_server as server
 
 
 BASE_REQUEST = {
@@ -79,7 +81,11 @@ class CharacterSheetV2IdentityTuningTests(unittest.TestCase):
             def _release_character_sheet_runtime(self):
                 return True
 
-        class Bridge(sheetv2.CharacterSheetV2BridgeMixin, Parent):
+        class Bridge(
+            tuning.CharacterSheetV2IdentityTuningBridgeMixin,
+            sheetv2.CharacterSheetV2BridgeMixin,
+            Parent,
+        ):
             def _analyze_character_source(self, source):
                 if face_detected:
                     return {
@@ -106,6 +112,13 @@ class CharacterSheetV2IdentityTuningTests(unittest.TestCase):
 
         return Bridge(), calls, deleted
 
+    def test_final_server_places_identity_tuning_before_character_sheet_v2(self):
+        mro = server.PowerShellBridge.__mro__
+        self.assertLess(
+            mro.index(tuning.CharacterSheetV2IdentityTuningBridgeMixin),
+            mro.index(sheetv2.CharacterSheetV2BridgeMixin),
+        )
+
     def test_base_pass_uses_full_source_plus_detected_face_as_second_identity_reference(self):
         bridge, calls, deleted = self._bridge(face_detected=True)
         result = bridge.generate_character_sheet_v2(dict(BASE_REQUEST))
@@ -114,7 +127,7 @@ class CharacterSheetV2IdentityTuningTests(unittest.TestCase):
         context = identity_call[1]
         self.assertEqual(context["image_name"], "source-v2.png")
         self.assertEqual(context["identity_image_name"], "identity-face.png")
-        self.assertEqual(deleted, ["source-v2.png", "identity-face.png"])
+        self.assertEqual(deleted, ["identity-face.png", "source-v2.png"])
         self.assertTrue(result["CharacterSheetBaseIdentityReference"])
 
     def test_base_pass_does_not_guess_face_anchor_when_source_has_no_face_box(self):
@@ -128,8 +141,8 @@ class CharacterSheetV2IdentityTuningTests(unittest.TestCase):
         self.assertFalse(result["CharacterSheetBaseIdentityReference"])
 
     def test_identity_prompts_forbid_beautification_and_preserve_specific_face_geometry(self):
-        base_prompt = sheetv2.CharacterSheetV2BridgeMixin._character_sheet_v2_prompt("").lower()
-        detail_prompt = sheetv2.CharacterSheetV2BridgeMixin._character_sheet_v2_detail_prompt("front").lower()
+        base_prompt = tuning.CharacterSheetV2IdentityTuningBridgeMixin._character_sheet_v2_prompt("").lower()
+        detail_prompt = tuning.CharacterSheetV2IdentityTuningBridgeMixin._character_sheet_v2_detail_prompt("front").lower()
 
         for phrase in (
             "do not beautify",
