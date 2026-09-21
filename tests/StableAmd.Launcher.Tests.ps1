@@ -45,7 +45,8 @@ Describe 'StableAMD one-click launcher' {
         $sync = Get-Content $syncRequirementsPath -Raw
 
         $start | Should -Match 'Sync-StableAmdComfyRequirements\.ps1'
-        $sync | Should -Match 'Get-FileHash'
+        $sync | Should -Not -Match 'Get-FileHash'
+        $sync | Should -Match 'Security\.Cryptography\.SHA256'
         $sync | Should -Match 'comfy-requirements\.sha256'
         $sync | Should -Match "'torch\|torchvision\|torchaudio'"
         $sync | Should -Match "'-m',\s*'pip',\s*'install'"
@@ -53,7 +54,7 @@ Describe 'StableAMD one-click launcher' {
         $sync | Should -Match 'Status\s*=\s*''updated'''
     }
 
-    It 'runs the requirements hash check under Windows PowerShell without cmdlet autoloading' {
+    It 'runs the requirements hash check when Windows PowerShell Utility cmdlets are unavailable' {
         $fixture = Join-Path ([IO.Path]::GetTempPath()) ("stableamd-requirements-sync-{0}" -f [guid]::NewGuid().ToString('N'))
         try {
             $pythonPath = Join-Path $fixture '.runtime/therock-gfx1030/python_embeded/python.exe'
@@ -77,7 +78,7 @@ Describe 'StableAMD one-click launcher' {
 
             $escapedScript = $syncRequirementsPath.Replace("'", "''")
             $escapedFixture = $fixture.Replace("'", "''")
-            $command = "`$PSModuleAutoLoadingPreference='None'; `$result = & '$escapedScript' -RepoRoot '$escapedFixture'; if (`$result.Status -ne 'current') { exit 2 }"
+            $command = "Import-Module Microsoft.PowerShell.Management; Remove-Module Microsoft.PowerShell.Utility -Force -ErrorAction SilentlyContinue; `$PSModuleAutoLoadingPreference='None'; `$result = & '$escapedScript' -RepoRoot '$escapedFixture'; if (`$result.Status -ne 'current') { exit 2 }"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $command
             $LASTEXITCODE | Should -Be 0
         }
