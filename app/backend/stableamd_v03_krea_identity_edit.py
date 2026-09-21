@@ -265,18 +265,43 @@ class KreaIdentityEditBridgeMixin:
             "class_type": "LoadImage",
             "inputs": {"image": image_name},
         }
+        # Krea2EditModelPatch uses the raw IMAGE through its pixel path and
+        # re-encodes it at the target grid. Its required source_latent socket is
+        # still evaluated first by ComfyUI, so never feed a camera-resolution
+        # source directly to WanVAE: on CPU VAE that can create tens-of-GB
+        # attention allocations before the safe pixel path gets a chance to run.
+        workflow["127"] = {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["120", 0],
+                "upscale_method": "lanczos",
+                "width": width,
+                "height": height,
+                "crop": "center",
+            },
+        }
         workflow["121"] = {
             "class_type": "VAEEncode",
-            "inputs": {"pixels": ["120", 0], "vae": ["12", 0]},
+            "inputs": {"pixels": ["127", 0], "vae": ["12", 0]},
         }
         if identity_image_name:
             workflow["122"] = {
                 "class_type": "LoadImage",
                 "inputs": {"image": identity_image_name},
             }
+            workflow["128"] = {
+                "class_type": "ImageScale",
+                "inputs": {
+                    "image": ["122", 0],
+                    "upscale_method": "lanczos",
+                    "width": width,
+                    "height": height,
+                    "crop": "center",
+                },
+            }
             workflow["123"] = {
                 "class_type": "VAEEncode",
-                "inputs": {"pixels": ["122", 0], "vae": ["12", 0]},
+                "inputs": {"pixels": ["128", 0], "vae": ["12", 0]},
             }
 
         workflow["124"] = {
