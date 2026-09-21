@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -60,7 +61,7 @@ class SvgVectorizerDependencyTests(unittest.TestCase):
 
             exe = vectorizer.vtracer_executable(root)
             exe.parent.mkdir(parents=True, exist_ok=True)
-            exe.write_bytes(b"wrong")
+            exe.write_bytes(b"MZ-unverified")
             with mock.patch.object(vectorizer.metadata, "version", return_value=vectorizer.RESVG_PY_VERSION):
                 invalid = vectorizer.vector_dependency_status(root)
             self.assertFalse(invalid["ready"])
@@ -68,13 +69,15 @@ class SvgVectorizerDependencyTests(unittest.TestCase):
             self.assertEqual(invalid["vtracer"]["status"], "invalid")
             self.assertEqual(invalid["previewRenderer"]["status"], "ready")
 
-            payload = b"fake-vtracer-exe"
-            with (
-                mock.patch.object(vectorizer, "VTRACER_BYTES", len(payload)),
-                mock.patch.object(vectorizer, "VTRACER_SHA256", hashlib.sha256(payload).hexdigest()),
-                mock.patch.object(vectorizer.metadata, "version", return_value=vectorizer.RESVG_PY_VERSION),
-            ):
-                exe.write_bytes(payload)
+            vectorizer.vtracer_manifest(root).write_text(
+                json.dumps({
+                    "version": vectorizer.VTRACER_VERSION,
+                    "archiveBytes": vectorizer.VTRACER_BYTES,
+                    "archiveSha256": vectorizer.VTRACER_SHA256,
+                }),
+                encoding="utf-8",
+            )
+            with mock.patch.object(vectorizer.metadata, "version", return_value=vectorizer.RESVG_PY_VERSION):
                 ready = vectorizer.vector_dependency_status(root)
             self.assertTrue(ready["ready"])
             self.assertEqual(ready["status"], "ready")
@@ -100,22 +103,32 @@ class SvgVectorizerDependencyTests(unittest.TestCase):
                 calls.append(list(args))
                 return _Completed()
 
+            expected_hash = hashlib.sha256(archive_payload).hexdigest()
             with (
                 mock.patch.object(vectorizer, "VTRACER_BYTES", len(archive_payload)),
-                mock.patch.object(vectorizer, "VTRACER_SHA256", hashlib.sha256(archive_payload).hexdigest()),
-                mock.patch.object(vectorizer.metadata, "version", side_effect=[vectorizer.metadata.PackageNotFoundError(), vectorizer.RESVG_PY_VERSION]),
+                mock.patch.object(vectorizer, "VTRACER_SHA256", expected_hash),
+                mock.patch.object(
+                    vectorizer.metadata,
+                    "version",
+                    side_effect=[vectorizer.metadata.PackageNotFoundError(), vectorizer.RESVG_PY_VERSION, vectorizer.RESVG_PY_VERSION],
+                ),
             ):
                 result = vectorizer.install_vector_dependencies(root, urlopen_fn=fake_urlopen, run_fn=fake_run)
+                manifest = json.loads(vectorizer.vtracer_manifest(root).read_text(encoding="utf-8"))
 
             exe = vectorizer.vtracer_executable(root)
             self.assertTrue(exe.is_file())
             self.assertEqual(exe.read_bytes(), executable_payload)
+            self.assertEqual(manifest["version"], vectorizer.VTRACER_VERSION)
+            self.assertEqual(manifest["archiveBytes"], len(archive_payload))
+            self.assertEqual(manifest["archiveSha256"], expected_hash)
             self.assertTrue(result["ready"])
             self.assertFalse(result["restartRequired"])
             self.assertEqual(result["status"], "ready")
             self.assertEqual(len(calls), 1)
             self.assertIn("resvg_py==0.5.0", calls[0])
-            leftovers = [p.name for p in exe.parents[1].iterdir() if ".partial-" in p.name or ".tmp-" in p.name]
+            tools_root = exe.parents[1]
+            leftovers = [p.name for p in tools_root.iterdir() if ".partial-" in p.name or ".tmp-" in p.name]
             self.assertEqual(leftovers, [])
 
     def test_installer_rejects_wrong_archive_hash_without_promoting(self):
@@ -134,6 +147,7 @@ class SvgVectorizerDependencyTests(unittest.TestCase):
                     vectorizer.install_vector_dependencies(root, urlopen_fn=fake_urlopen, run_fn=lambda *args, **kwargs: _Completed())
 
             self.assertFalse(vectorizer.vtracer_executable(root).exists())
+            self.assertFalse(vectorizer.vtracer_manifest(root).exists())
             tools_root = root / ".runtime" / "stableamd" / "tools" / "vtracer"
             leftovers = list(tools_root.glob(".*partial-*")) + list(tools_root.glob(".*tmp-*")) if tools_root.exists() else []
             self.assertEqual(leftovers, [])
