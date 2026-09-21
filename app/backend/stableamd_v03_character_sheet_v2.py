@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import local
 from typing import Any
@@ -112,6 +113,7 @@ class CharacterSheetV2BridgeMixin:
     _CHARACTER_SHEET_V2_VERSION = "v2-identity-edit"
     _CHARACTER_SHEET_V2_ROLES = ("face", "front", "three-quarter", "side", "back")
     _CHARACTER_SHEET_V2_PANEL_EDGE_INSET = 0.015
+    _CHARACTER_SHEET_V2_LAYOUT = "five-panel-horizontal"
 
     @staticmethod
     def _character_sheet_v2_prompt(description: Any = "") -> str:
@@ -413,6 +415,7 @@ class CharacterSheetV2BridgeMixin:
                 "detailerSkipped": None,
                 "detailerPromptId": refined.get("PromptId"),
                 "detailerHistoryPath": refined.get("HistoryPath"),
+                "detailerGenerationSeconds": refined.get("GenerationSeconds") or 0.0,
                 "detailCropBox": list(context["cropBox"]),
             }
         except base.StableAmdBridgeError as exc:
@@ -430,6 +433,129 @@ class CharacterSheetV2BridgeMixin:
                     release()
             scene.unlink(missing_ok=True)
             identity_reference.unlink(missing_ok=True)
+
+    def _persist_character_sheet_v2(
+        self,
+        request: dict[str, Any],
+        base_result: dict[str, Any],
+        final_path: Path,
+        detail_results: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        final_path = Path(final_path).resolve()
+        output_root = (self.repo_root / ".runtime" / "stableamd" / "output").resolve()
+        if output_root not in final_path.parents or not final_path.is_file():
+            raise base.StableAmdBridgeError("Character Sheet v2 final image is outside the StableAMD output folder or missing.")
+
+        prompt_id = uuid.uuid4().hex
+        generation_seconds = 0.0
+        try:
+            generation_seconds += float(base_result.get("GenerationSeconds") or 0.0)
+        except (TypeError, ValueError):
+            pass
+        items: list[dict[str, Any]] = []
+        for item in detail_results:
+            try:
+                generation_seconds += float(item.get("detailerGenerationSeconds") or 0.0)
+            except (TypeError, ValueError):
+                pass
+            items.append({
+                "role": str(item.get("role") or ""),
+                "imagePath": str(item.get("path") or ""),
+                "detailerStatus": str(item.get("detailerStatus") or "skipped"),
+                "detailerSkipped": item.get("detailerSkipped"),
+                "detailerPromptId": item.get("detailerPromptId"),
+                "detailCropBox": item.get("detailCropBox"),
+            })
+
+        prompt = str(base_result.get("Prompt") or self._character_sheet_v2_prompt(request.get("characterDescription")))
+        record = {
+            "schemaVersion": 3,
+            "createdAtUtc": datetime.now(timezone.utc).isoformat(),
+            "promptId": prompt_id,
+            "mode": "character-sheet",
+            "editOperation": "character-sheet-v2",
+            "prompt": prompt,
+            "negativePrompt": "",
+            "modelId": str(base_result.get("ModelId") or request.get("modelId") or ""),
+            "modelName": str(base_result.get("ModelName") or "Krea 2 Turbo"),
+            "width": identity.KREA_IDENTITY_BASE_WIDTH,
+            "height": identity.KREA_IDENTITY_BASE_HEIGHT,
+            "seed": base_result.get("Seed"),
+            "generationSeconds": round(generation_seconds, 3),
+            "imagePath": str(final_path),
+            "characterSheetVersion": self._CHARACTER_SHEET_V2_VERSION,
+            "characterSheetLayout": self._CHARACTER_SHEET_V2_LAYOUT,
+            "characterSheetViews": list(self._CHARACTER_SHEET_V2_ROLES),
+            "characterSheetIdentityMode": "identity-edit-v1.2",
+            "characterSheetIdentityLora": identity.KREA_IDENTITY_LORA_FILENAME,
+            "characterSheetIdentityLoraStrength": identity.KREA_IDENTITY_LORA_STRENGTH,
+            "characterSheetRefBoost": identity.KREA_IDENTITY_REF_BOOST,
+            "characterSheetGroundingPx": identity.KREA_IDENTITY_GROUNDING_PX,
+            "characterSheetBaseImagePath": str(base_result.get("ImagePath") or ""),
+            "characterSheetDetailer": True,
+            "characterSheetItems": items,
+            "galleryHidden": False,
+        }
+        saver = getattr(self, "_save_bundle_history", None)
+        if not callable(saver):
+            raise base.StableAmdBridgeError("Character Sheet v2 cannot persist Gallery history.")
+        history_path = saver(record)
+        composite = {
+            "ImagePath": str(final_path),
+            "Width": identity.KREA_IDENTITY_BASE_WIDTH,
+            "Height": identity.KREA_IDENTITY_BASE_HEIGHT,
+            "Layout": self._CHARACTER_SHEET_V2_LAYOUT,
+        }
+        return {
+            "PromptId": prompt_id,
+            "Mode": "character-sheet",
+            "EditOperation": "character-sheet-v2",
+            "Prompt": prompt,
+            "NegativePrompt": "",
+            "ModelId": record["modelId"],
+            "ModelName": record["modelName"],
+            "Width": record["width"],
+            "Height": record["height"],
+            "Seed": record["seed"],
+            "GenerationSeconds": record["generationSeconds"],
+            "ImagePath": str(final_path),
+            "HistoryPath": str(history_path),
+            "CharacterSheetVersion": self._CHARACTER_SHEET_V2_VERSION,
+            "CharacterSheetLayout": self._CHARACTER_SHEET_V2_LAYOUT,
+            "CharacterSheetViews": list(self._CHARACTER_SHEET_V2_ROLES),
+            "CharacterSheetIdentityMode": "identity-edit-v1.2",
+            "CharacterSheetIdentityLora": identity.KREA_IDENTITY_LORA_FILENAME,
+            "CharacterSheetIdentityLoraStrength": identity.KREA_IDENTITY_LORA_STRENGTH,
+            "CharacterSheetRefBoost": identity.KREA_IDENTITY_REF_BOOST,
+            "CharacterSheetGroundingPx": identity.KREA_IDENTITY_GROUNDING_PX,
+            "CharacterSheetBaseImagePath": record["characterSheetBaseImagePath"],
+            "CharacterSheetDetailer": True,
+            "CharacterSheetItems": items,
+            "CharacterSheetComposite": composite,
+        }
+
+    def _hide_character_sheet_v2_intermediates(
+        self,
+        base_result: dict[str, Any],
+        detail_results: list[dict[str, Any]],
+        final_result: dict[str, Any],
+    ) -> None:
+        hider = getattr(self, "_hide_character_sheet_child_history", None)
+        if not callable(hider):
+            return
+        children: list[dict[str, Any]] = []
+        base_history = str(base_result.get("HistoryPath") or "").strip()
+        if base_history:
+            children.append({"HistoryPath": base_history})
+        for item in detail_results:
+            history_path = str(item.get("detailerHistoryPath") or "").strip()
+            if history_path:
+                children.append({"HistoryPath": history_path})
+        hider(
+            children,
+            str(final_result.get("PromptId") or ""),
+            str(final_result.get("ImagePath") or ""),
+        )
 
     def _persist_character_sheet_v2_base_metadata(
         self,
@@ -523,7 +649,30 @@ class CharacterSheetV2BridgeMixin:
         result["EditOperation"] = "character-sheet-v2-base"
         result["Prompt"] = prompt
         self._persist_character_sheet_v2_base_metadata(result, metadata)
-        return result
+
+        if not bool(request.get("characterSheetDetailer", True)):
+            return result
+
+        panels = self._extract_v2_panels(Path(base_image))
+        detail_results: list[dict[str, Any]] = []
+        rendered_panels: list[CharacterSheetV2Panel] = []
+        for panel in panels:
+            detail_result = self._refine_v2_panel(request, selected, panel, source)
+            detail_results.append(detail_result)
+            rendered_panels.append(
+                CharacterSheetV2Panel(
+                    role=panel.role,
+                    index=panel.index,
+                    path=Path(str(detail_result.get("path") or panel.path)),
+                    box=panel.box,
+                    detail_box=panel.detail_box,
+                )
+            )
+
+        final_path = self._reassemble_v2_panels(Path(base_image), rendered_panels)
+        final_result = self._persist_character_sheet_v2(request, result, final_path, detail_results)
+        self._hide_character_sheet_v2_intermediates(result, detail_results, final_result)
+        return final_result
 
     def generate(self, request: dict[str, Any]) -> Any:
         if str(request.get("editTask") or "").strip().lower() != "character-sheet":
