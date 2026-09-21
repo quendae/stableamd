@@ -98,20 +98,24 @@ class SvgVectorizerDependencyTests(unittest.TestCase):
                 return _BytesResponse(archive_payload)
 
             calls = []
+            preview_installed = {"value": False}
 
             def fake_run(args, **kwargs):
                 calls.append(list(args))
+                preview_installed["value"] = True
                 return _Completed()
+
+            def fake_version(package):
+                self.assertEqual(package, "resvg_py")
+                if not preview_installed["value"]:
+                    raise vectorizer.metadata.PackageNotFoundError(package)
+                return vectorizer.RESVG_PY_VERSION
 
             expected_hash = hashlib.sha256(archive_payload).hexdigest()
             with (
                 mock.patch.object(vectorizer, "VTRACER_BYTES", len(archive_payload)),
                 mock.patch.object(vectorizer, "VTRACER_SHA256", expected_hash),
-                mock.patch.object(
-                    vectorizer.metadata,
-                    "version",
-                    side_effect=[vectorizer.metadata.PackageNotFoundError(), vectorizer.RESVG_PY_VERSION, vectorizer.RESVG_PY_VERSION],
-                ),
+                mock.patch.object(vectorizer.metadata, "version", side_effect=fake_version),
             ):
                 result = vectorizer.install_vector_dependencies(root, urlopen_fn=fake_urlopen, run_fn=fake_run)
                 manifest = json.loads(vectorizer.vtracer_manifest(root).read_text(encoding="utf-8"))
