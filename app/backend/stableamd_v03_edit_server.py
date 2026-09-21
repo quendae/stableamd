@@ -20,6 +20,11 @@ from stableamd_v03_krea_identity_edit import (  # noqa: E402
     KreaIdentityEditApiMixin,
     KreaIdentityEditBridgeMixin,
 )
+from stableamd_v03_character_sheet_v2 import (  # noqa: E402
+    CharacterSheetV2ApiMixin,
+    CharacterSheetV2BridgeMixin,
+    KreaIdentityGenerationBridgeMixin,
+)
 
 # Explicit aliases retained for compatibility with tests and downstream modules
 # that import the final v0.3 server rather than the preserved legacy layer.
@@ -32,8 +37,8 @@ _POWERSHELL_JSON_SENTINEL = legacy._POWERSHELL_JSON_SENTINEL
 COMFYUI_RELEASES_URL = legacy.COMFYUI_RELEASES_URL
 
 # Keep the source-level composition contract visible in the final wrapper. The
-# actual instances are inherited once through legacy.PowerShellBridge, avoiding
-# duplicate mixins while preserving the accepted provider ordering.
+# actual legacy instances are inherited once through legacy.PowerShellBridge;
+# v2 layers ahead of them without duplicating the accepted provider mixins.
 _FINAL_PROVIDER_ORDER = (
     KreaImageEditBridgeMixin,
     DepthControlBridgeMixin,
@@ -44,20 +49,29 @@ _FINAL_ASYNC_FIELDS = ("asyncJob",)
 
 
 class PowerShellBridge(
+    CharacterSheetV2BridgeMixin,
+    KreaIdentityGenerationBridgeMixin,
     KreaIdentityEditBridgeMixin,
     legacy.PowerShellBridge,
 ):
-    """Final v0.3 bridge plus the pinned Krea Identity Edit provider layer."""
+    """Final v0.3 bridge with training-matched Character Sheet v2 before legacy sheet flow."""
 
     def comfyui_runtime(self):
         return super().comfyui_runtime()
 
 
 class StableAmdApi(
+    CharacterSheetV2ApiMixin,
     KreaIdentityEditApiMixin,
     legacy.StableAmdApi,
 ):
-    """Final v0.3 API plus Krea Identity Edit dependency management."""
+    """Final v0.3 API with Character Sheet v2 and Krea Identity dependency management."""
+
+    _generation_fields = set(legacy.StableAmdApi._generation_fields) | {
+        "characterSheetVersion",
+        "characterDescription",
+        "characterSheetDetailer",
+    }
 
 
 base.PowerShellBridge = PowerShellBridge
