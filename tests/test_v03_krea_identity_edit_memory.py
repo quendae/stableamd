@@ -10,6 +10,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_v03_krea_identity_edit as identity
+import stableamd_v03_krea_identity_graph as graphfix
 
 
 def _base_krea_workflow():
@@ -41,7 +42,11 @@ class _GraphParent:
         return None
 
 
-class _GraphBridge(identity.KreaIdentityEditBridgeMixin, _GraphParent):
+class _GraphBridge(
+    graphfix.KreaIdentityGraphBridgeMixin,
+    identity.KreaIdentityEditBridgeMixin,
+    _GraphParent,
+):
     pass
 
 
@@ -55,32 +60,54 @@ class KreaIdentityMemoryTests(unittest.TestCase):
             "height": 1024,
         })
 
-        self.assertEqual(graph["127"]["class_type"], "ImageScale")
-        self.assertEqual(graph["127"]["inputs"], {
-            "image": ["120", 0],
-            "upscale_method": "lanczos",
-            "width": 1792,
-            "height": 1024,
-            "crop": "center",
-        })
-        self.assertEqual(graph["121"]["inputs"]["pixels"], ["127", 0])
+        image_nodes = {
+            node_id: node
+            for node_id, node in graph.items()
+            if isinstance(node, dict) and node.get("class_type") == "LoadImage"
+        }
+        source_image_id = next(
+            node_id for node_id, node in image_nodes.items()
+            if node["inputs"]["image"] == "full-resolution-source.png"
+        )
+        identity_image_id = next(
+            node_id for node_id, node in image_nodes.items()
+            if node["inputs"]["image"] == "full-resolution-identity.png"
+        )
 
-        self.assertEqual(graph["128"]["class_type"], "ImageScale")
-        self.assertEqual(graph["128"]["inputs"], {
-            "image": ["122", 0],
-            "upscale_method": "lanczos",
-            "width": 1792,
-            "height": 1024,
-            "crop": "center",
-        })
-        self.assertEqual(graph["123"]["inputs"]["pixels"], ["128", 0])
+        scale_nodes = {
+            node_id: node
+            for node_id, node in graph.items()
+            if isinstance(node, dict) and node.get("class_type") == "ImageScale"
+        }
+        source_scale_id = next(
+            node_id for node_id, node in scale_nodes.items()
+            if node["inputs"].get("image") == [source_image_id, 0]
+        )
+        identity_scale_id = next(
+            node_id for node_id, node in scale_nodes.items()
+            if node["inputs"].get("image") == [identity_image_id, 0]
+        )
 
-        patch = graph["125"]["inputs"]
-        self.assertEqual(patch["source_image"], ["120", 0])
-        self.assertEqual(patch["source_image_b"], ["122", 0])
-        grounded = graph["126"]["inputs"]
-        self.assertEqual(grounded["image"], ["120", 0])
-        self.assertEqual(grounded["image_b"], ["122", 0])
+        for scale_id in (source_scale_id, identity_scale_id):
+            self.assertEqual(graph[scale_id]["inputs"]["upscale_method"], "lanczos")
+            self.assertEqual(graph[scale_id]["inputs"]["width"], 1792)
+            self.assertEqual(graph[scale_id]["inputs"]["height"], 1024)
+            self.assertEqual(graph[scale_id]["inputs"]["crop"], "center")
+
+        vae_encodes = [
+            node for node in graph.values()
+            if isinstance(node, dict) and node.get("class_type") == "VAEEncode"
+        ]
+        self.assertEqual(len(vae_encodes), 2)
+        encoded_pixel_refs = {tuple(node["inputs"]["pixels"]) for node in vae_encodes}
+        self.assertEqual(encoded_pixel_refs, {(source_scale_id, 0), (identity_scale_id, 0)})
+
+        patch = next(node for node in graph.values() if node.get("class_type") == "Krea2EditModelPatch")["inputs"]
+        self.assertEqual(patch["source_image"], [source_image_id, 0])
+        self.assertEqual(patch["source_image_b"], [identity_image_id, 0])
+        grounded = next(node for node in graph.values() if node.get("class_type") == "Krea2EditGroundedEncode")["inputs"]
+        self.assertEqual(grounded["image"], [source_image_id, 0])
+        self.assertEqual(grounded["image_b"], [identity_image_id, 0])
 
 
 if __name__ == "__main__":
