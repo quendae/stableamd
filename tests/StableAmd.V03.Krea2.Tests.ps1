@@ -20,7 +20,7 @@ Describe 'StableAMD v0.3 Krea 2 Turbo provider' {
         $workflow['10'].inputs.unet_name | Should -Be 'krea2_turbo_fp8_scaled.safetensors'
         $workflow['11'].class_type | Should -Be 'CLIPLoader'
         $workflow['11'].inputs.type | Should -Be 'krea2'
-        $workflow['11'].inputs.device | Should -Be 'cpu'
+        $workflow['11'].inputs.device | Should -Be 'default'
         $workflow['12'].class_type | Should -Be 'VAELoader'
         $workflow['5'].class_type | Should -Be 'EmptyLatentImage'
         $workflow['3'].class_type | Should -Be 'KSampler'
@@ -33,6 +33,19 @@ Describe 'StableAMD v0.3 Krea 2 Turbo provider' {
         $workflow['3'].inputs.negative | Should -Be @('13', 0)
         $workflow['8'].class_type | Should -Be 'VAEDecode'
         $workflow['9'].class_type | Should -Be 'SaveImage'
+    }
+
+    It 'keeps an explicit CPU text encoder fallback for constrained hosts' {
+        Import-Module $modulePath -Force
+
+        $workflow = New-StableAmdKrea2Workflow `
+            -DiffusionModelName 'krea2_turbo_fp8_scaled.safetensors' `
+            -TextEncoderName 'qwen3vl_4b_fp8_scaled.safetensors' `
+            -VaeName 'qwen_image_vae.safetensors' `
+            -Prompt 'fallback test' `
+            -TextEncoderDevice 'cpu'
+
+        $workflow['11'].inputs.device | Should -Be 'cpu'
     }
 
     It 'routes krea2 through the shared workflow service and rejects LoRA until enabled' {
