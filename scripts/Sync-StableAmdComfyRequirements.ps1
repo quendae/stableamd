@@ -27,9 +27,9 @@ foreach ($required in @($paths.TheRockPython, $requirementsPath)) {
     }
 }
 
-# Keep hashing independent from Microsoft.PowerShell.Utility. The desktop
-# launcher uses Windows PowerShell and must not require Get-FileHash/module
-# autoload just to validate the managed ComfyUI requirements marker.
+# Keep hashing independent from optional PowerShell utility modules. The desktop
+# launcher uses Windows PowerShell and should rely only on the .NET runtime for
+# validating the managed ComfyUI requirements marker.
 $sha256 = [Security.Cryptography.SHA256]::Create()
 try {
     $requirementsStream = [IO.File]::OpenRead($requirementsPath)
