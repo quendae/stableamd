@@ -41,6 +41,38 @@ class CharacterSheetV2FaceRefineTests(unittest.TestCase):
         self.assertFalse(mixin._should_tight_face_refine("side"))
         self.assertFalse(mixin._should_tight_face_refine("back"))
 
+    def test_first_pass_keeps_original_face_only_identity_reference(self):
+        calls: list[tuple] = []
+        original_identity = _Staged("original-face.png", calls)
+
+        class Parent:
+            def _prepare_v2_detail_context(self, panel, source):
+                calls.append(("parent-context", panel.role))
+                return {
+                    "scene": _Staged("generated-head.png", calls),
+                    "identity": original_identity,
+                    "cropBox": (64, 48, 256, 304),
+                    "width": 768,
+                    "height": 1024,
+                }
+
+        class Bridge(face_refine.CharacterSheetV2FaceRefineBridgeMixin, Parent):
+            def _analyze_character_source(self, source):
+                calls.append(("unexpected-source-analysis",))
+                return {"faceBox": [10, 10, 40, 50]}
+
+            def _prepare_v2_head_identity(self, source, analysis):
+                calls.append(("unexpected-head-reference",))
+                return {"name": "head-shoulders.png", "mimeType": "image/png", "dataBase64": "AA=="}
+
+            def _stage_character_sheet_v2_source(self, payload):
+                calls.append(("unexpected-stage", payload.get("name")))
+                return _Staged("head-shoulders.png", calls)
+
+        context = Bridge()._prepare_v2_detail_context(self._panel("front"), {"name": "source.png"})
+        self.assertIs(context["identity"], original_identity)
+        self.assertEqual(calls, [("parent-context", "front")])
+
     def test_second_pass_uses_tight_original_face_and_preserves_first_pass_panel(self):
         calls: list[tuple] = []
 
