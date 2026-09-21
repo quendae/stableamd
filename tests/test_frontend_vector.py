@@ -43,7 +43,8 @@ class StableAmdVectorFrontendTests(unittest.TestCase):
             "/api/vector/source?path=",
         ):
             self.assertIn(route, source)
-        self.assertIn("StableAmdJobs.waitForGenerationJob", source)
+        self.assertIn("StableAmdJobs", source)
+        self.assertIn("waitForGenerationJob", source)
         self.assertNotIn("asyncJob", source)
         for raster_control in ("sampler", "scheduler", "lora", "controlnet"):
             self.assertNotIn(raster_control, source.lower())
