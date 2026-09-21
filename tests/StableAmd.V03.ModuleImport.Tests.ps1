@@ -39,4 +39,21 @@ Describe 'StableAMD v0.3 module import composition' {
             Remove-Module StableAmd.TemplateBundles, StableAmd.Bundles, StableAmd.BundleRoots, StableAmd.Runtime -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It 'keeps Character Sheet v2 modules in the final server composition' {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+        $identityModule = Join-Path $repoRoot 'app/backend/stableamd_v03_krea_identity_edit.py'
+        $sheetModule = Join-Path $repoRoot 'app/backend/stableamd_v03_character_sheet_v2.py'
+        $finalServer = Join-Path $repoRoot 'app/backend/stableamd_v03_edit_server.py'
+
+        Test-Path $identityModule -PathType Leaf | Should -BeTrue
+        Test-Path $sheetModule -PathType Leaf | Should -BeTrue
+        Test-Path $finalServer -PathType Leaf | Should -BeTrue
+
+        $serverSource = Get-Content -Path $finalServer -Raw
+        $serverSource | Should -Match 'stableamd_v03_krea_identity_edit'
+        $serverSource | Should -Match 'stableamd_v03_character_sheet_v2'
+        $serverSource | Should -Match 'CharacterSheetV2BridgeMixin'
+        $serverSource | Should -Match 'CharacterSheetV2ApiMixin'
+    }
 }
