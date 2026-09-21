@@ -53,6 +53,39 @@ Describe 'StableAMD one-click launcher' {
         $sync | Should -Match 'Status\s*=\s*''updated'''
     }
 
+    It 'runs the requirements hash check under Windows PowerShell without cmdlet autoloading' {
+        $fixture = Join-Path ([IO.Path]::GetTempPath()) ("stableamd-requirements-sync-{0}" -f [guid]::NewGuid().ToString('N'))
+        try {
+            $pythonPath = Join-Path $fixture '.runtime/therock-gfx1030/python_embeded/python.exe'
+            $requirementsPath = Join-Path $fixture '.runtime/therock-comfy/ComfyUI/requirements.txt'
+            $markerPath = Join-Path $fixture '.runtime/stableamd/comfy-requirements.sha256'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $pythonPath) -Force | Out-Null
+            New-Item -ItemType Directory -Path (Split-Path -Parent $requirementsPath) -Force | Out-Null
+            New-Item -ItemType Directory -Path (Split-Path -Parent $markerPath) -Force | Out-Null
+            New-Item -ItemType File -Path $pythonPath -Force | Out-Null
+            Set-Content -LiteralPath $requirementsPath -Value "comfyui-frontend-package==1.51.10`n" -Encoding ASCII
+
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+                $stream = [IO.File]::OpenRead($requirementsPath)
+                try { $hashBytes = $sha.ComputeHash($stream) }
+                finally { $stream.Dispose() }
+            }
+            finally { $sha.Dispose() }
+            $hash = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
+            Set-Content -LiteralPath $markerPath -Value $hash -Encoding ASCII
+
+            $escapedScript = $syncRequirementsPath.Replace("'", "''")
+            $escapedFixture = $fixture.Replace("'", "''")
+            $command = "`$PSModuleAutoLoadingPreference='None'; `$result = & '$escapedScript' -RepoRoot '$escapedFixture'; if (`$result.Status -ne 'current') { exit 2 }"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $command
+            $LASTEXITCODE | Should -Be 0
+        }
+        finally {
+            Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'starts the managed compute backend before the application server' {
         Test-Path $launcherPath | Should -BeTrue
         $script = Get-Content $launcherPath -Raw
