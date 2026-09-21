@@ -17,6 +17,7 @@ from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  
 from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: F401,E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: F401,E402
 from stableamd_v03_vector import VectorApiMixin, VectorBridgeMixin  # noqa: E402
+from stableamd_v03_vector_assets import VectorAssetsApiMixin, VectorAssetsBridgeMixin  # noqa: E402
 from stableamd_v03_krea_identity_edit import (  # noqa: E402
     KreaIdentityEditApiMixin,
     KreaIdentityEditBridgeMixin,
@@ -60,6 +61,7 @@ _FINAL_ASYNC_FIELDS = ("asyncJob",)
 
 
 class PowerShellBridge(
+    VectorAssetsBridgeMixin,
     VectorBridgeMixin,
     CharacterSheetV2FacePanelGuardBridgeMixin,
     CharacterSheetV2FaceRefineBridgeMixin,
@@ -77,6 +79,7 @@ class PowerShellBridge(
 
 
 class StableAmdApi(
+    VectorAssetsApiMixin,
     VectorApiMixin,
     CharacterSheetV2ApiMixin,
     KreaIdentityEditApiMixin,
