@@ -124,7 +124,17 @@ class CharacterSheetV2OrchestrationTests(unittest.TestCase):
                 return {"legacy": True}
 
         class Bridge(sheetv2.CharacterSheetV2BridgeMixin, Parent):
-            pass
+            # These are deliberate test seams. CharacterSheetV2BridgeMixin owns
+            # the real implementations, so assign the fixture methods directly
+            # on the concrete bridge to ensure the orchestration test never
+            # imports runtime-only Pillow/DWPose code.
+            _stage_character_sheet_v2_source = Parent._stage_character_sheet_v2_source
+            _persist_character_sheet_v2_base_metadata = Parent._persist_character_sheet_v2_base_metadata
+            _extract_v2_panels = Parent._extract_v2_panels
+            _refine_v2_panel = Parent._refine_v2_panel
+            _reassemble_v2_panels = Parent._reassemble_v2_panels
+            _persist_character_sheet_v2 = Parent._persist_character_sheet_v2
+            _hide_character_sheet_v2_intermediates = Parent._hide_character_sheet_v2_intermediates
 
         return Bridge()
 
