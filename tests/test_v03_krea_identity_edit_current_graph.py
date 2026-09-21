@@ -10,6 +10,8 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_v03_krea_identity_edit as identity
+import stableamd_v03_krea_identity_graph as graphfix
+import stableamd_v03_edit_server as server
 
 
 class _GraphParent:
@@ -24,7 +26,11 @@ class _GraphParent:
         return None
 
 
-class _GraphBridge(identity.KreaIdentityEditBridgeMixin, _GraphParent):
+class _GraphBridge(
+    graphfix.KreaIdentityGraphBridgeMixin,
+    identity.KreaIdentityEditBridgeMixin,
+    _GraphParent,
+):
     pass
 
 
@@ -66,6 +72,13 @@ def _renumbered_krea_workflow():
 
 
 class KreaIdentityCurrentGraphTests(unittest.TestCase):
+    def test_final_server_composes_semantic_resolver_before_legacy_identity_mixin(self):
+        mro = server.PowerShellBridge.__mro__
+        self.assertLess(
+            mro.index(graphfix.KreaIdentityGraphBridgeMixin),
+            mro.index(identity.KreaIdentityEditBridgeMixin),
+        )
+
     def test_current_krea_graph_with_conditioning_zero_out_is_supported(self):
         graph = _GraphBridge()._inject_krea_identity_edit(_current_krea_workflow(), {
             "image_name": "source.png",
