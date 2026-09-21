@@ -13,7 +13,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_server as base
-import stableamd_v03_vector as vector
+import stableamd_v03_vector_assets as vector_assets
 
 
 class _ApiParent:
@@ -24,15 +24,13 @@ class _ApiParent:
         return 404, {"error": "not found"}
 
 
-class _VectorSourceApi(vector.VectorApiMixin, _ApiParent):
+class _VectorSourceApi(vector_assets.VectorAssetsApiMixin, _ApiParent):
     pass
 
 
-class _VectorSourceBridge:
+class _VectorSourceBridge(vector_assets.VectorAssetsBridgeMixin):
     def __init__(self, repo_root: Path):
         self.repo_root = Path(repo_root).resolve()
-
-    vector_source = vector.VectorBridgeMixin.vector_source
 
 
 class VectorAssetSafetyTests(unittest.TestCase):
@@ -49,7 +47,7 @@ class VectorAssetSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             repo_root, output_root, vector_root, _history_root = self._layout(temporary)
             svg = vector_root / "asset.svg"
-            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0h1v1z"/></svg>', encoding="utf-8")
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10"><path d="M0 0h1v1z"/></svg>', encoding="utf-8")
 
             self.assertEqual(base.resolve_output_svg(repo_root, str(svg)), svg.resolve())
 
@@ -77,12 +75,12 @@ class VectorAssetSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             repo_root, _output_root, vector_root, history_root = self._layout(temporary)
             svg = vector_root / "persisted.svg"
-            source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0h1v1z"/></svg>'
+            source = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10"><path d="M0 0h1v1z" /></svg>'
             svg.write_text(source, encoding="utf-8")
             api = _VectorSourceApi(_VectorSourceBridge(repo_root))
             target = "/api/vector/source?path=" + quote(str(svg))
 
-            code, payload = api.dispatch("GET", target)
+            code, _payload = api.dispatch("GET", target)
             self.assertNotEqual(code, 200)
 
             history = history_root / "vector.json"
@@ -105,7 +103,7 @@ class VectorAssetSafetyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             repo_root, _output_root, vector_root, history_root = self._layout(temporary)
             svg = vector_root / "asset.svg"
-            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h1v1z"/></svg>', encoding="utf-8")
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10"><path d="M0 0h1v1z" /></svg>', encoding="utf-8")
             api = _VectorSourceApi(_VectorSourceBridge(repo_root))
             target = "/api/vector/source?path=" + quote(str(svg))
 
