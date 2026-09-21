@@ -20,12 +20,13 @@ def _utc_now() -> str:
 
 
 class GenerationJobsApiMixin:
-    """Short-lived HTTP transport for long-running local generations.
+    """Short-lived HTTP transport for long-running local work.
 
     The legacy synchronous POST /api/generate contract remains available. The
     StableAMD UI opts into asyncJob, receives a job id immediately, then polls
-    status and fetches the result through short HTTP requests. GPU jobs are
-    serialized so multiple browser requests cannot compete for the same VRAM.
+    status and fetches the result through short HTTP requests. All heavy bridge
+    jobs share one serialization lock so GPU-backed requests cannot compete for
+    the same VRAM and Vector can reuse the transport without a second queue.
     """
 
     def __init__(self, bridge: Any):
@@ -38,6 +39,7 @@ class GenerationJobsApiMixin:
     def _public_generation_job(record: dict[str, Any]) -> dict[str, Any]:
         return {
             "jobId": record["jobId"],
+            "jobKind": record.get("jobKind", "generation"),
             "status": record["status"],
             "createdAtUtc": record["createdAtUtc"],
             "startedAtUtc": record.get("startedAtUtc"),
@@ -56,11 +58,21 @@ class GenerationJobsApiMixin:
             if isinstance(record, dict):
                 record.update(values)
 
-    def _run_generation_job(self, job_id: str, request: dict[str, Any]) -> None:
+    def _run_bridge_job(
+        self,
+        job_id: str,
+        request: dict[str, Any],
+        bridge_method: str,
+    ) -> None:
         with self._generation_run_lock:
             self._set_generation_job(job_id, status="running", startedAtUtc=_utc_now())
             try:
-                result = self.bridge.generate(request)
+                runner = getattr(self.bridge, bridge_method)
+                if not callable(runner):
+                    raise base.StableAmdBridgeError(
+                        f"StableAMD bridge method '{bridge_method}' is unavailable."
+                    )
+                result = runner(request)
             except Exception as exc:
                 self._set_generation_job(
                     job_id,
@@ -77,10 +89,25 @@ class GenerationJobsApiMixin:
                 error=None,
             )
 
-    def _submit_generation_job(self, request: dict[str, Any]) -> dict[str, Any]:
+    def _run_generation_job(self, job_id: str, request: dict[str, Any]) -> None:
+        self._run_bridge_job(job_id, request, "generate")
+
+    def _submit_bridge_job(
+        self,
+        request: dict[str, Any],
+        bridge_method: str,
+        *,
+        job_kind: str,
+    ) -> dict[str, Any]:
+        method_name = str(bridge_method or "").strip()
+        kind = str(job_kind or "").strip()
+        if not method_name or not kind:
+            raise ValueError("Async bridge jobs require a bridge method and job kind.")
+
         job_id = uuid.uuid4().hex
         record = {
             "jobId": job_id,
+            "jobKind": kind,
             "status": "queued",
             "createdAtUtc": _utc_now(),
             "startedAtUtc": None,
@@ -91,13 +118,20 @@ class GenerationJobsApiMixin:
         with self._generation_jobs_lock:
             self._generation_jobs[job_id] = record
         worker = Thread(
-            target=self._run_generation_job,
-            args=(job_id, dict(request)),
-            name=f"stableamd-generation-{job_id[:8]}",
+            target=self._run_bridge_job,
+            args=(job_id, dict(request), method_name),
+            name=f"stableamd-{kind}-{job_id[:8]}",
             daemon=True,
         )
         worker.start()
         return self._public_generation_job(record)
+
+    def _submit_generation_job(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self._submit_bridge_job(
+            request,
+            "generate",
+            job_kind="generation",
+        )
 
     def _dispatch_generation_job_get(self, path: str) -> tuple[int, Any] | None:
         prefix = "/api/generation-jobs/"
