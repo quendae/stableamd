@@ -27,7 +27,24 @@ foreach ($required in @($paths.TheRockPython, $requirementsPath)) {
     }
 }
 
-$requirementsHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $requirementsPath).Hash.ToLowerInvariant()
+# Keep hashing independent from Microsoft.PowerShell.Utility. The desktop
+# launcher uses Windows PowerShell and must not require Get-FileHash/module
+# autoload just to validate the managed ComfyUI requirements marker.
+$sha256 = [Security.Cryptography.SHA256]::Create()
+try {
+    $requirementsStream = [IO.File]::OpenRead($requirementsPath)
+    try {
+        $requirementsHashBytes = $sha256.ComputeHash($requirementsStream)
+    }
+    finally {
+        $requirementsStream.Dispose()
+    }
+}
+finally {
+    $sha256.Dispose()
+}
+$requirementsHash = [BitConverter]::ToString($requirementsHashBytes).Replace('-', '').ToLowerInvariant()
+
 $recordedHash = ''
 if (Test-Path $markerPath -PathType Leaf) {
     $recordedHash = ([string](Get-Content -LiteralPath $markerPath -Raw)).Trim().ToLowerInvariant()
