@@ -290,6 +290,23 @@ class CharacterSheetV2BridgeMixin:
             return _CHARACTER_SHEET_V2_DETAIL_PROMPT + " Preserve the current strict side profile exactly; do not rotate the face toward camera."
         return _CHARACTER_SHEET_V2_DETAIL_PROMPT
 
+    def _prepare_v2_original_identity(
+        self,
+        source: dict[str, Any],
+        analysis: dict[str, Any],
+    ) -> dict[str, str] | None:
+        """Use only an actually detected source face for v2 detail identity.
+
+        The legacy Character Sheet helper can derive a head crop from the full
+        subject box when DWPose does not expose a face box. That fallback is
+        useful for v1, but v2 detail correction must not invent an identity
+        reference from torso/background pixels.
+        """
+        face_box = analysis.get("faceBox") if isinstance(analysis, dict) else None
+        if not isinstance(face_box, (list, tuple)) or len(face_box) != 4:
+            return None
+        return self._prepare_character_sheet_identity_reference(source, analysis)
+
     def _prepare_v2_detail_context(
         self,
         panel: CharacterSheetV2Panel,
@@ -322,7 +339,7 @@ class CharacterSheetV2BridgeMixin:
             return None
 
         source_analysis = self._analyze_character_source(source)
-        identity_payload = self._prepare_character_sheet_identity_reference(source, source_analysis)
+        identity_payload = self._prepare_v2_original_identity(source, source_analysis)
         if identity_payload is None:
             return None
 
