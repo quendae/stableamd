@@ -10,11 +10,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 import stableamd_v03_character_sheet_v2 as sheetv2
-
-try:
-    import stableamd_v03_character_sheet_face_refine as face_refine
-except ModuleNotFoundError:
-    face_refine = None
+import stableamd_v03_character_sheet_face_refine as face_refine
 
 
 class _Staged:
@@ -26,7 +22,6 @@ class _Staged:
         self._calls.append(("unlink", self.name, missing_ok))
 
 
-@unittest.skipIf(face_refine is None, "RED: face-refine production module not implemented yet")
 class CharacterSheetV2FaceRefineTests(unittest.TestCase):
     @staticmethod
     def _panel(role: str = "front") -> sheetv2.CharacterSheetV2Panel:
