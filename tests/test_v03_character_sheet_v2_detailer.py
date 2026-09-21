@@ -68,6 +68,29 @@ class CharacterSheetV2DetailerFallbackTests(unittest.TestCase):
             detail_box=(5, 15, 353, 1009),
         )
 
+    def test_original_identity_requires_actual_source_face_box(self):
+        calls = []
+
+        class Bridge(sheetv2.CharacterSheetV2BridgeMixin):
+            def _prepare_character_sheet_identity_reference(self, source, analysis):
+                calls.append(dict(analysis))
+                return {"name": "face.png", "mimeType": "image/png", "dataBase64": "AA=="}
+
+        bridge = Bridge()
+        without_face = bridge._prepare_v2_original_identity(
+            {},
+            {"detected": True, "subjectBox": [10, 20, 110, 300], "faceBox": None},
+        )
+        self.assertIsNone(without_face)
+        self.assertEqual(calls, [])
+
+        with_face = bridge._prepare_v2_original_identity(
+            {},
+            {"detected": True, "subjectBox": [10, 20, 110, 300], "faceBox": [35, 30, 75, 85]},
+        )
+        self.assertEqual(with_face["name"], "face.png")
+        self.assertEqual(len(calls), 1)
+
     def test_no_face_keeps_original_panel_without_generation(self):
         calls = []
 
