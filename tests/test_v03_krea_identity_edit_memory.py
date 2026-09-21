@@ -51,7 +51,7 @@ class _GraphBridge(
 
 
 class KreaIdentityMemoryTests(unittest.TestCase):
-    def test_raw_references_are_scaled_only_for_required_source_latents(self):
+    def test_raw_references_use_gpu_pixel_path_without_standalone_vae_encode(self):
         graph = _GraphBridge()._inject_krea_identity_edit(_base_krea_workflow(), {
             "image_name": "full-resolution-source.png",
             "identity_image_name": "full-resolution-identity.png",
@@ -74,40 +74,50 @@ class KreaIdentityMemoryTests(unittest.TestCase):
             if node["inputs"]["image"] == "full-resolution-identity.png"
         )
 
-        scale_nodes = {
-            node_id: node
-            for node_id, node in graph.items()
-            if isinstance(node, dict) and node.get("class_type") == "ImageScale"
-        }
-        source_scale_id = next(
-            node_id for node_id, node in scale_nodes.items()
-            if node["inputs"].get("image") == [source_image_id, 0]
-        )
-        identity_scale_id = next(
-            node_id for node_id, node in scale_nodes.items()
-            if node["inputs"].get("image") == [identity_image_id, 0]
-        )
+        self.assertFalse(any(
+            isinstance(node, dict) and node.get("class_type") == "VAEEncode"
+            for node in graph.values()
+        ))
 
-        for scale_id in (source_scale_id, identity_scale_id):
-            self.assertEqual(graph[scale_id]["inputs"]["upscale_method"], "lanczos")
-            self.assertEqual(graph[scale_id]["inputs"]["width"], 1792)
-            self.assertEqual(graph[scale_id]["inputs"]["height"], 1024)
-            self.assertEqual(graph[scale_id]["inputs"]["crop"], "center")
-
-        vae_encodes = [
-            node for node in graph.values()
-            if isinstance(node, dict) and node.get("class_type") == "VAEEncode"
-        ]
-        self.assertEqual(len(vae_encodes), 2)
-        encoded_pixel_refs = {tuple(node["inputs"]["pixels"]) for node in vae_encodes}
-        self.assertEqual(encoded_pixel_refs, {(source_scale_id, 0), (identity_scale_id, 0)})
+        vae_select_id, vae_select = next(
+            (node_id, node) for node_id, node in graph.items()
+            if isinstance(node, dict) and node.get("class_type") == "SelectVAEDevice"
+        )
+        self.assertEqual(vae_select["inputs"], {"vae": ["12", 0], "device": "gpu:0"})
 
         patch = next(node for node in graph.values() if node.get("class_type") == "Krea2EditModelPatch")["inputs"]
+        self.assertEqual(patch["source_latent"], ["5", 0])
+        self.assertEqual(patch["source_latent_b"], ["5", 0])
         self.assertEqual(patch["source_image"], [source_image_id, 0])
         self.assertEqual(patch["source_image_b"], [identity_image_id, 0])
+        self.assertEqual(patch["target_latent"], ["5", 0])
+        self.assertEqual(patch["vae"], [vae_select_id, 0])
+
         grounded = next(node for node in graph.values() if node.get("class_type") == "Krea2EditGroundedEncode")["inputs"]
         self.assertEqual(grounded["image"], [source_image_id, 0])
         self.assertEqual(grounded["image_b"], [identity_image_id, 0])
+
+        self.assertEqual(graph["8"]["inputs"]["vae"], [vae_select_id, 0])
+
+    def test_identity_graph_requires_select_vae_device_for_cpu_vae_profile(self):
+        class MissingSelectParent(_GraphParent):
+            def _node_available(self, name):
+                return name != "SelectVAEDevice"
+
+        class MissingSelectBridge(
+            graphfix.KreaIdentityGraphBridgeMixin,
+            identity.KreaIdentityEditBridgeMixin,
+            MissingSelectParent,
+        ):
+            pass
+
+        with self.assertRaisesRegex(identity.base.StableAmdBridgeError, "SelectVAEDevice"):
+            MissingSelectBridge()._inject_krea_identity_edit(_base_krea_workflow(), {
+                "image_name": "source.png",
+                "prompt": "preserve identity",
+                "width": 1792,
+                "height": 1024,
+            })
 
 
 if __name__ == "__main__":
