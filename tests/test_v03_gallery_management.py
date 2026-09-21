@@ -10,7 +10,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 import stableamd_server as base
-import stableamd_v03_vector as vector
+import stableamd_v03_vector_assets as vector_assets
 import upscale_support
 
 
@@ -24,7 +24,7 @@ class _VectorDeleteParent:
         return {"deleted": False, "promptId": str(prompt_id), "delegated": True}
 
 
-class _VectorDeleteProbe(vector.VectorBridgeMixin, _VectorDeleteParent):
+class _VectorDeleteProbe(vector_assets.VectorAssetsBridgeMixin, _VectorDeleteParent):
     pass
 
 
