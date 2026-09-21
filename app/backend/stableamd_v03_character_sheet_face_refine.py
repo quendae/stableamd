@@ -24,16 +24,15 @@ _TIGHT_FACE_PROMPT = (
 class CharacterSheetV2FaceRefineBridgeMixin:
     """Second-stage identity correction for the most identity-sensitive v2 panels.
 
-    The normal v2 detailer remains the broad head/hair correction pass. This
-    layer then performs a smaller, higher-resolution face-only correction for
-    FACE, FRONT and THREE_QUARTER. SIDE intentionally stays on the broad pass:
-    forcing a frontal source face into a strict profile tends to rotate or flatten
-    the profile rather than improve likeness.
+    The accepted first v2 detailer remains face-only. This layer performs an
+    additional smaller, higher-resolution face correction for FACE, FRONT and
+    THREE_QUARTER without broadening the first-pass identity reference to neck,
+    shoulders or clothing. SIDE intentionally stays on the first pass because a
+    frontal tight-face reference can rotate or flatten a strict profile.
     """
 
     _TIGHT_FACE_ROLES = {"face", "front", "three-quarter"}
     _TIGHT_FACE_REFERENCE_SIZE = (768, 768)
-    _HEAD_REFERENCE_SIZE = (768, 896)
 
     @classmethod
     def _should_tight_face_refine(cls, role: str) -> bool:
@@ -72,34 +71,6 @@ class CharacterSheetV2FaceRefineBridgeMixin:
         except Exception as exc:
             raise base.StableAmdBridgeError(f"Character Sheet identity source could not be decoded: {exc}") from exc
 
-    def _prepare_v2_head_identity(
-        self,
-        source: dict[str, Any],
-        analysis: dict[str, Any],
-    ) -> dict[str, str] | None:
-        face_box = self._valid_face_box(analysis)
-        if face_box is None:
-            return None
-        image = self._load_identity_source_image(source)
-        x0, y0, x1, y1 = face_box
-        face_width = x1 - x0
-        face_height = y1 - y0
-        center_x = (x0 + x1) / 2.0
-        # Wider and substantially deeper than the base identity crop. It keeps
-        # hair silhouette, ears, neck and shoulders/collar so the first detail
-        # pass has structural context without reintroducing scene background.
-        head_box = [
-            center_x - face_width * 1.35,
-            y0 - face_height * 0.80,
-            center_x + face_width * 1.35,
-            y1 + face_height * 2.15,
-        ]
-        width, height = self._HEAD_REFERENCE_SIZE
-        prepared = self._isolate_reference_subject(image, head_box, width, height, margin=0.02)
-        source_name = str(source.get("name") or "character-reference")
-        safe_stem = Path(source_name).stem[:64] or "character-reference"
-        return self._image_to_payload(prepared, f"{safe_stem}-identity-head-shoulders.png")
-
     def _prepare_v2_tight_identity(
         self,
         source: dict[str, Any],
@@ -114,30 +85,6 @@ class CharacterSheetV2FaceRefineBridgeMixin:
         source_name = str(source.get("name") or "character-reference")
         safe_stem = Path(source_name).stem[:64] or "character-reference"
         return self._image_to_payload(prepared, f"{safe_stem}-identity-tight-face.png")
-
-    def _prepare_v2_detail_context(
-        self,
-        panel: sheetv2.CharacterSheetV2Panel,
-        source: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """Upgrade the broad first detail pass from face-only to head/shoulders identity."""
-        context = super()._prepare_v2_detail_context(panel, source)
-        if context is None:
-            return None
-        source_analysis = self._analyze_character_source(source)
-        payload = self._prepare_v2_head_identity(source, source_analysis)
-        if payload is None:
-            return context
-        try:
-            staged = self._stage_character_sheet_v2_source(payload)
-        except (OSError, base.StableAmdBridgeError):
-            return context
-        previous = context.get("identity")
-        context["identity"] = staged
-        context["identityMode"] = "head-shoulders"
-        if previous is not None and hasattr(previous, "unlink"):
-            previous.unlink(missing_ok=True)
-        return context
 
     @staticmethod
     def _tight_face_detail_box(
