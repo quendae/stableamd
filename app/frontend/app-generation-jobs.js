@@ -24,6 +24,8 @@
     }
   }
 
+  window.StableAmdJobs = { waitForGenerationJob };
+
   api = async function generationJobApi(path, options = {}) {
     if (path === "/api/generate" && String(options?.method || "GET").toUpperCase() === "POST") {
       let payload = {};
