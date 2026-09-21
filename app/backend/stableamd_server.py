@@ -65,6 +65,31 @@ def resolve_output_image(repo_root: Path, requested_path: str) -> Path:
     return candidate
 
 
+def resolve_output_svg(repo_root: Path, requested_path: str) -> Path:
+    """Resolve only persisted Vector SVG files from the managed Vector output root.
+
+    SVG is intentionally not served as a raw browser document by the HTTP
+    handler. This resolver exists for the JSON source/download route, where the
+    caller receives text and explicitly decides whether to display or download
+    it.
+    """
+
+    if not requested_path or not str(requested_path).strip():
+        raise ValueError("Vector SVG path is required.")
+
+    vector_root = (
+        Path(repo_root).resolve() / ".runtime" / "stableamd" / "output" / "vector"
+    ).resolve()
+    candidate = Path(requested_path).expanduser().resolve()
+    if candidate == vector_root or vector_root not in candidate.parents:
+        raise ValueError("Vector SVG path is outside the StableAMD Vector output directory.")
+    if candidate.suffix.lower() != ".svg":
+        raise ValueError("Requested Vector output is not an SVG file.")
+    if not candidate.is_file():
+        raise ValueError("Vector SVG file was not found.")
+    return candidate
+
+
 def _decode_input_image(image: Any) -> tuple[str, bytes]:
     if not isinstance(image, dict):
         raise ValueError("img2img inputImage must be an object.")
@@ -799,29 +824,25 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
                 if self._serve_frontend():
                     return
 
-            body = b""
-            if self.command in {"POST", "PUT", "PATCH"}:
+            content_length = 0
+            raw_content_length = self.headers.get("Content-Length")
+            if raw_content_length:
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
+                    content_length = int(raw_content_length)
                 except ValueError:
-                    self._send_json(400, {"error": "Invalid Content-Length."})
+                    self._send_json(400, {"error": "Invalid Content-Length header."})
                     return
-                if length < 0 or length > MAX_REQUEST_BYTES:
-                    self._send_json(413, {"error": "Request body is too large."})
-                    return
-                body = self.rfile.read(length) if length else b""
-            try:
-                status, payload = api.dispatch(self.command, self.path, body)
-            except StableAmdBridgeError as exc:
-                status, payload = 500, {"error": str(exc)}
-            except Exception as exc:
-                status, payload = 500, {"error": f"StableAMD API failure: {exc}"}
+            if content_length < 0 or content_length > MAX_REQUEST_BYTES:
+                self._send_json(413, {"error": "Request body exceeds the StableAMD API limit."})
+                return
+            body = self.rfile.read(content_length) if content_length else None
+            status, payload = api.dispatch(self.command, self.path, body)
             self._send_json(status, payload)
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
             self._dispatch()
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
             self._dispatch()
 
         def log_message(self, format: str, *args: Any) -> None:
@@ -830,35 +851,48 @@ def make_handler(api: StableAmdApi, frontend_root: Path | None = None, repo_root
     return StableAmdRequestHandler
 
 
-def serve(repo_root: Path, host: str = "127.0.0.1", port: int = 8188) -> None:
-    bind_host = validate_loopback_host(host)
-    if port < 1 or port > 65535:
-        raise ValueError("Port must be between 1 and 65535.")
-    repo_root = Path(repo_root).resolve()
+def _default_repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="StableAMD local API service")
+    parser.add_argument("--repo-root", default=str(_default_repo_root()))
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", default=8189, type=int)
+    parser.add_argument("--no-browser", action="store_true")
+    args = parser.parse_args()
+
+    try:
+        host = validate_loopback_host(args.host)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.port < 1 or args.port > 65535:
+        parser.error("--port must be between 1 and 65535.")
+
+    repo_root = Path(args.repo_root).resolve()
     frontend_root = repo_root / "app" / "frontend"
-    index_path = frontend_root / "index.html"
-    if not index_path.is_file():
-        raise StableAmdBridgeError(f"StableAMD frontend index.html is missing: {index_path}")
     bridge = PowerShellBridge(repo_root)
     api = StableAmdApi(bridge)
-    server = ThreadingHTTPServer((bind_host, port), make_handler(api, frontend_root, repo_root))
-    print(f"StableAMD local application listening on http://{bind_host}:{port}/", flush=True)
+    handler = make_handler(api, frontend_root=frontend_root, repo_root=repo_root)
+    server = ThreadingHTTPServer((host, args.port), handler)
+
+    url = f"http://{host}:{args.port}/"
+    print(f"StableAMD API listening at {url}")
+    if not args.no_browser:
+        try:
+            import webbrowser
+
+            webbrowser.open(url)
+        except Exception:
+            pass
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         server.server_close()
-
-
-def main() -> int:
-    default_repo_root = Path(__file__).resolve().parents[2]
-    parser = argparse.ArgumentParser(description="StableAMD v0.3 loopback application API and web UI")
-    parser.add_argument("--repo-root", default=str(default_repo_root))
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8188)
-    args = parser.parse_args()
-    serve(Path(args.repo_root), args.host, args.port)
     return 0
 
 
