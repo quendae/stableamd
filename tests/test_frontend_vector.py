@@ -66,17 +66,19 @@ class StableAmdVectorFrontendTests(unittest.TestCase):
         self.assertIn("window.StableAmdVector", source)
         self.assertIn("loadRecord", source)
 
-    def test_app_page_metadata_and_gallery_are_vector_aware(self):
-        source = self._read("app.js")
-        self.assertIn('vector: ["Vector", "Create clean editable SVG assets from text prompts."]', source)
+    def test_vector_extension_adds_page_metadata_and_vector_aware_gallery(self):
+        source = self._read("app-vector.js")
+        self.assertIn('pageMeta.vector = ["Vector", "Create clean editable SVG assets from text prompts."]', source)
         self.assertIn("assetType", source)
         self.assertIn("previewPath", source)
         self.assertIn("SVG", source)
+        self.assertIn("history-card-vector", source)
 
-    def test_post_actions_replace_raster_actions_for_svg_records(self):
-        source = self._read("app-post-actions.js")
+    def test_vector_extension_replaces_raster_actions_for_svg_records(self):
+        source = self._read("app-vector.js")
         self.assertIn("assetType", source)
         self.assertIn('=== "svg"', source)
+        self.assertIn('card.querySelector(".history-actions")?.remove()', source)
         for action in ("vector-download", "vector-source", "vector-reuse", "delete"):
             self.assertIn(action, source)
         self.assertIn("StableAmdVector.loadRecord", source)
@@ -84,12 +86,11 @@ class StableAmdVectorFrontendTests(unittest.TestCase):
 
     def test_vector_styles_use_two_column_desktop_one_column_existing_breakpoint_and_six_mobile_nav_items(self):
         vector_css = self._read("vector.css")
-        styles = self._read("styles.css")
         self.assertIn(".vector-layout", vector_css)
         self.assertIn("grid-template-columns", vector_css)
         self.assertIn("@media (max-width: 980px)", vector_css)
         self.assertIn("grid-template-columns: 1fr", vector_css)
-        self.assertIn("grid-template-columns: repeat(6, minmax(0, 1fr))", styles)
+        self.assertIn("grid-template-columns: repeat(6, minmax(0, 1fr))", vector_css)
 
 
 if __name__ == "__main__":
