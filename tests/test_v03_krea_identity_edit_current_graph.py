@@ -71,6 +71,15 @@ def _renumbered_krea_workflow():
     }
 
 
+def _selected_vae_ref(graph):
+    node_id, node = next(
+        (node_id, node) for node_id, node in graph.items()
+        if isinstance(node, dict) and node.get("class_type") == "SelectVAEDevice"
+    )
+    self_inputs = node["inputs"]
+    return [node_id, 0], self_inputs
+
+
 class KreaIdentityCurrentGraphTests(unittest.TestCase):
     def test_final_server_composes_semantic_resolver_before_legacy_identity_mixin(self):
         mro = server.PowerShellBridge.__mro__
@@ -89,8 +98,12 @@ class KreaIdentityCurrentGraphTests(unittest.TestCase):
         sampler = graph["3"]["inputs"]
         self.assertEqual(sampler["negative"], ["13", 0])
         patch = next(node for node in graph.values() if node.get("class_type") == "Krea2EditModelPatch")
+        selected_vae_ref, selected_inputs = _selected_vae_ref(graph)
+        self.assertEqual(selected_inputs, {"vae": ["12", 0], "device": "gpu:0"})
         self.assertEqual(patch["inputs"]["target_latent"], ["5", 0])
-        self.assertEqual(patch["inputs"]["vae"], ["12", 0])
+        self.assertEqual(patch["inputs"]["source_latent"], ["5", 0])
+        self.assertEqual(patch["inputs"]["vae"], selected_vae_ref)
+        self.assertEqual(graph["8"]["inputs"]["vae"], selected_vae_ref)
 
     def test_identity_injection_resolves_semantic_anchors_not_node_numbers(self):
         graph = _GraphBridge()._inject_krea_identity_edit(_renumbered_krea_workflow(), {
@@ -105,9 +118,13 @@ class KreaIdentityCurrentGraphTests(unittest.TestCase):
         self.assertEqual(graph["50"]["inputs"]["height"], 1024)
         patch = next(node for node in graph.values() if node.get("class_type") == "Krea2EditModelPatch")
         grounded = next(node for node in graph.values() if node.get("class_type") == "Krea2EditGroundedEncode")
+        selected_vae_ref, selected_inputs = _selected_vae_ref(graph)
+        self.assertEqual(selected_inputs, {"vae": ["120", 0], "device": "gpu:0"})
         self.assertEqual(patch["inputs"]["target_latent"], ["50", 0])
-        self.assertEqual(patch["inputs"]["vae"], ["120", 0])
+        self.assertEqual(patch["inputs"]["source_latent"], ["50", 0])
+        self.assertEqual(patch["inputs"]["vae"], selected_vae_ref)
         self.assertEqual(grounded["inputs"]["clip"], ["110", 0])
+        self.assertEqual(graph["80"]["inputs"]["vae"], selected_vae_ref)
 
 
 if __name__ == "__main__":
