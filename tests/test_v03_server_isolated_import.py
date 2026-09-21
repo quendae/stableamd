@@ -40,7 +40,7 @@ class StableAmdV03IsolatedServerImportTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
         self.assertIn("StableAMD", completed.stdout)
 
-    def test_character_sheet_v2_modules_exist_and_import_without_pillow_or_numpy(self):
+    def test_character_sheet_and_vector_modules_import_without_managed_runtime_libraries(self):
         self.assertTrue(IDENTITY_MODULE.is_file())
         self.assertTrue(CHARACTER_SHEET_V2_MODULE.is_file())
         probe = f'''
@@ -49,6 +49,7 @@ import sys
 runpy.run_path(r"{FINAL_SERVER}", run_name="stableamd_v03_import_probe")
 print("pillow=" + str(any(name == "PIL" or name.startswith("PIL.") for name in sys.modules)))
 print("numpy=" + str(any(name == "numpy" or name.startswith("numpy.") for name in sys.modules)))
+print("resvg=" + str(any(name == "resvg_py" or name.startswith("resvg_py.") for name in sys.modules)))
 '''
         completed = subprocess.run(
             [sys.executable, "-I", "-c", probe],
@@ -63,6 +64,7 @@ print("numpy=" + str(any(name == "numpy" or name.startswith("numpy.") for name i
         self.assertEqual(completed.returncode, 0, completed.stderr or completed.stdout)
         self.assertIn("pillow=False", completed.stdout)
         self.assertIn("numpy=False", completed.stdout)
+        self.assertIn("resvg=False", completed.stdout)
 
     def test_isolated_v03_server_exposes_upscale_route_without_test_import_side_effects(self):
         probe = f'''
