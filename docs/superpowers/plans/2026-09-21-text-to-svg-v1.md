@@ -4,9 +4,9 @@
 
 **Goal:** Add a dedicated StableAMD Vector workspace that turns a text prompt into a real, sanitized, editable Clean SVG by generating a vector-friendly Z-Image raster, converting it with a managed VTracer binary, rendering a PNG preview from the sanitized SVG, and persisting the result in Gallery/history.
 
-**Architecture:** Keep raster generation and vector output as separate contracts. `stableamd_v03_vector.py` owns request validation/orchestration and delegates raster generation to the already accepted Z-Image Turbo provider. `stableamd_v03_svg_vectorizer.py` owns the pinned VTracer dependency and profile-to-CLI mapping. `stableamd_v03_svg_sanitize.py` owns the strict Clean SVG allow-list. `stableamd_v03_svg_preview.py` lazily uses `resvg_py==0.5.0` to render the sanitized SVG into a Gallery PNG. The existing async job transport is generalized just enough to run `text_to_svg` without introducing a second queue.
+**Architecture:** Keep raster generation and vector output as separate contracts. `stableamd_v03_vector.py` owns request validation/orchestration and delegates raster generation to the already accepted Z-Image Turbo provider. `stableamd_v03_svg_vectorizer.py` owns the pinned VTracer dependency and profile-to-CLI mapping. `stableamd_v03_svg_sanitize.py` owns the strict Clean SVG allow-list. `stableamd_v03_svg_preview.py` lazily uses `resvg_py==0.5.0` to render the sanitized SVG into a Gallery PNG. The existing async job transport is generalized only enough to run `text_to_svg` without introducing a second queue.
 
-**Tech Stack:** Python 3.12, existing Z-Image Turbo/ComfyUI provider, VTracer `1.0.0-alpha.4` Windows x64 CLI, Pillow for local raster preprocessing, XML `ElementTree` for sanitized SVG normalization, `resvg_py==0.5.0` for sanitized-SVG preview rendering, vanilla JS/CSS frontend, existing Python unittest + Pester + package CI.
+**Tech Stack:** Python 3.12, existing Z-Image Turbo/ComfyUI provider, VTracer `1.0.0-alpha.4` Windows x64 CLI, Pillow for local raster preprocessing, stdlib `xml.etree.ElementTree` for SVG normalization, `resvg_py==0.5.0` for sanitized-SVG preview rendering, vanilla JS/CSS frontend, existing Python unittest + Pester + package CI.
 
 **Spec:** `docs/superpowers/specs/2026-09-21-text-to-svg-v1-design.md`
 
@@ -22,16 +22,17 @@
 - `background="transparent"` means StableAMD removes only border-connected background pixels before VTracer. It must never globally delete every pixel matching the background color.
 - Vector preview must be rendered from the **sanitized final SVG**, never from the original raster intermediate.
 - Optional libraries (`PIL`, `resvg_py`) must be imported lazily so the final v0.3 server still imports under generic CI without those managed-runtime packages.
+- The public Vector result uses lower-camel-case fields only. Do not introduce a second PascalCase Vector contract.
 - Keep PR #4 draft until the RX 6950 XT physical acceptance checklist is completed.
 
 ## Review Focus
 
 - A white shape fully enclosed inside the subject must survive transparent-background processing even if the border background is also white.
 - A VTracer output containing `script`, `foreignObject`, `image`, `text`, DTD/entity content, event attributes, unknown namespaces or external URLs must fail sanitization and never be promoted to Gallery.
-- Missing/wrong-hash VTracer and missing/wrong-version `resvg_py` must produce an actionable dependency state before wasting time on raster generation.
+- Missing/wrong-hash VTracer and missing/wrong-version `resvg_py` must produce an actionable dependency state before raster generation starts.
 - A vectorization/sanitization/preview failure after a successful raster generation must not report SVG success; diagnostics/intermediate ownership must remain traceable.
-- SVG serving/deletion must never accept arbitrary paths outside `.runtime/stableamd/output`.
-- Existing `/api/generate` async behavior and its six-hour Krea timeout injection must remain byte-for-byte compatible from the caller's perspective.
+- SVG source lookup/deletion must never accept arbitrary paths outside `.runtime/stableamd/output`.
+- Existing `/api/generate` async behavior and its six-hour Krea timeout injection must remain compatible from the caller's perspective.
 
 ---
 
@@ -41,11 +42,12 @@
 - Create: `app/backend/stableamd_v03_svg_vectorizer.py`
 - Create: `tests/test_v03_svg_vectorizer.py`
 
-**Interfaces:**
-- Produces constants `VECTOR_DEPENDENCY_ID`, `VTRACER_VERSION`, `VTRACER_URL`, `VTRACER_BYTES`, `VTRACER_SHA256`, `RESVG_PY_VERSION`.
-- Produces `vector_dependency_status(repo_root: Path) -> dict[str, Any]`.
-- Produces `install_vector_dependencies(repo_root: Path, *, urlopen_fn=urlopen, run_fn=subprocess.run) -> dict[str, Any]`.
-- Produces `build_vtracer_args(input_path: Path, output_path: Path, detail: str, max_colors: int | None) -> list[str]` and `run_vtracer(...) -> Path`.
+**Required interfaces:**
+- constants: `VECTOR_DEPENDENCY_ID`, `VTRACER_VERSION`, `VTRACER_URL`, `VTRACER_BYTES`, `VTRACER_SHA256`, `RESVG_PY_VERSION`;
+- `vector_dependency_status(repo_root: Path) -> dict[str, Any]`;
+- `install_vector_dependencies(repo_root: Path, *, urlopen_fn=urlopen, run_fn=subprocess.run) -> dict[str, Any]`;
+- `build_vtracer_args(input_path: Path, output_path: Path, detail: str, max_colors: int | None) -> list[str]`;
+- `run_vtracer(repo_root: Path, input_path: Path, output_path: Path, *, detail: str, max_colors: int | None, run_fn=subprocess.run) -> Path`.
 
 Pinned values:
 
@@ -58,40 +60,46 @@ VTRACER_SHA256 = "8eadb5529864265f003f791ad9cb128e1b9b8b8af8c21016f38b04706bcf35
 RESVG_PY_VERSION = "0.5.0"
 ```
 
-Managed executable path:
+Managed executable:
 
 ```text
 .runtime/stableamd/tools/vtracer/1.0.0-alpha.4/vtracer.exe
 ```
 
-- [ ] **Step 1: Write RED dependency/readiness tests**
+Dependency status shape:
 
-Cover:
-
-```python
-self.assertEqual(vectorizer.VTRACER_VERSION, "1.0.0-alpha.4")
-self.assertEqual(vectorizer.VTRACER_BYTES, 965_231)
-self.assertRegex(vectorizer.VTRACER_SHA256, r"^[0-9a-f]{64}$")
-self.assertEqual(vectorizer.RESVG_PY_VERSION, "0.5.0")
+```json
+{
+  "id": "text-to-svg-v1",
+  "ready": false,
+  "status": "missing",
+  "restartRequired": false,
+  "vtracer": {"status": "missing", "version": "1.0.0-alpha.4"},
+  "previewRenderer": {"status": "missing", "package": "resvg_py", "version": "0.5.0"}
+}
 ```
 
-Use a temporary repo root to verify `missing`, `invalid`, and `ready` states. Mock `importlib.metadata.version("resvg_py")` so readiness is true only when the installed version equals `0.5.0`.
+Allowed top-level states are exactly `ready`, `missing`, `invalid`. Installation into the already-running private Python does not require a restart because `resvg_py` is imported lazily; successful install returns `restartRequired=false`.
 
-Add an installer test with an in-memory/temporary ZIP containing `vtracer.exe`. Verify wrong byte length or SHA256 never promotes the executable and leaves no permanent partial file.
+- [ ] **Step 1: Write RED dependency/readiness tests**
 
-- [ ] **Step 2: Run the new test and verify RED**
+Cover pinned constants, managed path, `missing`, `invalid`, `ready`, and exact `resvg_py==0.5.0` version detection via mocked `importlib.metadata.version`.
+
+Add an installer test using a temporary ZIP containing `vtracer.exe`. Verify wrong byte length or SHA256 never promotes the executable and leaves no permanent partial archive/directory.
+
+- [ ] **Step 2: Run RED**
 
 ```powershell
 python -m unittest tests.test_v03_svg_vectorizer -v
 ```
 
-Expected: import/module failure because `stableamd_v03_svg_vectorizer.py` does not exist.
+Expected: import/module failure before implementation.
 
 - [ ] **Step 3: Implement strict managed installation**
 
-Download only the pinned HTTPS URL to a UUID `.partial-*` archive, verify exact bytes and SHA256, inspect ZIP members and reject absolute/`..` traversal paths, extract into a UUID temporary directory, require exactly one usable `vtracer.exe`, then atomically promote the version directory.
+Download only the pinned HTTPS URL to a UUID `.partial-*` archive, verify exact bytes and SHA256, reject absolute/`..` ZIP paths, extract to a UUID temporary directory, require exactly one usable `vtracer.exe`, then atomically promote the version directory.
 
-Install preview support into the **current StableAMD private interpreter** only when needed:
+Install preview support with the current StableAMD private interpreter:
 
 ```python
 [
@@ -103,13 +111,9 @@ Install preview support into the **current StableAMD private interpreter** only 
 ]
 ```
 
-After pip returns 0, re-read `importlib.metadata.version("resvg_py")` and require exactly `0.5.0` before returning `ready=True`.
-
-Do not add Rust/Cargo/system Python requirements.
+After pip exit code 0, re-read `importlib.metadata.version("resvg_py")` and require exactly `0.5.0` before returning ready. Do not add Rust/Cargo/system Python requirements.
 
 - [ ] **Step 4: Implement StableAMD-owned VTracer profiles**
-
-Map the three product-level detail profiles to fixed CLI arguments:
 
 ```python
 VTRACER_PROFILES = {
@@ -119,11 +123,11 @@ VTRACER_PROFILES = {
 }
 ```
 
-`build_vtracer_args()` must append `--max-colors N` only when N is `2`, `4`, `8`, or `16`.
+Append `--max-colors N` only for `2`, `4`, `8`, `16`. `auto` omits it.
 
-`run_vtracer()` uses `subprocess.run(..., timeout=120, capture_output=True)` and raises `StableAmdBridgeError` with a bounded stderr/stdout tail on non-zero exit or missing output file.
+Run VTracer with `timeout=120`, captured stdout/stderr, and raise `StableAmdBridgeError` with a bounded output tail for non-zero exit, timeout, or missing output SVG.
 
-- [ ] **Step 5: Run GREEN tests**
+- [ ] **Step 5: Run GREEN**
 
 ```powershell
 python -m unittest tests.test_v03_svg_vectorizer -v
@@ -146,51 +150,14 @@ git commit -m "feat: add managed SVG vectorizer dependency"
 - Create: `app/backend/stableamd_v03_svg_sanitize.py`
 - Create: `tests/test_v03_svg_sanitize.py`
 
-**Interfaces:**
-
-```python
-@dataclass(frozen=True)
-class SanitizedSvg:
-    xml: str
-    width: int
-    height: int
-    node_count: int
-    path_count: int
-
-
-def sanitize_svg(
-    svg_text: str,
-    *,
-    max_bytes: int = 2_000_000,
-    max_nodes: int = 5_000,
-    max_paths: int = 4_000,
-) -> SanitizedSvg: ...
-```
+**Required interfaces:**
+- `SANITIZER_VERSION = "clean-svg-v1"`;
+- immutable `SanitizedSvg` with `xml`, `width`, `height`, `node_count`, `path_count`;
+- `sanitize_svg(svg_text: str, *, max_bytes: int = 2_000_000, max_nodes: int = 5_000, max_paths: int = 4_000) -> SanitizedSvg`.
 
 - [ ] **Step 1: Write RED sanitizer security tests**
 
-Fixtures must independently cover:
-- valid `<path>`/basic shapes;
-- malformed XML;
-- `<!DOCTYPE>` and `<!ENTITY>`;
-- `<script>`, event attribute `onclick`;
-- `<foreignObject>`, `<image>`, `<text>`, `<tspan>`;
-- `<filter>`, `<mask>`, `<clipPath>`, animation;
-- `href`, `xlink:href`, `url(...)` and external namespaces;
-- non-finite/invalid `viewBox`;
-- no drawable shapes;
-- over-limit node/path count;
-- deterministic output from the same valid fixture.
-
-Representative expectations:
-
-```python
-clean = sanitize_svg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#ff0000" d="M0 0L64 0L64 64Z"/></svg>')
-self.assertEqual(clean.width, 64)
-self.assertEqual(clean.height, 64)
-self.assertEqual(clean.path_count, 1)
-self.assertNotIn("script", clean.xml.lower())
-```
+Fixtures independently cover valid basic shapes, malformed XML, `DOCTYPE`, `ENTITY`, `script`, `onclick`, `foreignObject`, `image`, `text`, `tspan`, `filter`, `mask`, `clipPath`, animation, `href`, `xlink:href`, `url(...)`, unknown namespaces/elements, non-finite/invalid `viewBox`, empty geometry, complexity limits, and deterministic normalized output.
 
 - [ ] **Step 2: Run RED**
 
@@ -202,7 +169,7 @@ Expected: import/module failure.
 
 - [ ] **Step 3: Implement the allow-list parser/normalizer**
 
-Before XML parsing, reject case-insensitive `<!DOCTYPE` and `<!ENTITY` markers. Parse with stdlib `xml.etree.ElementTree` only after that preflight.
+Before XML parsing, reject case-insensitive `<!DOCTYPE` and `<!ENTITY`. Parse with stdlib `xml.etree.ElementTree` only after preflight.
 
 Allowed tags:
 
@@ -210,15 +177,13 @@ Allowed tags:
 ALLOWED_TAGS = {"svg", "g", "path", "rect", "circle", "ellipse", "polygon", "polyline", "line"}
 ```
 
-Allowed attributes must be tag-scoped. Global safe attributes: `fill`, `stroke`, `stroke-width`, `opacity`, `fill-opacity`, `stroke-opacity`, `transform`, `stroke-linecap`, `stroke-linejoin`. Geometry attrs are allowed only on their relevant shape. Root additionally allows `viewBox`, `width`, `height`, and the canonical SVG namespace.
+Allowed attributes are tag-scoped. Global safe presentation attributes are `fill`, `stroke`, `stroke-width`, `opacity`, `fill-opacity`, `stroke-opacity`, `transform`, `stroke-linecap`, `stroke-linejoin`. Geometry attributes are allowed only on their relevant shapes. Root additionally allows `viewBox`, `width`, `height` and canonical SVG namespace handling.
 
-Reject any attribute name starting with `on`, any `href`, any value containing `url(`, and any namespace other than `http://www.w3.org/2000/svg`.
+Reject any attribute beginning with `on`, any `href`, any value containing `url(`, and any namespace other than `http://www.w3.org/2000/svg`.
 
-Require finite four-number `viewBox` with positive width/height. If VTracer supplies only numeric `width` and `height`, derive `viewBox="0 0 W H"`; otherwise reject ambiguous geometry.
+Require finite four-number `viewBox` with positive width/height. If input has only numeric `width` and `height`, derive `viewBox="0 0 W H"`; otherwise reject ambiguous geometry.
 
-Remove comments/metadata/empty groups. Reject if no drawable shape remains.
-
-Serialize deterministically: normalized attribute ordering, canonical namespace and UTF-8 text without DTD.
+Remove comments/metadata/empty groups. Reject if no drawable geometry remains. Serialize with deterministic attribute ordering and no DTD.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -243,54 +208,27 @@ git commit -m "feat: add clean SVG sanitizer"
 - Create: `app/backend/stableamd_v03_vector.py`
 - Create: `tests/test_v03_vector_request.py`
 
-**Interfaces:**
-
-```python
-VECTOR_WIDTH = 1024
-VECTOR_HEIGHT = 1024
-VECTOR_STYLES = {"icon", "illustration"}
-VECTOR_DETAILS = {"simple", "medium", "detailed"}
-VECTOR_COLOR_LIMITS = {2, 4, 8, 16}
-
-
-def validate_text_to_svg_request(payload: Any) -> dict[str, Any]: ...
-def build_vector_prompt(request: dict[str, Any]) -> str: ...
-def prepare_vector_raster(source_path: Path, destination_path: Path, background: str, tolerance: int = 18) -> Path: ...
-```
+**Required constants/interfaces:**
+- `VECTOR_PROMPT_VERSION = "text-to-svg-v1"`;
+- `VECTOR_WIDTH = 1024`, `VECTOR_HEIGHT = 1024`;
+- styles `icon`, `illustration`;
+- detail levels `simple`, `medium`, `detailed`;
+- color limits `2`, `4`, `8`, `16`;
+- `validate_text_to_svg_request(payload: Any) -> dict[str, Any]`;
+- `build_vector_prompt(request: dict[str, Any]) -> str`;
+- `prepare_vector_raster(source_path: Path, destination_path: Path, background: str, tolerance: int = 18) -> Path`.
 
 - [ ] **Step 1: Write RED request/prompt tests**
 
-Accept:
+Accept a request with prompt/style/detail/colors/background/seed. Defaults are `style="icon"`, `detail="medium"`, `colors="auto"`, `background="transparent"`; omitted seed stays omitted for downstream randomization; solid background defaults to `#ffffff`.
 
-```python
-{
-    "prompt": "a fox curled around a crescent moon",
-    "style": "icon",
-    "detail": "medium",
-    "colors": 4,
-    "background": "transparent",
-    "seed": 12345,
-}
-```
+Reject extra fields, empty/over-2000-char prompt, unknown enums, color counts outside `2/4/8/16`, malformed seed and malformed `#RRGGBB` solid color.
 
-Defaults:
-- `style="icon"`
-- `detail="medium"`
-- `colors="auto"`
-- `background="transparent"`
-- omitted seed remains omitted/randomized downstream
-- `backgroundColor="#ffffff"` for solid mode unless explicitly supplied.
-
-Reject extra fields, empty/over-2000-char prompt, unknown enum values, color counts outside `2/4/8/16`, malformed seed and malformed `#RRGGBB` solid color.
-
-Prompt tests must assert both styles add `no text, no letters, no numbers, no watermark`, `flat vector`, `solid shapes`, `crisp edges`, and `no gradients`. `icon` additionally requires one dominant centered symbol/simple silhouette; `illustration` permits multiple objects/full composition.
+Prompt tests assert both styles add `no text, no letters, no numbers, no watermark`, `flat vector`, `solid shapes`, `crisp edges`, and `no gradients`. Icon additionally requires one dominant centered symbol/simple silhouette; illustration permits multiple objects/full composition.
 
 - [ ] **Step 2: Write RED transparent-background geometry test**
 
-Create a synthetic 64x64 RGB image with white border/background, a colored subject, and an isolated white square completely surrounded by the colored subject. After `prepare_vector_raster(..., background="transparent")`:
-- border-connected white pixels have alpha `0`;
-- isolated internal white square remains alpha `255`;
-- colored subject remains opaque.
+Create a synthetic 64x64 image with white border/background, a colored subject, and an isolated white square fully enclosed by the subject. After transparent preprocessing, border-connected white pixels must be alpha `0`, while the isolated internal white square and colored subject remain alpha `255`.
 
 - [ ] **Step 3: Run RED**
 
@@ -298,15 +236,15 @@ Create a synthetic 64x64 RGB image with white border/background, a colored subje
 python -m unittest tests.test_v03_vector_request -v
 ```
 
-Expected: failure because the Vector module/helpers are absent.
+Expected: failure because Vector helpers are absent.
 
 - [ ] **Step 4: Implement validation and effective prompt**
 
-Use a server-owned prompt suffix; do not expose raw sampler/scheduler/model knobs through this API. v1 raster size is fixed at `1024x1024` for both styles.
+Use a server-owned vector suffix; no sampler/scheduler/model/LoRA knobs in this API. Raster size is fixed at `1024x1024` for both styles.
 
-For transparent mode append a clean-background instruction using pure white as the removable border background. For solid mode request the validated `backgroundColor` as a flat full-canvas background.
+Transparent mode explicitly requests a pure-white flat background suitable for border removal. Solid mode explicitly requests the validated `backgroundColor` across the full canvas.
 
-Do not attempt natural-language censorship of arbitrary user prompts. The product simply does not expose a wordmark/text mode and the server-owned style instruction explicitly forbids text.
+Do not attempt natural-language censorship of arbitrary prompts. v1 simply has no text/wordmark mode and its server-owned instruction forbids text.
 
 - [ ] **Step 5: Implement border-connected background removal**
 
@@ -314,13 +252,13 @@ Lazy-import Pillow inside `prepare_vector_raster`.
 
 Algorithm:
 1. convert to RGBA;
-2. estimate background reference from the four corners (channel median/mean);
-3. seed a queue with border pixels whose RGB channels are each within `tolerance=18` of the reference;
+2. estimate background reference from the four corners using channel medians;
+3. seed a queue with matching border pixels whose per-channel difference is within `tolerance=18`;
 4. flood-fill 4-connected matching pixels only;
 5. set alpha=0 only for visited pixels;
-6. save an RGBA PNG for VTracer.
+6. save RGBA PNG for VTracer.
 
-For `background="solid"`, copy/normalize the raster to RGBA PNG without alpha removal.
+For solid background, normalize/copy to RGBA PNG without alpha removal.
 
 - [ ] **Step 6: Run GREEN**
 
@@ -346,23 +284,13 @@ git commit -m "feat: add Text-to-SVG request and raster preparation"
 - Create: `tests/test_v03_svg_preview.py`
 - Modify: `tests/test_v03_server_isolated_import.py`
 
-**Interfaces:**
-
-```python
-def render_svg_preview(svg_text: str, output_path: Path) -> Path: ...
-```
+**Required interface:** `render_svg_preview(svg_text: str, output_path: Path) -> Path`.
 
 - [ ] **Step 1: Write RED preview tests**
 
-Mock a `resvg_py` module whose:
+Mock `resvg_py.svg_to_bytes(svg_string=...)` to return known PNG bytes. Assert the preview function writes those bytes atomically and rejects empty/non-PNG output.
 
-```python
-svg_to_bytes(svg_string=...)
-```
-
-returns a known PNG byte sequence. Assert `render_svg_preview()` writes those exact bytes atomically and rejects empty/non-PNG output.
-
-Extend isolated-import coverage to assert the final server does **not** eagerly import `resvg_py` or `PIL` merely by loading `stableamd_v03_edit_server.py`.
+Extend isolated-import coverage to assert final server loading does not eagerly import `resvg_py` or `PIL`.
 
 - [ ] **Step 2: Run RED**
 
@@ -370,22 +298,13 @@ Extend isolated-import coverage to assert the final server does **not** eagerly 
 python -m unittest tests.test_v03_svg_preview tests.test_v03_server_isolated_import -v
 ```
 
-Expected: new preview module/test fails before implementation.
+Expected: preview module/test fails before implementation.
 
 - [ ] **Step 3: Implement lazy preview rendering**
 
-Inside the function only:
+Inside the function, import `resvg_py`; on `ImportError`, raise `StableAmdBridgeError("SVG preview renderer is not installed. Install the Vector dependency.")`.
 
-```python
-try:
-    import resvg_py
-except ImportError as exc:
-    raise StableAmdBridgeError("SVG preview renderer is not installed. Install the Vector dependency.") from exc
-
-png = resvg_py.svg_to_bytes(svg_string=svg_text)
-```
-
-Require PNG signature `b"\x89PNG\r\n\x1a\n"`, write to a UUID temporary sibling, then `replace()` into the final path.
+Call `resvg_py.svg_to_bytes(svg_string=svg_text)`, require PNG signature `b"\x89PNG\r\n\x1a\n"`, write to UUID temporary sibling, then atomically replace the final preview path.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -393,7 +312,7 @@ Require PNG signature `b"\x89PNG\r\n\x1a\n"`, write to a UUID temporary sibling,
 python -m unittest tests.test_v03_svg_preview tests.test_v03_server_isolated_import -v
 ```
 
-Expected: PASS and isolated import reports no eager Pillow/resvg import.
+Expected: PASS, with no eager Pillow/resvg import.
 
 - [ ] **Step 5: Commit**
 
@@ -414,39 +333,35 @@ git commit -m "feat: render sanitized SVG previews"
 - Create: `tests/test_v03_vector_api.py`
 - Create: `tests/test_v03_vector_orchestration.py`
 
-**Interfaces:**
-- Add `GenerationJobsApiMixin._submit_bridge_job(request: dict, bridge_method: str, *, job_kind: str) -> dict`.
-- Existing `_submit_generation_job(request)` remains and delegates to `_submit_bridge_job(..., "generate", job_kind="generation")`.
-- Add `VectorBridgeMixin.text_to_svg(request: dict[str, Any]) -> dict[str, Any]`.
-- Add `VectorApiMixin` routes:
-  - `GET /api/vector/dependency`
-  - `POST /api/vector/install`
-  - `POST /api/vector/text-to-svg`
+**Required interfaces:**
+- `GenerationJobsApiMixin._submit_bridge_job(request: dict, bridge_method: str, *, job_kind: str) -> dict`;
+- existing `_submit_generation_job(request)` delegates to `_submit_bridge_job(request, "generate", job_kind="generation")`;
+- `VectorBridgeMixin._release_vector_runtime() -> bool`;
+- `VectorBridgeMixin.text_to_svg(request: dict[str, Any]) -> dict[str, Any]`;
+- `VectorApiMixin` routes `GET /api/vector/dependency`, `POST /api/vector/install`, `POST /api/vector/text-to-svg`.
 
 - [ ] **Step 1: RED-test generic async bridge dispatch without changing `/api/generate`**
 
-Add a bridge with both `generate()` and `text_to_svg()`. Assert `_submit_bridge_job(..., "text_to_svg")` runs through the same serialization lock and exposes status/result through the existing `/api/generation-jobs/<id>` endpoints.
+Add a bridge with both `generate()` and `text_to_svg()`. Assert `_submit_bridge_job(request, "text_to_svg", job_kind="vector")` uses the same serialization lock and existing `/api/generation-jobs/<id>` status/result endpoints.
 
-Keep the existing test that async `/api/generate` injects `_generationTimeoutSeconds=21600`; Vector jobs must not inject that Krea-specific field unless the Vector orchestrator explicitly needs it for the internal raster request.
+Keep the existing assertion that async `/api/generate` injects `_generationTimeoutSeconds=21600`. Vector job request objects themselves must not receive that Krea-specific field.
 
 - [ ] **Step 2: RED-test Vector API validation and dependency routes**
 
-`POST /api/vector/text-to-svg` validates via `validate_text_to_svg_request`, returns HTTP 202 + job id, and never calls normal `_validate_generation()` for the Vector request body.
+`POST /api/vector/text-to-svg` validates only the Vector request contract and returns HTTP 202 + job id. It must not route the Vector body through raster `_validate_generation()`.
 
-`GET /api/vector/dependency` returns the combined VTracer/resvg status.
-
-`POST /api/vector/install` accepts only `{}` or `{"id":"text-to-svg-v1"}` and rejects unknown fields/ids.
+`GET /api/vector/dependency` returns combined VTracer/resvg readiness. `POST /api/vector/install` accepts only `{}` or `{"id":"text-to-svg-v1"}`.
 
 - [ ] **Step 3: RED-test orchestration call order**
 
-Use a probe bridge overriding each child step and record calls. Require this order:
+Probe bridge required order:
 
 ```text
 dependency-ready
 select-zimage
 build-prompt
 generate-raster
-release-runtime
+release-vector-runtime
 prepare-raster
 vtracer
 sanitize
@@ -455,7 +370,7 @@ persist
 hide-intermediate
 ```
 
-Assert `release-runtime` occurs before `vtracer`.
+Assert runtime release occurs before VTracer.
 
 - [ ] **Step 4: Run RED**
 
@@ -465,30 +380,34 @@ python -m unittest tests.test_generation_jobs tests.test_v03_vector_api tests.te
 
 Expected: failures for missing generic job/vector classes.
 
-- [ ] **Step 5: Generalize the existing job runner minimally**
+- [ ] **Step 5: Generalize existing job runner minimally**
 
-Implement:
+Preserve existing job dictionary keys/status semantics. New method behavior is concrete:
 
 ```python
 def _run_bridge_job(self, job_id, request, bridge_method):
-    with self._generation_run_lock:
-        ...
-        runner = getattr(self.bridge, bridge_method)
-        result = runner(request)
-        ...
-
-
-def _submit_bridge_job(self, request, bridge_method, *, job_kind):
-    ...
+    job = self._generation_jobs[job_id]
+    job["status"] = "running"
+    job["startedAt"] = time.time()
+    try:
+        with self._generation_run_lock:
+            result = getattr(self.bridge, bridge_method)(request)
+        job["result"] = result
+        job["status"] = "completed"
+    except Exception as exc:
+        job["error"] = str(exc)
+        job["status"] = "failed"
+    finally:
+        job["finishedAt"] = time.time()
 ```
 
-Store `jobKind` internally/publicly for diagnostics, but keep the existing status/result URL shape intact. Existing generation tests must still pass without frontend changes.
+When implementing, keep whatever timestamp key names already exist in the current runner rather than renaming them; the behavior above is the required flow. `_submit_bridge_job` creates the same job envelope as `_submit_generation_job`, adds `jobKind`, starts the worker thread with `bridge_method`, and returns the existing submission shape.
 
 - [ ] **Step 6: Implement Z-Image selection and raster child generation**
 
-In `VectorBridgeMixin`, choose an installed model whose family is exactly `z-image-turbo` and whose support catalog says `txt2img="supported"`. If none exists, raise an actionable error before vectorization.
+Choose an installed model with family exactly `z-image-turbo` whose support catalog says `txt2img="supported"`. If none exists, raise an actionable error before starting the job's raster stage.
 
-Build an internal clean raster request:
+Internal raster request contains only:
 
 ```python
 {
@@ -497,55 +416,68 @@ Build an internal clean raster request:
     "prompt": effective_prompt,
     "width": 1024,
     "height": 1024,
-    "seed": seed,
-    "startBackendIfNeeded": True,
+    "seed": resolved_seed,
 }
 ```
 
-Do not pass user LoRAs, ControlNet, Image Edit or Character Sheet fields.
+Do not pass user LoRAs, Control, Image Edit or Character Sheet fields. Call the accepted provider through `super().generate(raster_request)`; do not clone the Z-Image graph.
 
-Call the accepted provider via `super().generate(raster_request)` rather than cloning Z-Image graph code into Vector.
+- [ ] **Step 7: Implement Vector-local runtime release**
 
-- [ ] **Step 7: Implement full Vector orchestration**
+Do **not** refactor or call `_release_character_sheet_runtime()`.
 
-Use `.runtime/stableamd/output/vector/` for managed vector outputs and UUID-based working names.
-
-After raster generation:
-1. resolve its `ImagePath` as a managed output;
-2. call the existing runtime release helper (`_release_character_sheet_runtime()` if that remains the shared `/free` primitive; otherwise add one provider-neutral `_release_comfy_runtime()` wrapper and make Character Sheet delegate to it without behavior change);
-3. preprocess background into a Vector working PNG;
-4. run VTracer into a temporary raw SVG;
-5. read raw SVG and call `sanitize_svg()`;
-6. atomically write sanitized SVG;
-7. render PNG preview from sanitized SVG;
-8. persist history;
-9. only after persistence succeeds, mark/hide the raster intermediate from default Gallery.
-
-Return lower-camel product fields plus compatibility Pascal-case where current frontend conventions require it:
+`VectorBridgeMixin._release_vector_runtime()` independently calls:
 
 ```python
+self._post_comfy_no_content(
+    "free",
+    {"unload_models": True, "free_memory": True},
+    timeout=10,
+)
+```
+
+Return `False` on unavailable helper/OSError/StableAmdBridgeError and `True` on success, matching the non-fatal cleanup semantics already proven elsewhere.
+
+- [ ] **Step 8: Implement full Vector orchestration**
+
+Final/working Vector outputs live under `.runtime/stableamd/output/vector/` with UUID names. The child Z-Image raster may remain at its existing managed output location.
+
+After raster generation:
+1. validate child `ImagePath` through existing managed-image resolver;
+2. release Vector runtime;
+3. preprocess to Vector working PNG;
+4. run VTracer to a raw temporary SVG;
+5. sanitize raw SVG;
+6. atomically write the sanitized final SVG;
+7. render PNG preview from sanitized SVG;
+8. persist final Vector history;
+9. only after persistence succeeds, update child history `galleryHidden=true` and link it to final Vector prompt id.
+
+On vectorizer/sanitizer/preview/persistence failure, do not report SVG success and leave child raster/history visible or recoverable for diagnosis. Raw VTracer SVG is never promoted.
+
+Public result fields are exactly lower-camel:
+
+```json
 {
-    "assetType": "svg",
-    "provider": "zimage-vtrace",
-    "svgPath": str(svg_path),
-    "previewPath": str(preview_path),
-    "width": sanitized.width,
-    "height": sanitized.height,
-    "pathCount": sanitized.path_count,
-    "nodeCount": sanitized.node_count,
-    "sanitized": True,
-    "seed": seed,
-    "historyPath": str(history_path),
+  "assetType": "svg",
+  "provider": "zimage-vtrace",
+  "svgPath": "...",
+  "previewPath": "...",
+  "width": 1024,
+  "height": 1024,
+  "pathCount": 37,
+  "nodeCount": 42,
+  "sanitized": true,
+  "seed": 12345,
+  "historyPath": "..."
 }
 ```
 
-On vectorization/sanitize/preview failure, never return success and never promote raw SVG. Keep or unhide the raster child/history for diagnosis.
+- [ ] **Step 9: Wire final MRO**
 
-- [ ] **Step 8: Wire final MRO**
+In `stableamd_v03_edit_server.py`, put `VectorBridgeMixin` before current Character Sheet layers and `VectorApiMixin` before current API layers. Non-Vector provider behavior must delegate unchanged.
 
-In `stableamd_v03_edit_server.py`, import and place `VectorBridgeMixin` before the current Character Sheet layers, and `VectorApiMixin` before the existing API layers. No existing provider method should be overridden for non-Vector requests.
-
-- [ ] **Step 9: Run GREEN**
+- [ ] **Step 10: Run GREEN**
 
 ```powershell
 python -m unittest tests.test_generation_jobs tests.test_v03_vector_api tests.test_v03_vector_orchestration -v
@@ -553,7 +485,7 @@ python -m unittest tests.test_generation_jobs tests.test_v03_vector_api tests.te
 
 Expected: PASS.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add app/backend/stableamd_generation_jobs.py app/backend/stableamd_v03_vector.py app/backend/stableamd_v03_edit_server.py tests/test_generation_jobs.py tests/test_v03_vector_api.py tests/test_v03_vector_orchestration.py
@@ -562,45 +494,31 @@ git commit -m "feat: add async Text-to-SVG orchestration"
 
 ---
 
-### Task 6: Add safe SVG asset serving and Vector-aware Gallery lifecycle
+### Task 6: Add safe SVG source access and Vector-aware Gallery lifecycle
 
 **Files:**
 - Modify: `app/backend/stableamd_v03_vector.py`
-- Modify: `app/backend/stableamd_server.py` only if the binary/static response hook must be shared with `/api/image`
+- Modify: `app/backend/stableamd_server.py`
 - Modify: `tests/test_v03_gallery_management.py`
 - Create: `tests/test_v03_vector_assets.py`
 
-**Interfaces:**
+**Required interfaces:**
+- `resolve_output_svg(repo_root: Path, requested_path: str) -> Path`;
+- `GET /api/vector/source?path=...` returns JSON `{ "fileName": "name.svg", "svg": "<svg ...>" }`.
 
-```python
-def resolve_output_svg(repo_root: Path, requested_path: str) -> Path: ...
-```
-
-Vector API adds safe product access for sanitized assets. Prefer:
-- `GET /api/vector/source?path=...` -> JSON `{ "svg": "<svg..." }` for source viewer;
-- `GET /api/vector/asset?path=...` -> raw `image/svg+xml; charset=utf-8` / attachment-capable response using the same loopback HTTP handler mechanism as `/api/image`.
+There is deliberately **no raw SVG HTTP rendering endpoint in v1**. Download uses the JSON source route and a browser-created Blob. This keeps active SVG out of direct document navigation while still allowing source/download.
 
 - [ ] **Step 1: Write RED path-safety tests**
 
-Require:
-- valid `.svg` under `.runtime/stableamd/output/vector` resolves;
-- `.png`, missing file, output root itself, `..`, absolute external path and sibling-directory SVG are rejected;
-- source endpoint returns only a sanitized persisted SVG path.
+Require valid `.svg` under `.runtime/stableamd/output/vector` to resolve. Reject PNG, missing files, root directory, `..`, external absolute path and SVG outside the Vector subdirectory.
+
+Source endpoint must return only sanitized persisted SVGs under that resolver.
 
 - [ ] **Step 2: Write RED Gallery-delete tests**
 
-Create one vector history record containing:
+Vector history record contains `assetType`, `svgPath`, `previewPath`, and `ownedIntermediatePaths`.
 
-```json
-{
-  "assetType": "svg",
-  "svgPath": ".../output/vector/a.svg",
-  "previewPath": ".../output/vector/a.png",
-  "ownedIntermediatePaths": [".../output/vector/a-raster.png"]
-}
-```
-
-Verify delete removes all managed owned paths plus the record, but refuses to delete an `ownedIntermediatePaths` entry outside the managed output root.
+Delete removes final SVG, preview and owned managed intermediates plus history. If any owned path resolves outside `.runtime/stableamd/output`, refuse that path and never delete arbitrary external content. Existing raster `imagePath` deletion remains unchanged.
 
 - [ ] **Step 3: Run RED**
 
@@ -608,28 +526,30 @@ Verify delete removes all managed owned paths plus the record, but refuses to de
 python -m unittest tests.test_v03_vector_assets tests.test_v03_gallery_management -v
 ```
 
-Expected: failures because SVG resolver/vector lifecycle are absent.
+Expected: failures before SVG lifecycle support.
 
 - [ ] **Step 4: Implement history schema/persistence**
 
-Persist fields from the spec:
-- `assetType`, provider, original prompt, effective vector prompt/version;
+Persist:
+- `assetType="svg"`, provider;
+- original prompt and effective prompt plus `VECTOR_PROMPT_VERSION`;
 - style/detail/colors/background/backgroundColor;
 - seed;
-- `vectorizerVersion`, `sanitizerVersion`;
-- `svgPath`, `previewPath`;
-- `pathCount`, `nodeCount`;
-- child raster prompt/history/path relationship;
+- `vectorizerVersion=VTRACER_VERSION`;
+- `sanitizerVersion=SANITIZER_VERSION`;
+- `svgPath`, `previewPath`, path/node counts;
+- child raster history/path relationship;
 - `ownedIntermediatePaths`;
-- generation/vectorization/total seconds.
+- generation/vectorization/total seconds;
+- `galleryHidden=false` for final record.
 
-The default Gallery history loader must still accept old raster records unchanged.
+Keep old raster history compatible.
 
-- [ ] **Step 5: Implement safe asset/source serving and deletion**
+- [ ] **Step 5: Implement safe source route and deletion**
 
-Use `Path.resolve()` and require the StableAMD managed output root to be an ancestor. Serve only `.svg` from the Vector endpoint. Never serve the raw pre-sanitize SVG.
+`resolve_output_svg()` requires `.runtime/stableamd/output/vector` as ancestor and `.svg` suffix. `/api/vector/source` reads only through this resolver and returns JSON string content.
 
-Extend delete logic so Vector-owned managed paths are removed only after containment checks; preserve existing `imagePath` behavior for raster records.
+For deletion, `svgPath` must pass the Vector resolver; `previewPath` and `ownedIntermediatePaths` may be any descendant of the broader `.runtime/stableamd/output` root because the accepted Z-Image child raster is not necessarily in the Vector subfolder.
 
 - [ ] **Step 6: Run GREEN**
 
@@ -643,7 +563,7 @@ Expected: PASS.
 
 ```bash
 git add app/backend/stableamd_v03_vector.py app/backend/stableamd_server.py tests/test_v03_vector_assets.py tests/test_v03_gallery_management.py
-git commit -m "feat: persist and serve SVG assets safely"
+git commit -m "feat: persist and access SVG assets safely"
 ```
 
 ---
@@ -656,24 +576,18 @@ git commit -m "feat: persist and serve SVG assets safely"
 - Modify: `app/frontend/index.html`
 - Modify: `app/frontend/app.js`
 - Modify: `app/frontend/app-generation-jobs.js`
-- Modify: `app/frontend/app-post-actions.js` only for Vector-specific Gallery buttons if needed
+- Modify: `app/frontend/app-post-actions.js`
 - Create: `tests/test_frontend_vector.py`
 
-**Interfaces:**
-- Expose `window.StableAmdVector.loadRecord(record)` so Gallery Reuse can switch workspace and restore Vector settings.
-- Extend `app-generation-jobs.js` with a reusable `waitForGenerationJob(jobId)` export and async handling for `/api/vector/text-to-svg` without changing `/api/generate` behavior.
+**Required browser interfaces:**
+- `window.StableAmdJobs.waitForGenerationJob(jobId)`;
+- `window.StableAmdVector.loadRecord(record)`.
 
 - [ ] **Step 1: Write RED frontend contract tests**
 
-Assert `index.html` contains:
-- `data-page="vector"` navigation;
-- `id="page-vector"`;
-- `id="vector-form"`, `vector-prompt`, `vector-style`, `vector-detail`, `vector-colors`, `vector-background`, `vector-seed`;
-- `/vector.css` and `/app-vector.js`.
+Assert `index.html` contains Vector navigation/page/form controls and `/vector.css`, `/app-vector.js`.
 
-Assert Vector source does **not** contain sampler/scheduler/LoRA/ControlNet controls.
-
-Assert JS contains dependency calls `/api/vector/dependency`, `/api/vector/install`, submission `/api/vector/text-to-svg`, and uses the existing generation-job poll/result URLs.
+Assert Vector module contains no sampler/scheduler/LoRA/ControlNet controls and calls `/api/vector/dependency`, `/api/vector/install`, `/api/vector/text-to-svg`, and existing generation-job status/result endpoints.
 
 - [ ] **Step 2: Run RED**
 
@@ -681,17 +595,27 @@ Assert JS contains dependency calls `/api/vector/dependency`, `/api/vector/insta
 python -m unittest tests.test_frontend_vector -v
 ```
 
-Expected: FAIL because Vector workspace does not exist.
+Expected: FAIL before Vector UI exists.
 
-- [ ] **Step 3: Add dedicated page/UI**
+- [ ] **Step 3: Export shared async waiter**
 
-Add sidebar `Vector` after Generate (before Models) and page metadata:
+Keep existing `/api/generate` interception behavior. In `app-generation-jobs.js`, publish:
+
+```javascript
+window.StableAmdJobs = { waitForGenerationJob };
+```
+
+`app-vector.js` submits `/api/vector/text-to-svg`; if response contains `jobId`, it calls the shared waiter. Do not make the global API wrapper inject raster `asyncJob` into Vector requests.
+
+- [ ] **Step 4: Add dedicated Vector page**
+
+Add sidebar `Vector` after Generate and page metadata:
 
 ```javascript
 vector: ["Vector", "Create clean editable SVG assets from text prompts."],
 ```
 
-Vector form controls exactly:
+Controls exactly:
 
 ```text
 Prompt
@@ -699,38 +623,38 @@ Style       Icon / Logo mark | Vector Illustration
 Detail      Simple | Medium | Detailed
 Colors      Auto | 2 | 4 | 8 | 16
 Background  Transparent | Solid
-Solid color #RRGGBB (visible only for Solid)
+Solid color #RRGGBB (shown only for Solid)
 Seed
 Generate SVG
 ```
 
-Show dependency state at top of the Vector form. Missing/invalid dependency disables Generate and offers `Install Vectorizer`.
+Dependency state is shown at top. Missing/invalid disables Generate and shows `Install Vectorizer`.
 
-- [ ] **Step 4: Add async submission/result rendering**
+- [ ] **Step 5: Add result rendering/download/source**
 
-Submit JSON to `/api/vector/text-to-svg`; the shared job helper should poll `/api/generation-jobs/<id>` until completed.
+Result pane displays `previewPath` through `/api/image` plus vector metadata.
 
-Result pane shows sanitized PNG preview plus metadata and buttons:
-- Download SVG;
-- View source;
-- Regenerate;
-- Reuse settings.
+For Download SVG and View source, fetch `/api/vector/source?path=...`. Display source with `textContent`, never `innerHTML`.
 
-Download uses the safe Vector asset endpoint; source viewer fetches `/api/vector/source` and displays escaped text, never `innerHTML` of arbitrary SVG source.
+Download creates:
 
-- [ ] **Step 5: Make Gallery vector-aware**
+```javascript
+const blob = new Blob([payload.svg], { type: "image/svg+xml;charset=utf-8" });
+```
 
-In `makeHistoryVisual(record)`, when `assetType === "svg"`, use `previewPath` through the existing image endpoint instead of `imagePath`.
+then triggers a temporary `<a download="...svg">` object-URL download and revokes the URL afterward.
 
-Add visible `SVG` badge and Vector metadata. Reuse must call `window.StableAmdVector.loadRecord(record)` and `setPage("vector")`.
+- [ ] **Step 6: Make Gallery Vector-aware**
 
-Do not offer raster-only Img2Img/Inpaint/Outpaint actions for an SVG record unless they intentionally use `previewPath`; v1 should keep the Vector card focused on SVG download/source/reuse/delete.
+`makeHistoryVisual(record)` uses `previewPath` for `assetType="svg"`; add SVG badge and vector metadata.
 
-- [ ] **Step 6: Mobile nav/layout check in CSS**
+`app-post-actions.js` explicitly detects `assetType="svg"`, suppresses raster-only Img2Img/Inpaint/Outpaint/Upscale actions, and renders Vector Download / View source / Reuse / Delete actions. Reuse calls `StableAmdVector.loadRecord(record)` and switches to `setPage("vector")`.
 
-Current mobile nav is five columns. Increase the mobile grid to six entries only for the six internal page buttons that remain visible; keep `Open ComfyUI` behavior consistent with the existing responsive rules. Ensure Vector form/result collapses to one column below the same breakpoint as Generate.
+- [ ] **Step 7: Mobile layout**
 
-- [ ] **Step 7: Run GREEN**
+Current mobile nav is five columns. Change it to six for Generate, Vector, Models, Gallery, Settings, Diagnostics while preserving existing Open ComfyUI responsive behavior. Vector form/result collapses to one column at the same breakpoint as Generate.
+
+- [ ] **Step 8: Run GREEN**
 
 ```powershell
 python -m unittest tests.test_frontend_vector tests.test_frontend_startup_gate -v
@@ -738,7 +662,7 @@ python -m unittest tests.test_frontend_vector tests.test_frontend_startup_gate -
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add app/frontend/app-vector.js app/frontend/vector.css app/frontend/index.html app/frontend/app.js app/frontend/app-generation-jobs.js app/frontend/app-post-actions.js tests/test_frontend_vector.py
@@ -754,13 +678,13 @@ git commit -m "feat: add Vector Text-to-SVG workspace"
 - Modify: `tests/test_v03_server_isolated_import.py`
 - Modify: `docs/v0.3-status.md`
 - Modify: `docs/v0.3-forward-plan.md`
-- Optionally add: `docs/v0.3-text-to-svg-test.md` for the physical acceptance record
+- Create: `docs/v0.3-text-to-svg-test.md`
 
-**Interfaces:** release/package validation only; do not mark Text-to-SVG target-accepted until the physical checklist passes.
+Do not mark Text-to-SVG target-accepted until physical checks pass.
 
 - [ ] **Step 1: Add packaging/import RED tests**
 
-Package assertions must require:
+Package assertions require:
 
 ```text
 app/backend/stableamd_v03_vector.py
@@ -771,9 +695,21 @@ app/frontend/app-vector.js
 app/frontend/vector.css
 ```
 
-Isolated import must verify the final server imports without eagerly loading `PIL` or `resvg_py`.
+Isolated import requires `PIL` and `resvg_py` to remain unloaded when final server is imported.
 
-- [ ] **Step 2: Run focused packaging/import checks**
+- [ ] **Step 2: Create physical acceptance worksheet**
+
+`docs/v0.3-text-to-svg-test.md` contains unchecked fields only; it must not claim any physical pass before user testing.
+
+Four required samples:
+1. two-color simple icon;
+2. text-free logo mark/symbol;
+3. 4–8 color flat illustration;
+4. detailed vector illustration.
+
+For each record raster generation time, vectorization time, final path/node counts, background behavior, SVG/preview result, Gallery reuse/delete, and post-test ordinary Z-Image + Krea health.
+
+- [ ] **Step 3: Run focused package/import checks**
 
 ```powershell
 python -m unittest tests.test_v03_server_isolated_import -v
@@ -781,17 +717,17 @@ Import-Module Pester -MinimumVersion 5.5.0
 Invoke-Pester -Path ./tests/StableAmd.Packaging.Tests.ps1 -CI -Output Detailed
 ```
 
-Expected after implementation: PASS.
+Expected: PASS.
 
-- [ ] **Step 3: Run full Python regression suite**
+- [ ] **Step 4: Run full Python regression suite**
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Expected: zero failures/errors; managed-runtime-only Pillow/resvg physical tests remain mocked/skipped in generic CI as appropriate.
+Expected: zero failures/errors.
 
-- [ ] **Step 4: Run full Pester suite**
+- [ ] **Step 5: Run full Pester suite**
 
 ```powershell
 Import-Module Pester -MinimumVersion 5.5.0
@@ -800,53 +736,37 @@ Invoke-Pester -Path ./tests -CI -Output Detailed
 
 Expected: zero failures.
 
-- [ ] **Step 5: Build package**
+- [ ] **Step 6: Build package**
 
 ```powershell
 $result = ./scripts/Build-StableAMDPackage.ps1 -Version '0.3.0-text-to-svg-test'
 Test-Path $result.ZipPath
 ```
 
-Expected: `True` and package contains the six Vector files above but no `.runtime`.
+Expected: `True`, six Vector files present, no `.runtime` in package.
 
-- [ ] **Step 6: Update status without premature acceptance**
+- [ ] **Step 7: Update status without premature acceptance**
 
-Document `Text-to-SVG v1` as **implemented / physical acceptance pending**. Keep Character Sheet quality work noted separately and do not rewrite it as accepted.
+Document Text-to-SVG v1 as `implemented / physical acceptance pending`. Keep Character Sheet quality work separately pending; do not rewrite it as accepted.
 
-Create the physical checklist using the exact four classes from the spec:
-1. two-color simple icon;
-2. text-free logo mark/symbol;
-3. 4–8 color flat illustration;
-4. detailed vector illustration.
-
-For each, record raster generation time, vectorization time, final path/node counts, background result, SVG/preview screenshots, and whether ordinary Z-Image + Krea generation still work immediately afterward.
-
-- [ ] **Step 7: Commit implementation-status docs/tests**
+- [ ] **Step 8: Commit status/tests**
 
 ```bash
 git add tests/StableAmd.Packaging.Tests.ps1 tests/test_v03_server_isolated_import.py docs/v0.3-status.md docs/v0.3-forward-plan.md docs/v0.3-text-to-svg-test.md
 git commit -m "test: gate Text-to-SVG v1 release packaging"
 ```
 
-If the optional physical record file was not created yet, omit it from `git add`; do not create a fake acceptance result.
+- [ ] **Step 9: Verify exact-head CI before physical handoff**
 
-- [ ] **Step 8: Verify exact-head CI before handing off to physical test**
+Wait for PR-triggered Actions on the exact current head and verify all six workflow stages: PowerShell parse, Python probes, Python tests, Pester tests, package build, artifact upload.
 
-Wait for the PR-triggered GitHub Actions run for the exact current head. Verify:
-- Parse PowerShell files: success;
-- Compile Python probes: success;
-- Python API tests: success;
-- Pester install/tests: success;
-- package build: success;
-- artifact upload: success.
-
-Add a PR #4 status comment containing the exact head SHA, the RED/GREEN test evidence and `physical Text-to-SVG acceptance pending`.
+Add a PR #4 status comment with exact head SHA, RED/GREEN evidence and `physical Text-to-SVG acceptance pending`.
 
 ---
 
 ## Physical Acceptance Command / User Handoff
 
-After exact-head CI is green, the target-machine update is:
+After exact-head CI is green:
 
 ```powershell
 Ctrl+C
@@ -854,8 +774,8 @@ git pull
 .\Start-StableAMD.cmd
 ```
 
-Because Task 7 changes frontend files, use **Ctrl+F5 once** after the application has restarted.
+Task 7 changes frontend files, so use **Ctrl+F5 once** after restart.
 
-First visit **Vector → Text to SVG**. If dependency state is missing, use **Install Vectorizer** and let StableAMD install pinned VTracer + `resvg_py==0.5.0`; restart only if the dependency response explicitly says it is required.
+Open **Vector → Text to SVG**. If dependency state is missing/invalid, use **Install Vectorizer**; StableAMD installs pinned VTracer + `resvg_py==0.5.0` without requiring an application restart.
 
 Do not mark Text-to-SVG `target-accepted` until all four physical samples produce useful editable SVGs, Gallery lifecycle works, and ordinary Z-Image + Krea still work afterwards.
