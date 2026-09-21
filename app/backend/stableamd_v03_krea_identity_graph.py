@@ -129,6 +129,15 @@ class KreaIdentityGraphBridgeMixin:
                 raise base.StableAmdBridgeError(
                     f"Krea Identity Edit requires ComfyUI node '{node_name}'. Install the pinned dependency and restart ComfyUI."
                 )
+        # StableAMD's 16 GiB desktop profile intentionally starts with CPU VAE.
+        # Krea2Edit's pixel path VAE-encodes the reference at the target grid, and
+        # WanVAE attention at ~2 MP is not viable on CPU (tens of GiB temporary
+        # allocation). The current pinned ComfyUI provides SelectVAEDevice; require
+        # it for this graph and retarget only the VAE work to the Radeon GPU.
+        if not self._node_available("SelectVAEDevice"):
+            raise base.StableAmdBridgeError(
+                "Krea Identity Edit requires ComfyUI node 'SelectVAEDevice' on the StableAMD CPU-VAE profile."
+            )
 
         lora_name = self._lora_choice_by_leaf(identity.KREA_IDENTITY_LORA_FILENAME)
         if not lora_name:
@@ -166,34 +175,46 @@ class KreaIdentityGraphBridgeMixin:
         sampler_inputs["scheduler"] = "simple"
         sampler_inputs["denoise"] = 1.0
 
-        node_count = 7 if identity_image_name else 5
+        # source_latent is mandatory in the custom node schema, but when the
+        # training-matched pixel path is wired (vae + source_image + target_latent)
+        # the plugin pre-encodes source_image itself and replaces that bootstrap
+        # latent before sampling. Reusing the already-existing target latent avoids
+        # a redundant full-resolution VAEEncode while keeping the raw reference for
+        # both the pixel path and the grounded Qwen3-VL encoder.
+        node_count = 6 if identity_image_name else 5
         ids = self._identity_graph_allocate_ids(workflow, node_count)
-        source_image_id, source_latent_id = ids[0], ids[1]
-        cursor = 2
+        cursor = 0
+        source_image_id = ids[cursor]
+        cursor += 1
         identity_image_id: str | None = None
-        identity_latent_id: str | None = None
         if identity_image_name:
-            identity_image_id, identity_latent_id = ids[cursor], ids[cursor + 1]
-            cursor += 2
-        lora_id, patch_id, grounded_id = ids[cursor], ids[cursor + 1], ids[cursor + 2]
+            identity_image_id = ids[cursor]
+            cursor += 1
+        vae_device_id, lora_id, patch_id, grounded_id = (
+            ids[cursor],
+            ids[cursor + 1],
+            ids[cursor + 2],
+            ids[cursor + 3],
+        )
 
         workflow[source_image_id] = {
             "class_type": "LoadImage",
             "inputs": {"image": image_name},
         }
-        workflow[source_latent_id] = {
-            "class_type": "VAEEncode",
-            "inputs": {"pixels": [source_image_id, 0], "vae": vae_ref},
-        }
-        if identity_image_name and identity_image_id and identity_latent_id:
+        if identity_image_name and identity_image_id:
             workflow[identity_image_id] = {
                 "class_type": "LoadImage",
                 "inputs": {"image": identity_image_name},
             }
-            workflow[identity_latent_id] = {
-                "class_type": "VAEEncode",
-                "inputs": {"pixels": [identity_image_id, 0], "vae": vae_ref},
-            }
+
+        workflow[vae_device_id] = {
+            "class_type": "SelectVAEDevice",
+            "inputs": {
+                "vae": vae_ref,
+                "device": "gpu:0",
+            },
+        }
+        selected_vae_ref = [vae_device_id, 0]
 
         workflow[lora_id] = {
             "class_type": "LoraLoaderModelOnly",
@@ -205,16 +226,16 @@ class KreaIdentityGraphBridgeMixin:
         }
         patch_inputs: dict[str, Any] = {
             "model": [lora_id, 0],
-            "source_latent": [source_latent_id, 0],
+            "source_latent": latent_ref,
             "ref_boost": identity.KREA_IDENTITY_REF_BOOST,
             "ref_boost_a": identity.KREA_IDENTITY_SCENE_REF_BOOST,
             "fit_mode": "fit",
-            "vae": vae_ref,
+            "vae": selected_vae_ref,
             "source_image": [source_image_id, 0],
             "target_latent": latent_ref,
         }
-        if identity_image_id and identity_latent_id:
-            patch_inputs["source_latent_b"] = [identity_latent_id, 0]
+        if identity_image_id:
+            patch_inputs["source_latent_b"] = latent_ref
             patch_inputs["source_image_b"] = [identity_image_id, 0]
         workflow[patch_id] = {
             "class_type": "Krea2EditModelPatch",
@@ -240,5 +261,5 @@ class KreaIdentityGraphBridgeMixin:
         # current Krea workflow uses ConditioningZeroOut; older graphs used a
         # blank CLIPTextEncode. Identity Edit must not invent either one.
         sampler_inputs["negative"] = negative_ref
-        decode_inputs["vae"] = vae_ref
+        decode_inputs["vae"] = selected_vae_ref
         return workflow
