@@ -26,6 +26,9 @@ from stableamd_v03_character_sheet_v2 import (  # noqa: E402
     CharacterSheetV2BridgeMixin,
     KreaIdentityGenerationBridgeMixin,
 )
+from stableamd_v03_character_sheet_identity_tuning import (  # noqa: E402
+    CharacterSheetV2IdentityTuningBridgeMixin,
+)
 
 # Explicit aliases retained for compatibility with tests and downstream modules
 # that import the final v0.3 server rather than the preserved legacy layer.
@@ -50,13 +53,14 @@ _FINAL_ASYNC_FIELDS = ("asyncJob",)
 
 
 class PowerShellBridge(
+    CharacterSheetV2IdentityTuningBridgeMixin,
     CharacterSheetV2BridgeMixin,
     KreaIdentityGenerationBridgeMixin,
     KreaIdentityGraphBridgeMixin,
     KreaIdentityEditBridgeMixin,
     legacy.PowerShellBridge,
 ):
-    """Final v0.3 bridge with training-matched Character Sheet v2 before legacy sheet flow."""
+    """Final v0.3 bridge with identity-tuned Character Sheet v2 before legacy sheet flow."""
 
     def comfyui_runtime(self):
         return super().comfyui_runtime()
