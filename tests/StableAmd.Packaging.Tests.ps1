@@ -53,6 +53,16 @@ Describe 'StableAMD v0.1 release packaging' {
         Test-Path (Join-Path $result.PackageRoot '.git') | Should -BeFalse
     }
 
+    It 'packages the Character Sheet v2 Identity Edit backend modules' {
+        $buildScript = Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1'
+        $output = Join-Path $TestDrive 'v03-dist'
+        $result = & $buildScript -RepoRoot $repoRoot -OutputDirectory $output -Version '0.3.0-character-sheet-test'
+
+        Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_krea_identity_edit.py') | Should -BeTrue
+        Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_character_sheet_v2.py') | Should -BeTrue
+        Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_edit_server.py') | Should -BeTrue
+    }
+
     It 'documents the completed RX 6950 XT clean-package and product-flow acceptance' {
         $validation = Get-Content -Path (Join-Path $repoRoot 'docs/v0.1-validation.md') -Raw
         $validation | Should -Match 'RX 6950 XT'
