@@ -9,6 +9,11 @@ SERVER = REPO_ROOT / "app" / "backend" / "stableamd_v03_server.py"
 FINAL_SERVER = REPO_ROOT / "app" / "backend" / "stableamd_v03_edit_server.py"
 IDENTITY_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_krea_identity_edit.py"
 CHARACTER_SHEET_V2_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_character_sheet_v2.py"
+VECTOR_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_vector.py"
+VECTOR_ASSETS_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_vector_assets.py"
+VECTOR_SANITIZE_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_svg_sanitize.py"
+VECTOR_PREVIEW_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_svg_preview.py"
+VECTOR_TOOL_MODULE = REPO_ROOT / "app" / "backend" / "stableamd_v03_svg_vectorizer.py"
 
 
 class StableAmdV03IsolatedServerImportTests(unittest.TestCase):
@@ -41,8 +46,16 @@ class StableAmdV03IsolatedServerImportTests(unittest.TestCase):
         self.assertIn("StableAMD", completed.stdout)
 
     def test_character_sheet_and_vector_modules_import_without_managed_runtime_libraries(self):
-        self.assertTrue(IDENTITY_MODULE.is_file())
-        self.assertTrue(CHARACTER_SHEET_V2_MODULE.is_file())
+        for module_path in (
+            IDENTITY_MODULE,
+            CHARACTER_SHEET_V2_MODULE,
+            VECTOR_MODULE,
+            VECTOR_ASSETS_MODULE,
+            VECTOR_SANITIZE_MODULE,
+            VECTOR_PREVIEW_MODULE,
+            VECTOR_TOOL_MODULE,
+        ):
+            self.assertTrue(module_path.is_file(), module_path)
         probe = f'''
 import runpy
 import sys
