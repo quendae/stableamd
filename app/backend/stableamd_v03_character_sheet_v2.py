@@ -111,6 +111,9 @@ class CharacterSheetV2BridgeMixin:
         return any(field in request for field in _LEGACY_CHARACTER_SHEET_FIELDS)
 
     def _stage_character_sheet_v2_source(self, source: Any) -> Path:
+        parent_stage = getattr(super(), "_stage_character_sheet_v2_source", None)
+        if callable(parent_stage):
+            return parent_stage(source)
         return base.stage_input_image(self.repo_root, source)
 
     def _persist_character_sheet_v2_base_metadata(
@@ -263,8 +266,6 @@ class CharacterSheetV2ApiMixin:
                 validated["characterSheetVersion"] = "legacy-sequential"
             return validated
 
-        # Bare character-sheet requests now select v2. The old wire remains
-        # backward-compatible only when one of its view/phase fields is present.
         for field in _LEGACY_CHARACTER_SHEET_FIELDS:
             if field in request:
                 raise ValueError(f"{field} is a legacy-sequential field and is not valid for Character Sheet v2.")
