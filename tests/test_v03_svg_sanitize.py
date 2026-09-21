@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import sys
 import unittest
 from pathlib import Path
@@ -63,7 +62,6 @@ class CleanSvgSanitizerTests(unittest.TestCase):
             '<clipPath id="c"/>',
             '<animate attributeName="x" dur="1s"/>',
             '<use href="#shape"/>',
-            '<metadata>producer</metadata>',
         ]
         for element in elements:
             document = (
@@ -141,13 +139,15 @@ class CleanSvgSanitizerTests(unittest.TestCase):
                 with self.assertRaises(sanitize.SvgSanitizationError):
                     sanitize.sanitize_svg(document)
 
-    def test_removes_comments_and_empty_groups_but_preserves_drawable_shapes(self):
+    def test_removes_metadata_comments_and_empty_groups_but_preserves_drawable_shapes(self):
         document = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
-            '<!-- producer comment --><g></g><g><circle cx="5" cy="5" r="2" fill="#fff"/></g></svg>'
+            '<metadata>producer</metadata><!-- producer comment --><g></g>'
+            '<g><circle cx="5" cy="5" r="2" fill="#fff"/></g></svg>'
         )
         clean = sanitize.sanitize_svg(document)
-        self.assertNotIn('producer comment', clean.xml)
+        self.assertNotIn('producer', clean.xml)
+        self.assertNotIn('metadata', clean.xml)
         self.assertEqual(clean.xml.count('<g'), 1)
         self.assertIn('<circle', clean.xml)
 
