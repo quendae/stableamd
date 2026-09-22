@@ -399,7 +399,7 @@
     }
     let payload;
     try {
-      payload = vectorPayload();
+      payload = vectorState.workflow === "image" ? imageVectorPayload() : vectorPayload();
     } catch (error) {
       showToast(error.message, "error");
       if (vectorState.workflow === "text") vectorQuery("#vector-prompt")?.focus();
@@ -417,15 +417,20 @@
     resultPane.hidden = true;
 
     try {
-      const submitted = await api("/api/vector/text-to-svg", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      let result = submitted;
-      const jobId = String(submitted?.jobId || "");
-      if (jobId) {
-        const jobs = await waitForJobsInterface();
-        result = await jobs.waitForGenerationJob(jobId);
+      let result;
+      if (vectorState.workflow === "image") {
+        result = await submitImageVector();
+      } else {
+        const submitted = await api("/api/vector/text-to-svg", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        result = submitted;
+        const jobId = String(submitted?.jobId || "");
+        if (jobId) {
+          const jobs = await waitForJobsInterface();
+          result = await jobs.waitForGenerationJob(jobId);
+        }
       }
       renderVectorResult(result);
       if (typeof refreshHistory === "function") await refreshHistory();
