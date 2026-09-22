@@ -153,3 +153,51 @@
   .vector-dependency .button { width: 100%; }
   .vector-result-actions .button { flex: 1 1 auto; }
 }
+
+
+.vector-workflow-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.vector-workflow-switch .is-active {
+  border-color: var(--border-strong);
+  background: var(--surface-3);
+}
+.vector-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -5px 0 14px;
+}
+.image-vector-source-status {
+  margin: -2px 0 18px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.vector-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.vector-advanced-grid .field { margin-bottom: 10px; }
+.vector-advanced-grid input[type="range"] {
+  height: auto;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.vector-advanced-grid output {
+  color: var(--muted);
+  font-size: 11px;
+}
+.image-vector-crop-editor {
+  min-height: 42px;
+  margin: -4px 0 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+}
