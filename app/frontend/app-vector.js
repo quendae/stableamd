@@ -82,6 +82,137 @@
     }
   }
 
+  function setVectorWorkflow(workflow) {
+    vectorState.workflow = workflow === "image" ? "image" : "text";
+    const textButton = vectorQuery("#vector-workflow-text");
+    const imageButton = vectorQuery("#vector-workflow-image");
+    const textControls = vectorQuery("#vector-text-controls");
+    const imageControls = vectorQuery("#vector-image-controls");
+    const generate = vectorQuery("#vector-generate");
+    if (textButton) {
+      textButton.classList.toggle("is-active", vectorState.workflow === "text");
+      textButton.setAttribute("aria-selected", vectorState.workflow === "text" ? "true" : "false");
+    }
+    if (imageButton) {
+      imageButton.classList.toggle("is-active", vectorState.workflow === "image");
+      imageButton.setAttribute("aria-selected", vectorState.workflow === "image" ? "true" : "false");
+    }
+    if (textControls) textControls.hidden = vectorState.workflow !== "text";
+    if (imageControls) imageControls.hidden = vectorState.workflow !== "image";
+    if (generate) generate.textContent = vectorState.workflow === "image" ? "Convert to SVG" : "Generate SVG";
+    if (vectorState.workflow === "image") syncImageVectorStylization();
+  }
+
+  function updateRangeOutput(id, valueId) {
+    const input = vectorQuery(id);
+    const output = vectorQuery(valueId);
+    if (input && output) output.value = input.value;
+  }
+
+  function syncImageVectorStylization() {
+    const mode = vectorQuery("#image-vector-mode")?.value || "artwork";
+    const field = vectorQuery("#image-vector-stylization-field");
+    if (field) field.hidden = mode !== "photo-stylized";
+    const creative = mode === "photo-stylized" && vectorQuery("#image-vector-stylization")?.value === "creative";
+    const sourceStatus = vectorQuery("#image-vector-source-status");
+    if (creative && sourceStatus && !vectorState.imageSource) {
+      sourceStatus.textContent = "Creative mode requires a source image.";
+    }
+  }
+
+  function readImageVectorFile(file) {
+    return new Promise((resolve, reject) => {
+      if (!file) return reject(new Error("Choose an image."));
+      if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+        return reject(new Error("Image-to-SVG supports PNG, JPEG, or WebP."));
+      }
+      if (file.size > 20 * 1024 * 1024) return reject(new Error("Image must be 20 MiB or smaller."));
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the source image."));
+      reader.onload = () => {
+        const encoded = String(reader.result || "");
+        const comma = encoded.indexOf(",");
+        if (comma < 0) return reject(new Error("Could not encode the source image."));
+        resolve({ name: file.name, mimeType: file.type, dataBase64: encoded.slice(comma + 1) });
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function setImageVectorSource(source, label) {
+    vectorState.imageSource = source;
+    const status = vectorQuery("#image-vector-source-status");
+    if (status) status.textContent = label || "Image source selected.";
+  }
+
+  function useCurrentImageVector() {
+    const result = window.StableAmdCurrentImage;
+    const path = vectorValue(result, "ImagePath", "imagePath");
+    const promptId = vectorValue(result, "PromptId", "promptId");
+    if (!path || !promptId) {
+      showToast("No current Generate/Image Edit result is available.", "error");
+      return;
+    }
+    setImageVectorSource({ kind: "current", id: String(promptId) }, "Current image selected.");
+    setPage("vector");
+  }
+
+  function chooseImageVectorGallery() {
+    setPage("gallery");
+    showToast("Choose a raster Gallery item and use Convert to SVG.", "info");
+  }
+
+  function imageVectorPayload() {
+    if (!vectorState.imageSource) throw new Error("Select an image source first.");
+    const mode = vectorQuery("#image-vector-mode")?.value || "artwork";
+    const stylization = mode === "photo-stylized"
+      ? (vectorQuery("#image-vector-stylization")?.value || "preserve")
+      : undefined;
+    const colorsRaw = vectorQuery("#image-vector-colors")?.value || "auto";
+    const cropMode = vectorQuery("#image-vector-crop")?.value || "preserve";
+    const payload = {
+      source: vectorState.imageSource,
+      mode,
+      detail: vectorQuery("#image-vector-detail")?.value || "medium",
+      colors: colorsRaw === "auto" ? "auto" : Number(colorsRaw),
+      background: vectorQuery("#image-vector-background")?.value || "preserve",
+      cropMode,
+      advanced: {
+        smoothing: Number(vectorQuery("#image-vector-smoothing")?.value || 0),
+        edgeStrength: Number(vectorQuery("#image-vector-edge")?.value || 0),
+        denoise: Number(vectorQuery("#image-vector-denoise")?.value || 0),
+        posterize: Number(vectorQuery("#image-vector-posterize")?.value || 0),
+        backgroundTolerance: Number(vectorQuery("#image-vector-tolerance")?.value || 18),
+      },
+    };
+    if (stylization) payload.stylization = stylization;
+    if (cropMode === "manual") {
+      const crop = vectorState.imageSource?.crop;
+      if (!crop) throw new Error("Manual crop is not configured yet. Select Auto-trim or Preserve canvas.");
+      payload.crop = crop;
+    }
+    return payload;
+  }
+
+  function applyImageVectorPreset() {
+    const mode = vectorQuery("#image-vector-mode")?.value || "artwork";
+    const stylization = mode === "photo-stylized" ? (vectorQuery("#image-vector-stylization")?.value || "preserve") : null;
+    const preset = {
+      artwork: {smoothing:20, edgeStrength:70, denoise:10, posterize:20},
+      "photo-direct": {smoothing:35, edgeStrength:55, denoise:35, posterize:45},
+      preserve: {smoothing:55, edgeStrength:65, denoise:50, posterize:70},
+      creative: {smoothing:30, edgeStrength:60, denoise:20, posterize:35},
+    }[mode === "photo-stylized" ? stylization : mode] || {smoothing:20, edgeStrength:70, denoise:10, posterize:20};
+    for (const [id, value] of Object.entries(preset)) {
+      const input = vectorQuery("#image-vector-" + id.replace("edgeStrength", "edge").replace("posterize", "posterize"));
+      if (input) input.value = String(value);
+    }
+    updateRangeOutput("#image-vector-smoothing", "#image-vector-smoothing-value");
+    updateRangeOutput("#image-vector-edge", "#image-vector-edge-value");
+    updateRangeOutput("#image-vector-denoise", "#image-vector-denoise-value");
+    updateRangeOutput("#image-vector-posterize", "#image-vector-posterize-value");
+  }
+
   function toggleSolidColor() {
     const background = vectorQuery("#vector-background")?.value || "transparent";
     const field = vectorQuery("#vector-background-color-field");
@@ -248,6 +379,18 @@
     }
   }
 
+  async function submitImageVector() {
+    const payload = imageVectorPayload();
+    const submitted = await api("/api/vector/image-to-svg", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const jobId = String(submitted?.jobId || "");
+    if (!jobId) return submitted;
+    const jobs = await waitForJobsInterface();
+    return jobs.waitForGenerationJob(jobId);
+  }
+
   async function submitVector(event) {
     event.preventDefault();
     if (!vectorState.dependency?.ready) {
@@ -259,7 +402,7 @@
       payload = vectorPayload();
     } catch (error) {
       showToast(error.message, "error");
-      vectorQuery("#vector-prompt")?.focus();
+      if (vectorState.workflow === "text") vectorQuery("#vector-prompt")?.focus();
       return;
     }
 
@@ -286,7 +429,7 @@
       }
       renderVectorResult(result);
       if (typeof refreshHistory === "function") await refreshHistory();
-      showToast("SVG generated and sanitized.", "success");
+      showToast(vectorState.workflow === "image" ? "Image converted to SVG." : "SVG generated and sanitized.", "success");
     } catch (error) {
       empty.hidden = false;
       empty.querySelector("strong").textContent = "Vector generation failed";
@@ -402,6 +545,13 @@
     if (!record || !isVectorRecord(record)) throw new Error("Vector Gallery record is no longer available.");
     const action = button.dataset.vectorAction;
     if (action === "vector-download") return downloadSvg(record);
+    if (action === "vector-convert") {
+      vectorState.workflow = "image";
+      setVectorWorkflow("image");
+      setImageVectorSource({ kind: "gallery", id: String(vectorValue(record, "promptId", "PromptId") || "") }, "Gallery image selected.");
+      setPage("vector");
+      return;
+    }
     if (action === "vector-source") {
       setPage("vector");
       loadRecord(record);
@@ -418,6 +568,29 @@
 
   document.addEventListener("DOMContentLoaded", () => {
     vectorQuery("#vector-form")?.addEventListener("submit", submitVector);
+    vectorQuery("#vector-workflow-text")?.addEventListener("click", () => setVectorWorkflow("text"));
+    vectorQuery("#vector-workflow-image")?.addEventListener("click", () => setVectorWorkflow("image"));
+    vectorQuery("#image-vector-upload")?.addEventListener("change", async (event) => {
+      try {
+        const file = event.target.files?.[0];
+        const image = await readImageVectorFile(file);
+        setImageVectorSource({ kind: "upload", image }, file.name);
+      } catch (error) {
+        showToast(error.message, "error");
+        event.target.value = "";
+      }
+    });
+    vectorQuery("#image-vector-use-current")?.addEventListener("click", useCurrentImageVector);
+    vectorQuery("#image-vector-from-gallery")?.addEventListener("click", chooseImageVectorGallery);
+    vectorQuery("#image-vector-mode")?.addEventListener("change", () => { syncImageVectorStylization(); applyImageVectorPreset(); });
+    vectorQuery("#image-vector-stylization")?.addEventListener("change", applyImageVectorPreset);
+    for (const [id, output] of [
+      ["#image-vector-smoothing", "#image-vector-smoothing-value"],
+      ["#image-vector-edge", "#image-vector-edge-value"],
+      ["#image-vector-denoise", "#image-vector-denoise-value"],
+      ["#image-vector-posterize", "#image-vector-posterize-value"],
+      ["#image-vector-tolerance", "#image-vector-tolerance-value"],
+    ]) vectorQuery(id)?.addEventListener("input", () => updateRangeOutput(id, output));
     vectorQuery("#vector-background")?.addEventListener("change", toggleSolidColor);
     vectorQuery("#vector-install")?.addEventListener("click", () => void installDependency());
     document.querySelector('[data-page="vector"]')?.addEventListener("click", () => void refreshDependency());
