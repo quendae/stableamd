@@ -441,8 +441,6 @@ class ImageToSvgBridgeMixin:
             "modelId": str(model.get("id") or model.get("Id") or ""),
             "prompt": _creative_prompt(request),
             "inputImage": _image_payload_from_path(source_path),
-            "width": 1024,
-            "height": 1024,
             "steps": 8,
             "cfg": 1.0,
             "samplerName": "euler",
