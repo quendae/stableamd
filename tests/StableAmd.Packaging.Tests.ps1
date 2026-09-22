@@ -81,6 +81,23 @@ Describe 'StableAMD v0.1 release packaging' {
         }
     }
 
+    It 'packages the Image-to-SVG v1 backend and workspace surface' {
+        $buildScript = Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1'
+        $output = Join-Path $TestDrive 'v03-image-vector-dist'
+        $result = & $buildScript -RepoRoot $repoRoot -OutputDirectory $output -Version '0.3.0-image-to-svg-test'
+
+        @(
+            'app/backend/stableamd_v03_image_to_svg.py',
+            'app/backend/stableamd_generation_jobs.py',
+            'app/backend/stableamd_v03_edit_server.py',
+            'app/frontend/index.html',
+            'app/frontend/app-vector.js',
+            'app/frontend/vector.css'
+        ) | ForEach-Object {
+            Test-Path (Join-Path $result.PackageRoot $_) | Should -BeTrue
+        }
+    }
+
     It 'documents the completed RX 6950 XT clean-package and product-flow acceptance' {
         $validation = Get-Content -Path (Join-Path $repoRoot 'docs/v0.1-validation.md') -Raw
         $validation | Should -Match 'RX 6950 XT'
