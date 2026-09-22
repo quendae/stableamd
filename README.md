@@ -1,12 +1,12 @@
 # StableAMD
 
-StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. ComfyUI stays an internal inference engine while the normal user experience remains product-level: **Generate, Models, Gallery, Settings and Diagnostics**.
+StableAMD is a Windows-first local AI image-generation application focused on AMD Radeon GPUs. ComfyUI stays an internal inference engine while the normal user experience remains product-level: **Generate, Vector, Models, Gallery, Settings and Diagnostics**.
 
 ## Current status
 
 The active development line is **StableAMD v0.3** on `feat/stableamd-v0.3` / draft PR #4.
 
-The project is hardware-tested on an **AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)** using the managed native-Windows TheRock/ROCm runtime. v0.3 is now a practical multi-provider Radeon image workstation rather than only an SDXL frontend.
+The project is hardware-tested on an **AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)** using the managed native-Windows TheRock/ROCm runtime. v0.3 is now a practical multi-provider Radeon image workstation with target-tested raster generation/editing plus a dedicated Clean SVG workflow.
 
 Current detailed status: [`docs/v0.3-status.md`](docs/v0.3-status.md)  
 Execution order: [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md)  
@@ -61,6 +61,7 @@ Target-accepted features include:
 - native Inpaint;
 - native Outpaint through the accepted Union 2.1 Lite Fun Control patch;
 - automatic Outpaint canvas preparation;
+- Canny / OpenPose / Depth structural guidance;
 - Gallery history/reuse/delete;
 - classic `Upscale after`.
 
@@ -74,16 +75,17 @@ The official FP8 package is accepted on the RX 6950 XT:
 - `qwen3vl_4b_fp8_scaled.safetensors`;
 - `qwen_image_vae.safetensors`.
 
-Target-accepted features now include:
+Target-accepted features include:
 
 - txt2img through the dedicated `krea2-bundle` provider;
 - official-style `8 steps / CFG 1 / Euler / simple` defaults;
 - ordered model-only LoRA stacks;
 - Gallery persistence/reuse;
 - classic `Upscale after`;
-- **OpenPose structural control** using the pinned Krea/Ostris edit integration and Turbo pose adapter;
-- **OpenPose + normal user LoRA in the same generation**;
-- **whole-image Image Edit** using a source image plus a natural-language edit instruction.
+- OpenPose structural control using the pinned Krea/Ostris edit integration and Turbo pose adapter;
+- OpenPose + normal user LoRA in the same generation;
+- Depth guidance;
+- whole-image **Image Edit** using a source image plus a natural-language edit instruction.
 
 Krea Image Edit follows the published reference-conditioning path rather than classic latent-denoise img2img:
 
@@ -111,7 +113,7 @@ Current accepted Krea 2 OpenPose path:
 - safe-frame handling for Krea aspect ratios;
 - user LoRA coexistence target-tested on the RX 6950 XT.
 
-Z-Image control routes remain independently gated and are documented in [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md).
+Z-Image control routes remain independently provider-aware and are documented in [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md).
 
 ## LoRA compatibility
 
@@ -152,6 +154,72 @@ Accepted flows include:
 - manual Gallery upscale.
 
 Krea Image Edit currently edits the whole reference image. Masked Krea editing and Image Edit + Control composition are intentionally separate future gates.
+
+## Vector / Clean SVG
+
+StableAMD has a dedicated **Vector** workspace with a security-bounded Clean SVG lifecycle. SVG output is sanitized before persistence and preview; arbitrary active SVG is never served directly to the browser.
+
+### Text-to-SVG v1 — target-accepted
+
+Text-to-SVG v1 is target-accepted on the physical RX 6950 XT as of 2026-09-22.
+
+Accepted pipeline:
+
+```text
+Text prompt
+-> constrained Z-Image Turbo raster source
+-> release GPU runtime
+-> optional border-connected background removal
+-> VTracer 1.0.0-alpha.4
+-> Clean SVG sanitizer
+-> resvg_py 0.5.0 PNG preview
+-> Vector Gallery record
+```
+
+The accepted product surface covers:
+
+- Icon / Logo mark;
+- Vector Illustration;
+- Simple / Medium / Detailed tracing profiles;
+- Auto / 2 / 4 / 8 / 16 color targets;
+- transparent or solid background handling;
+- Download SVG;
+- safe View source;
+- Reuse;
+- Delete.
+
+Physical acceptance included a two-color transparent fox icon and an 8-color multi-object vector illustration. The target session also confirmed Download SVG, View source, Reuse and Delete.
+
+Acceptance record: [`docs/v0.3-text-to-svg-test.md`](docs/v0.3-text-to-svg-test.md)
+
+### Image-to-SVG v1 — active implementation phase
+
+Image-to-SVG is the next Vector feature. Its product/architecture design is locked in [`docs/superpowers/specs/2026-09-22-image-to-svg-v1-design.md`](docs/superpowers/specs/2026-09-22-image-to-svg-v1-design.md).
+
+The design reuses the accepted VTracer / sanitizer / preview / Gallery stack and adds image-oriented source and preprocessing contracts.
+
+Planned source handoff:
+
+- local image upload;
+- raster Gallery `Convert to SVG`;
+- current Generate / Image Edit result without download/re-upload.
+
+Planned modes:
+
+```text
+Artwork
+Photo / Direct
+Photo / Stylized / Preserve
+Photo / Stylized / Creative
+```
+
+The default three non-Creative paths are deterministic and local. `Photo / Stylized / Creative` is provider-aware and uses the already accepted Krea whole-image Image Edit path first; if Krea is unavailable, only Creative is disabled.
+
+The main Image-to-SVG form stays compact: Source, Mode, Detail, Colors, Background, Crop and Convert to SVG. An Advanced section adds Smoothing, Edge strength, Denoise, Posterize and Background tolerance.
+
+Crop behavior is `Preserve canvas` by default with optional `Auto-trim` and manual crop. Background is `Preserve` by default with optional border-connected transparent-background removal. Existing alpha is preserved.
+
+Image-to-SVG must not weaken the accepted Clean SVG allow-list or introduce a second SVG asset lifecycle.
 
 ## Classic upscale
 
@@ -260,24 +328,26 @@ powershell -ExecutionPolicy Bypass -File .\scripts\Test-StableAMDPackage.ps1 -Pl
 
 CI covers PowerShell parsing, Python API contracts, Pester unit/regression tests, workflow construction, provider/model-root handling, frontend contracts, source package build and artifact upload.
 
-The current Krea Image Edit implementation passed GitHub Actions **#660** end to end. GPU/runtime execution remains separately validated on the physical RX 6950 XT target; the Image Edit gate is now target-accepted as well.
+Text-to-SVG was developed with explicit RED/GREEN coverage for the dependency manager, request semantics, VTracer execution, sanitizer/security boundaries, preview rendering, async orchestration, Gallery lifecycle and Vector frontend. The physical sanitizer compatibility issue found on the RX 6950 XT was reproduced in RED and fixed before the final target acceptance.
+
+Image-to-SVG will follow the same TDD discipline. Its design requires separate automated coverage for managed source resolution, alpha/crop/background behavior, deterministic preprocessing, Creative capability gating, Krea adapter orchestration, ownership-aware cleanup and Gallery/current-result handoff.
 
 Useful project documents:
 
 - [`docs/v0.3-status.md`](docs/v0.3-status.md) — current accepted/pending v0.3 status;
 - [`docs/v0.3-forward-plan.md`](docs/v0.3-forward-plan.md) — current execution order;
+- [`docs/v0.3-text-to-svg-test.md`](docs/v0.3-text-to-svg-test.md) — target Text-to-SVG acceptance record;
+- [`docs/superpowers/specs/2026-09-22-image-to-svg-v1-design.md`](docs/superpowers/specs/2026-09-22-image-to-svg-v1-design.md) — locked Image-to-SVG v1 architecture/product design;
 - [`docs/roadmap.md`](docs/roadmap.md) — larger product directions;
 - [`docs/v0.1-validation.md`](docs/v0.1-validation.md) — original clean-runtime RX 6950 XT acceptance;
 - [`docs/RX6950XT-SWARMUI-SPIKE.md`](docs/RX6950XT-SWARMUI-SPIKE.md) — early feasibility work.
 
 ## Near-term roadmap
 
-1. continue provider-aware structural guidance, especially remaining Z-Image and Krea Depth routes;
-2. add automatic pose extraction from a normal source photo;
-3. expand Krea Image Edit into focused material/texture replacement workflows;
-4. add one/two-image content/style reference workflows;
-5. add a character turnaround-sheet workflow;
-6. explore text/image-to-SVG and infographic-oriented providers;
-7. keep Gaussian Splatting and video as post-v0.3 work.
+1. implement Image-to-SVG v1 on the accepted Vector foundation;
+2. complete automated RED/GREEN and physical RX 6950 XT acceptance for Artwork, Direct, Stylized Preserve and Stylized Creative;
+3. continue the separate Character Sheet v2 identity/stability physical gate without changing accepted global Krea defaults;
+4. evaluate infographic-oriented generation after Image-to-SVG, prioritizing text fidelity, layout and editable structure;
+5. keep Gaussian Splatting and video as post-v0.3 work.
 
 The stable RX 6950 XT path takes priority over marginal throughput experiments that risk regressing already accepted workflows.
