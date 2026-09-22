@@ -190,6 +190,9 @@ def border_background_mask(
 
 def _alpha_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
     alpha = image.getchannel("A")
+    minimum, maximum = alpha.getextrema()
+    if minimum == 255 and maximum == 255:
+        return None
     return alpha.getbbox()
 
 
@@ -592,6 +595,8 @@ class ImageToSvgApiMixin:
         if method.upper() == "POST" and path == "/api/vector/image-to-svg":
             try:
                 request = validate_image_to_svg_request(self._decode_json(body))
+                if not getattr(self.bridge, "_vector_dependency_ready", lambda: False)():
+                    return 409, {"error": "Vector dependency is not ready. Install the pinned Vectorizer first."}
                 if request["mode"] == "photo-stylized" and request["stylization"] == "creative":
                     ready = getattr(self.bridge, "_krea_image_edit_ready", lambda: False)()
                     if not ready:
