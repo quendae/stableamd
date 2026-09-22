@@ -502,6 +502,42 @@
     }
   }
 
+  function loadImageVectorRecord(record) {
+    vectorState.workflow = "image";
+    setVectorWorkflow("image");
+    const kind = String(vectorValue(record, "sourceKind", "SourceKind") || "");
+    const sourceId = String(vectorValue(record, "sourceRecordId", "SourceRecordId") || "");
+    if (kind === "gallery" || kind === "current") {
+      setImageVectorSource({ kind, id: sourceId }, sourceId ? `Source restored from ${kind}.` : "Source needs to be selected again.");
+    } else {
+      vectorState.imageSource = null;
+      const status = vectorQuery("#image-vector-source-status");
+      if (status) status.textContent = "Original upload is no longer retained. Select a new source.";
+    }
+    const set = (selector, value) => {
+      const input = vectorQuery(selector);
+      if (input && value !== undefined && value !== null) input.value = String(value);
+    };
+    set("#image-vector-mode", vectorValue(record, "modeName", "ModeName") || "artwork");
+    set("#image-vector-stylization", vectorValue(record, "stylization", "Stylization") || "preserve");
+    set("#image-vector-detail", vectorValue(record, "detail", "Detail") || "medium");
+    set("#image-vector-colors", vectorValue(record, "colors", "Colors") ?? "auto");
+    set("#image-vector-background", vectorValue(record, "background", "Background") || "preserve");
+    set("#image-vector-crop", vectorValue(record, "cropMode", "CropMode") || "preserve");
+    const advanced = vectorValue(record, "advanced", "Advanced") || {};
+    for (const [field, selector] of [
+      ["smoothing", "#image-vector-smoothing"],
+      ["edgeStrength", "#image-vector-edge"],
+      ["denoise", "#image-vector-denoise"],
+      ["posterize", "#image-vector-posterize"],
+      ["backgroundTolerance", "#image-vector-tolerance"],
+    ]) {
+      if (advanced[field] !== undefined) set(selector, advanced[field]);
+    }
+    syncImageVectorStylization();
+    renderImageVectorCropEditor();
+  }
+
   function loadRecord(record) {
     if (!record) return;
     const set = (selector, value) => {
@@ -619,7 +655,11 @@
       return openSource(record);
     }
     if (action === "vector-reuse") {
-      window.StableAmdVector.loadRecord(record);
+      if (String(vectorValue(record, "workflow", "Workflow") || "").toLowerCase() === "image-to-svg-v1") {
+        loadImageVectorRecord(record);
+      } else {
+        window.StableAmdVector.loadRecord(record);
+      }
       setPage("vector");
       showToast("Vector settings restored.", "success");
       return;
