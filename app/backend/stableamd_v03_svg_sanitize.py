@@ -11,6 +11,7 @@ import stableamd_server as base
 
 SANITIZER_VERSION = "clean-svg-v1"
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+SUPPORTED_ROOT_VERSIONS = {"1.0", "1.1"}
 
 ALLOWED_TAGS = {
     "svg",
@@ -192,6 +193,11 @@ def _validate_attribute(tag: str, raw_name: str, raw_value: str) -> tuple[str, s
     if any(ord(character) < 0x20 and character not in "\t\r\n" for character in value):
         _fail(f"SVG attribute '{name}' contains invalid control characters.")
 
+    if tag == "svg" and name == "version":
+        if value not in SUPPORTED_ROOT_VERSIONS:
+            _fail("SVG root version must be 1.0 or 1.1.")
+        return name, value
+
     allowed = PRESENTATION_ATTRIBUTES | GEOMETRY_ATTRIBUTES[tag]
     if name not in allowed:
         _fail(f"SVG attribute '{name}' is not allowed on <{tag}>.")
@@ -263,6 +269,8 @@ def _sanitize_element(element: ET.Element, *, is_root: bool = False) -> ET.Eleme
     attributes: dict[str, str] = {}
     for raw_name, raw_value in element.attrib.items():
         name, value = _validate_attribute(tag, raw_name, raw_value)
+        if tag == "svg" and name == "version":
+            continue
         attributes[name] = value
 
     if tag == "svg":
