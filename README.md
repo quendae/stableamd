@@ -192,19 +192,19 @@ Physical acceptance included a two-color transparent fox icon and an 8-color mul
 
 Acceptance record: [`docs/v0.3-text-to-svg-test.md`](docs/v0.3-text-to-svg-test.md)
 
-### Image-to-SVG v1 — active implementation phase
+### Image-to-SVG v1 — active implementation
 
 Image-to-SVG is the next Vector feature. Its product/architecture design is locked in [`docs/superpowers/specs/2026-09-22-image-to-svg-v1-design.md`](docs/superpowers/specs/2026-09-22-image-to-svg-v1-design.md).
 
 The design reuses the accepted VTracer / sanitizer / preview / Gallery stack and adds image-oriented source and preprocessing contracts.
 
-Planned source handoff:
+Implemented source handoff:
 
 - local image upload;
 - raster Gallery `Convert to SVG`;
 - current Generate / Image Edit result without download/re-upload.
 
-Planned modes:
+Implemented modes:
 
 ```text
 Artwork
@@ -215,9 +215,11 @@ Photo / Stylized / Creative
 
 The default three non-Creative paths are deterministic and local. `Photo / Stylized / Creative` is provider-aware and uses the already accepted Krea whole-image Image Edit path first; if Krea is unavailable, only Creative is disabled.
 
-The main Image-to-SVG form stays compact: Source, Mode, Detail, Colors, Background, Crop and Convert to SVG. An Advanced section adds Smoothing, Edge strength, Denoise, Posterize and Background tolerance.
+The current Image-to-SVG form is compact: Source, Mode, Detail, Colors, Background, Crop and Convert to SVG. An Advanced section adds Smoothing, Edge strength, Denoise, Posterize and Background tolerance.
 
 Crop behavior is `Preserve canvas` by default with optional `Auto-trim` and manual crop. Background is `Preserve` by default with optional border-connected transparent-background removal. Existing alpha is preserved.
+
+Current implementation includes the dedicated async Image-to-SVG API, deterministic local preprocessing, Krea Creative capability gating, CPU-local vector job serialization, manual crop controls, Gallery Convert-to-SVG handoff and current-image handoff. Physical RX 6950 XT acceptance remains pending; worksheet: `docs/v0.3-image-to-svg-test.md`.
 
 Image-to-SVG must not weaken the accepted Clean SVG allow-list or introduce a second SVG asset lifecycle.
 
