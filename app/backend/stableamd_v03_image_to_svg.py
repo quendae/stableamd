@@ -250,7 +250,8 @@ def _posterize(image: Any, amount: int, colors: int | str) -> Any:
         return image
     levels = max(2, min(256, int(round(256 - (amount * 2.2)))))
     rgb = image.convert("RGB")
-    rgb = ImageOps.posterize(rgb, max(1, min(8, round(levels.bit_length() - 1))))
+    bits = max(1, min(8, int(levels).bit_length() - 1))
+    rgb = ImageOps.posterize(rgb, bits)
     if colors != "auto":
         rgb = rgb.quantize(colors=int(colors), method=Image.Quantize.MEDIANCUT).convert("RGB")
     if "A" in image.getbands():
