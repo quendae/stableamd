@@ -105,17 +105,19 @@ class ImageToSvgRequestTests(unittest.TestCase):
                 self.assertEqual(prepared.getpixel((16, 12))[3], 0)
 
 
-class ImageToSvgApiTests(unittest.TestCase):
-    class Bridge:
+class ImageToSvgTestBridge:
+
         def _vector_dependency_ready(self):
-            return True
+        return True
 
-        def _krea_image_edit_ready(self):
-            return False
+    def _krea_image_edit_ready(self):
+        return False
 
+
+class ImageToSvgApiTests(unittest.TestCase):
     class Api(image_to_svg.ImageToSvgApiMixin):
         def __init__(self):
-            self.bridge = self.Bridge()
+            self.bridge = ImageToSvgTestBridge()
 
         @staticmethod
         def _decode_json(body):
@@ -129,7 +131,7 @@ class ImageToSvgApiTests(unittest.TestCase):
             return super().dispatch(method, target, body)
 
     def test_capabilities_gate_creative(self):
-        capabilities = image_to_svg.image_to_svg_capabilities(self.Bridge())
+        capabilities = image_to_svg.image_to_svg_capabilities(ImageToSvgTestBridge())
         self.assertEqual(capabilities["creative"]["provider"], "krea2-ostris-edit")
         self.assertFalse(capabilities["creative"]["ready"])
         self.assertEqual(capabilities["modes"], ["artwork", "photo-direct", "photo-stylized"])
