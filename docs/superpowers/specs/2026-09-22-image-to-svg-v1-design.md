@@ -1,7 +1,7 @@
 # StableAMD Image-to-SVG v1 Design
 
 Date: 2026-09-22
-Status: design approved in conversation; implementation not yet started
+Status: design approved; implementation in progress
 Target: Windows + AMD Radeon RX 6950 XT 16 GiB (`gfx1030`)
 Branch: `feat/stableamd-v0.3`
 
