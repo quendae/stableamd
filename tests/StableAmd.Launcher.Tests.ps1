@@ -2,22 +2,89 @@ Describe 'StableAMD one-click launcher' {
     BeforeAll {
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         $cmdPath = Join-Path $repoRoot 'Start-StableAMD.cmd'
+        $stopCmdPath = Join-Path $repoRoot 'Stop-StableAMD.cmd'
         $launcherPath = Join-Path $repoRoot 'scripts/Launch-StableAMD.ps1'
         $startPath = Join-Path $repoRoot 'scripts/Start-StableAMD.ps1'
         $stopPath = Join-Path $repoRoot 'scripts/Stop-StableAMD.ps1'
         $watchPath = Join-Path $repoRoot 'scripts/Watch-StableAMD.ps1'
         $runtimeModulePath = Join-Path $repoRoot 'scripts/StableAmd.Runtime.psm1'
+        $syncRequirementsPath = Join-Path $repoRoot 'scripts/Sync-StableAmdComfyRequirements.ps1'
         $acceptancePath = Join-Path $repoRoot 'scripts/Test-StableAMDPackage.ps1'
     }
 
-    It 'ships a double-clickable Windows entry point' {
+    It 'ships double-clickable Windows start and stop entry points' {
         Test-Path $cmdPath | Should -BeTrue
+        Test-Path $stopCmdPath | Should -BeTrue
         $cmd = Get-Content $cmdPath -Raw
+        $stopCmd = Get-Content $stopCmdPath -Raw
 
         $cmd | Should -Match 'powershell\.exe'
         $cmd | Should -Match '-ExecutionPolicy\s+Bypass'
         $cmd | Should -Match 'scripts\\Launch-StableAMD\.ps1'
         $cmd | Should -Match '%\*'
+        $stopCmd | Should -Match 'scripts\\Stop-StableAMD\.ps1'
+        $stopCmd | Should -Match '%\*'
+    }
+
+    It 'uses DynamicVRAM and RAM-pressure caching by default while preserving explicit overrides' {
+        $script = Get-Content $launcherPath -Raw
+
+        $script | Should -Match 'hasExplicitMemoryProfile'
+        $script | Should -Match 'PSBoundParameters\.ContainsKey'
+        $script | Should -Match 'Using default RX 6950 XT / 16 GiB profile: DynamicVRAM \+ RAM-pressure cache \+ CPU VAE\.'
+        $script | Should -Not -Match 'resolvedDisableDynamicVram\s*=\s*\$true'
+        $script | Should -Not -Match 'resolvedLowVram\s*=\s*\$true'
+        $script | Should -Not -Match 'resolvedCacheClassic\s*=\s*\$true'
+        $script | Should -Match 'LowVram and HighVram cannot be enabled together'
+        $script | Should -Match 'CacheClassic and CacheNone cannot be enabled together'
+    }
+
+    It 'syncs changed managed ComfyUI requirements before backend startup without replacing ROCm torch' {
+        Test-Path $syncRequirementsPath | Should -BeTrue
+        $start = Get-Content $startPath -Raw
+        $sync = Get-Content $syncRequirementsPath -Raw
+
+        $start | Should -Match 'Sync-StableAmdComfyRequirements\.ps1'
+        $sync | Should -Not -Match 'Get-FileHash'
+        $sync | Should -Match 'Security\.Cryptography\.SHA256'
+        $sync | Should -Match 'comfy-requirements\.sha256'
+        $sync | Should -Match "'torch\|torchvision\|torchaudio'"
+        $sync | Should -Match "'-m',\s*'pip',\s*'install'"
+        $sync | Should -Match 'Status\s*=\s*''current'''
+        $sync | Should -Match 'Status\s*=\s*''updated'''
+    }
+
+    It 'runs the requirements hash check when Windows PowerShell Utility cmdlets are unavailable' {
+        $fixture = Join-Path ([IO.Path]::GetTempPath()) ("stableamd-requirements-sync-{0}" -f [guid]::NewGuid().ToString('N'))
+        try {
+            $pythonPath = Join-Path $fixture '.runtime/therock-gfx1030/python_embeded/python.exe'
+            $requirementsPath = Join-Path $fixture '.runtime/therock-comfy/ComfyUI/requirements.txt'
+            $markerPath = Join-Path $fixture '.runtime/stableamd/comfy-requirements.sha256'
+            New-Item -ItemType Directory -Path (Split-Path -Parent $pythonPath) -Force | Out-Null
+            New-Item -ItemType Directory -Path (Split-Path -Parent $requirementsPath) -Force | Out-Null
+            New-Item -ItemType Directory -Path (Split-Path -Parent $markerPath) -Force | Out-Null
+            New-Item -ItemType File -Path $pythonPath -Force | Out-Null
+            Set-Content -LiteralPath $requirementsPath -Value "comfyui-frontend-package==1.51.10`n" -Encoding ASCII
+
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+                $stream = [IO.File]::OpenRead($requirementsPath)
+                try { $hashBytes = $sha.ComputeHash($stream) }
+                finally { $stream.Dispose() }
+            }
+            finally { $sha.Dispose() }
+            $hash = -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
+            Set-Content -LiteralPath $markerPath -Value $hash -Encoding ASCII
+
+            $escapedScript = $syncRequirementsPath.Replace("'", "''")
+            $escapedFixture = $fixture.Replace("'", "''")
+            $command = "Import-Module Microsoft.PowerShell.Management; Remove-Module Microsoft.PowerShell.Utility -Force -ErrorAction SilentlyContinue; `$PSModuleAutoLoadingPreference='None'; `$result = & '$escapedScript' -RepoRoot '$escapedFixture'; if (`$result.Status -ne 'current') { exit 2 }"
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $command
+            $LASTEXITCODE | Should -Be 0
+        }
+        finally {
+            Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It 'starts the managed compute backend before the application server' {
@@ -25,12 +92,21 @@ Describe 'StableAMD one-click launcher' {
         $script = Get-Content $launcherPath -Raw
 
         $script | Should -Match 'Start-StableAMD\.ps1'
-        $script | Should -Match 'stableamd_server\.py'
+        $script | Should -Match 'stableamd_v03_edit_server\.py'
         $script | Should -Match 'TheRockPython'
         $script | Should -Match '--host\s+127\.0\.0\.1'
         $script | Should -Match '/api/health'
         $script | Should -Match 'service'
         $script | Should -Match 'StableAMD'
+    }
+
+    It 'cleans the backend and application if application startup fails' {
+        $script = Get-Content $launcherPath -Raw
+
+        $script | Should -Match 'Startup failed; cleaning up only StableAMD-managed processes'
+        $script | Should -Match 'Stop-StableAMD\.ps1'
+        $script | Should -Match '-RepoRoot\s+\$RepoRoot'
+        $script | Should -Match 'failed-start cleanup'
     }
 
     It 'reuses an existing healthy application server and optionally opens the browser' {
@@ -52,6 +128,9 @@ Describe 'StableAMD one-click launcher' {
         $launcher | Should -Match "role = 'application-server'"
         $launcher | Should -Match 'WindowStyle\s+Hidden'
         $launcher | Should -Match '"-u -s'
+        $launcher | Should -Match 'BackendPid'
+        $launcher | Should -Match 'AppPid'
+        $launcher | Should -Match 'Managed PIDs:'
         $start | Should -Match "role = 'compute-backend'"
         $start | Should -Match 'WindowStyle\s+Hidden'
         $start | Should -Match '"-u -s'
@@ -66,6 +145,7 @@ Describe 'StableAMD one-click launcher' {
         $launcher | Should -Match 'AssignProcessToJobObject'
         $launcher | Should -Match 'Watch-StableAMD\.ps1'
         $launcher | Should -Match 'Ctrl\+C.*releases VRAM'
+        $launcher | Should -Match 'Stop-StableAMD\.cmd'
         $acceptance | Should -Match 'Launch-StableAMD\.ps1'
         $acceptance | Should -Match '-Detached'
     }
@@ -88,6 +168,8 @@ Describe 'StableAMD one-click launcher' {
         $stop | Should -Match 'AppStatePath'
         $stop | Should -Match 'Get-CimInstance\s+Win32_Process'
         $stop | Should -Match 'stableamd_server'
+        $stop | Should -Match 'stableamd_v03_lora_server'
+        $stop | Should -Match 'stableamd_v03_edit_server'
         $stop | Should -Match 'run_comfy_isolated'
         $stop | Should -Match 'taskkill\.exe'
         $stop | Should -Match '/T /F'

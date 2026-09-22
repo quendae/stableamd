@@ -16,6 +16,15 @@ $PollMilliseconds = [Math]::Max(50, $PollMilliseconds)
 Import-Module (Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1') -Force
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 
+function Format-StableAmdLiveLine {
+    param(
+        [string]$Label,
+        [string]$Line
+    )
+    $timestamp = Get-Date -Format 'HH:mm:ss.fff'
+    return ("[{0}] [{1}] {2}" -f $timestamp, $Label, $Line)
+}
+
 Write-Host ''
 Write-Host 'StableAMD live diagnostics' -ForegroundColor Cyan
 
@@ -45,16 +54,13 @@ function Add-StableAmdLogEntry {
         Pending = ''
     }
 
-    # A newly discovered file may already contain backend startup output. Show a
-    # compact tail once, then continue from EOF so a refresh does not dump an
-    # entire historical log into the supervisor terminal.
     $tailLines = @(Get-Content -LiteralPath $path -Tail ([Math]::Max(0, $Tail)) -ErrorAction SilentlyContinue)
     if ($Announce) {
-        Write-Host ("[watcher] New log source: [{0}] {1}" -f $Label, $path) -ForegroundColor DarkCyan
+        Write-Host (Format-StableAmdLiveLine -Label 'watcher' -Line ("New log source: [{0}] {1}" -f $Label, $path)) -ForegroundColor DarkCyan
     }
     foreach ($line in $tailLines) {
         if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
-            Write-Host ("[{0}] {1}" -f $Label, $line)
+            Write-Host (Format-StableAmdLiveLine -Label $Label -Line ([string]$line))
         }
     }
     try {
@@ -84,7 +90,7 @@ function Sync-StableAmdTrackedLogs {
             }
         }
         elseif ($script:lastBackendPid -ne $backendPid) {
-            Write-Host ("[watcher] Backend restarted / refreshed: PID {0} -> {1}" -f $script:lastBackendPid, $backendPid) -ForegroundColor Yellow
+            Write-Host (Format-StableAmdLiveLine -Label 'watcher' -Line ("Backend restarted / refreshed: PID {0} -> {1}" -f $script:lastBackendPid, $backendPid)) -ForegroundColor Yellow
             $script:lastBackendPid = $backendPid
         }
 
@@ -105,7 +111,7 @@ function Sync-StableAmdTrackedLogs {
             }
         }
         elseif ($script:lastAppPid -ne $appPid) {
-            Write-Host ("[watcher] Application restarted: PID {0} -> {1}" -f $script:lastAppPid, $appPid) -ForegroundColor Yellow
+            Write-Host (Format-StableAmdLiveLine -Label 'watcher' -Line ("Application restarted: PID {0} -> {1}" -f $script:lastAppPid, $appPid)) -ForegroundColor Yellow
             $script:lastAppPid = $appPid
         }
 
@@ -132,16 +138,11 @@ Write-Host ''
 
 $utf8 = New-Object System.Text.UTF8Encoding($false, $false)
 
-# Poll all known files by byte offset. On every pass also reread the runtime
-# state files so an in-app backend refresh can switch to a new PID and new log
-# files without leaving the launcher attached to stale logs.
 while ($true) {
     try {
         Sync-StableAmdTrackedLogs
     }
     catch {
-        # State files are briefly absent/replaced during restart. Keep the
-        # supervisor alive and retry on the next poll.
     }
 
     foreach ($entry in @($logEntries)) {
@@ -174,9 +175,6 @@ while ($true) {
                     $entry.Position = [long]$stream.Position
                     $entry.Pending += $utf8.GetString($buffer, 0, $read)
 
-                    # ComfyUI/tqdm refreshes one terminal line with CR while
-                    # ordinary Python logs use LF/CRLF. Treat all three as an
-                    # event boundary so every sampling update is visible.
                     $parts = @([regex]::Split([string]$entry.Pending, "`r`n|`n|`r"))
                     $hasTerminator = ([string]$entry.Pending -match "(`r`n|`n|`r)$")
                     $emitCount = if ($hasTerminator) { $parts.Count } else { [Math]::Max(0, $parts.Count - 1) }
@@ -184,7 +182,7 @@ while ($true) {
                     for ($i = 0; $i -lt $emitCount; $i++) {
                         $line = [string]$parts[$i]
                         if (-not [string]::IsNullOrWhiteSpace($line)) {
-                            Write-Host ("[{0}] {1}" -f $entry.Label, $line)
+                            Write-Host (Format-StableAmdLiveLine -Label $entry.Label -Line $line)
                         }
                     }
 
@@ -201,8 +199,6 @@ while ($true) {
             }
         }
         catch {
-            # Old logs can disappear after a backend restart. Their absence is
-            # harmless because Sync-StableAmdTrackedLogs follows the new state.
         }
     }
 

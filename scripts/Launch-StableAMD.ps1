@@ -5,7 +5,12 @@ param(
     [int]$AppStartupTimeoutSeconds = 30,
     [switch]$NoBrowser,
     [switch]$SkipRuntimeInstall,
-    [switch]$Detached
+    [switch]$Detached,
+    [switch]$DisableDynamicVram,
+    [switch]$LowVram,
+    [switch]$HighVram,
+    [switch]$CacheClassic,
+    [switch]$CacheNone
 )
 
 $ErrorActionPreference = 'Stop'
@@ -26,6 +31,29 @@ if ($AppStartupTimeoutSeconds -lt 5) {
     throw 'Application startup timeout must be at least 5 seconds.'
 }
 
+# The normal desktop profile leaves ComfyUI's memory and cache switches unset.
+# The pinned runtime therefore uses DynamicVRAM and its RAM-pressure cache by
+# default. CPU VAE remains enforced by the isolated Comfy bootstrap. Explicit
+# switches below are preserved for diagnostics and compatibility testing.
+$hasExplicitMemoryProfile = $false
+foreach ($parameterName in @('DisableDynamicVram', 'LowVram', 'HighVram', 'CacheClassic', 'CacheNone')) {
+    if ($PSBoundParameters.ContainsKey($parameterName)) {
+        $hasExplicitMemoryProfile = $true
+        break
+    }
+}
+$resolvedDisableDynamicVram = [bool]$DisableDynamicVram
+$resolvedLowVram = [bool]$LowVram
+$resolvedHighVram = [bool]$HighVram
+$resolvedCacheClassic = [bool]$CacheClassic
+$resolvedCacheNone = [bool]$CacheNone
+if ($resolvedLowVram -and $resolvedHighVram) {
+    throw 'LowVram and HighVram cannot be enabled together.'
+}
+if ($resolvedCacheClassic -and $resolvedCacheNone) {
+    throw 'CacheClassic and CacheNone cannot be enabled together.'
+}
+
 $runtimeModule = Join-Path $PSScriptRoot 'StableAmd.Runtime.psm1'
 if (-not (Test-Path $runtimeModule -PathType Leaf)) {
     throw "StableAMD runtime module is missing: '$runtimeModule'."
@@ -35,7 +63,10 @@ Import-Module $runtimeModule -Force
 $paths = Get-StableAmdRuntimePaths -RepoRoot $RepoRoot
 Initialize-StableAmdRuntimeDirectories -Paths $paths
 
-$appServer = Join-Path $RepoRoot 'app/backend/stableamd_server.py'
+# The v0.3 edit extension layers native Z-Image Fun Control editing on top of
+# the accepted Krea/upscale/Z-Image-LoRA application server without changing
+# those proven execution paths.
+$appServer = Join-Path $RepoRoot 'app/backend/stableamd_v03_edit_server.py'
 if (-not (Test-Path $appServer -PathType Leaf)) {
     throw "StableAMD application server is missing: '$appServer'."
 }
@@ -57,7 +88,7 @@ if ($runtimeMissing) {
     Write-Host 'StableAMD runtime is missing or incomplete. Preparing the pinned Radeon runtime...' -ForegroundColor Yellow
     Write-Host 'The first launch downloads Python, the locked TheRock ROCm/PyTorch stack and ComfyUI. This can download more than 1 GB.' -ForegroundColor DarkGray
     $runtimeInstall = & $runtimeInstaller -RepoRoot $RepoRoot
-    if ($null -eq $runtimeInstall -or -not (Test-Path $paths.TheRockPython -PathType Leaf) -or -not (Test-Path $comfyMain -PathType Leaf)) {
+    if ($null -eq $runtimeInstall -or -not (Test-Path $paths.TheRockPython -PathType Leaf) -or (-not (Test-Path $comfyMain -PathType Leaf))) {
         throw 'StableAMD runtime bootstrap returned without creating the required managed runtime.'
     }
 }
@@ -78,10 +109,6 @@ function Get-StableAmdAppHealth {
 }
 
 function New-StableAmdKillOnCloseJob {
-    # In normal desktop mode the launcher is the StableAMD supervisor. A Windows
-    # Job Object provides the hard guarantee we want: if this PowerShell host is
-    # closed or crashes, Windows terminates the assigned app/backend processes,
-    # which also releases ROCm VRAM. Detached acceptance/service runs skip this.
     if (-not ('StableAmd.NativeJob' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -179,9 +206,33 @@ namespace StableAmd {
 }
 
 Write-Host ''
-Write-Host 'StableAMD v0.1' -ForegroundColor Cyan
+Write-Host 'StableAMD v0.3' -ForegroundColor Cyan
+if (-not $hasExplicitMemoryProfile) {
+    Write-Host 'Using default RX 6950 XT / 16 GiB profile: DynamicVRAM + RAM-pressure cache + CPU VAE.' -ForegroundColor DarkCyan
+}
 Write-Host 'Starting managed compute backend...' -ForegroundColor Cyan
-$backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') -RepoRoot $RepoRoot
+$backendParams = @{ RepoRoot = $RepoRoot }
+if ($resolvedDisableDynamicVram) {
+    Write-Host 'Memory mode: ComfyUI DynamicVRAM disabled.' -ForegroundColor Yellow
+    $backendParams.DisableDynamicVram = $true
+}
+if ($resolvedLowVram) {
+    Write-Host 'Memory mode: ComfyUI lowvram enabled.' -ForegroundColor Yellow
+    $backendParams.LowVram = $true
+}
+if ($resolvedHighVram) {
+    Write-Host 'Memory mode: ComfyUI highvram enabled.' -ForegroundColor Yellow
+    $backendParams.HighVram = $true
+}
+if ($resolvedCacheClassic) {
+    Write-Host 'Memory mode: ComfyUI classic cache enabled.' -ForegroundColor Yellow
+    $backendParams.CacheClassic = $true
+}
+if ($resolvedCacheNone) {
+    Write-Host 'Memory mode: ComfyUI RAM pressure cache disabled.' -ForegroundColor Yellow
+    $backendParams.CacheNone = $true
+}
+$backendStatus = & (Join-Path $PSScriptRoot 'Start-StableAMD.ps1') @backendParams
 if ($null -eq $backendStatus -or -not [bool]$backendStatus.Healthy) {
     throw 'StableAMD managed compute backend did not become healthy.'
 }
@@ -216,8 +267,6 @@ else {
     $stderrPath = Join-Path $paths.LogsRoot "app-$stamp.stderr.log"
 
     Write-Host "Starting StableAMD application on $appUrl ..." -ForegroundColor Cyan
-    # -u makes application-side PowerShell/progress forwarding immediately
-    # visible in the managed log rather than waiting for Python's file buffer.
     $arguments = "-u -s `"$appServer`" --repo-root `"$RepoRoot`" --host 127.0.0.1 --port $resolvedAppPort"
     $appProcess = Start-Process `
         -FilePath $paths.TheRockPython `
@@ -227,6 +276,7 @@ else {
         -RedirectStandardError $stderrPath `
         -WindowStyle Hidden `
         -PassThru
+    Write-Host "Application process started with managed PID $($appProcess.Id)." -ForegroundColor DarkCyan
 
     $deadline = (Get-Date).AddSeconds($AppStartupTimeoutSeconds)
     $health = $null
@@ -251,6 +301,13 @@ else {
 
         if ($null -ne $appProcess -and -not $appProcess.HasExited) {
             Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host 'Startup failed; cleaning up only StableAMD-managed processes and releasing VRAM...' -ForegroundColor Yellow
+        try {
+            & (Join-Path $PSScriptRoot 'Stop-StableAMD.ps1') -RepoRoot $RepoRoot | Out-Null
+        }
+        catch {
+            Write-Warning "StableAMD failed-start cleanup reported: $($_.Exception.Message)"
         }
         throw "StableAMD application did not become healthy at '$healthUrl' within $AppStartupTimeoutSeconds seconds."
     }
@@ -281,6 +338,8 @@ $result = [pscustomobject]@{
     Url = $appUrl
     HealthUrl = $healthUrl
     ProcessId = if ($null -ne $appProcess) { $appProcess.Id } elseif ($null -ne $appState) { $appState.pid } else { $null }
+    BackendPid = [int]$backendStatus.Pid
+    AppPid = if ($null -ne $appProcess) { [int]$appProcess.Id } elseif ($null -ne $appState -and $null -ne $appState.pid) { [int]$appState.pid } else { $null }
     AppStatePath = $paths.AppStatePath
     StdoutLog = if ($null -ne $appProcess) { $stdoutPath } elseif ($null -ne $appState) { $appState.stdoutLog } else { $null }
     StderrLog = if ($null -ne $appProcess) { $stderrPath } elseif ($null -ne $appState) { $appState.stderrLog } else { $null }
@@ -292,7 +351,7 @@ if (-not $NoBrowser) {
 }
 
 if ($Detached) {
-    Write-Host 'StableAMD is running detached. Use Stop-StableAMD.ps1 for full teardown.' -ForegroundColor DarkCyan
+    Write-Host 'StableAMD is running detached. Use Stop-StableAMD.cmd (or scripts/Stop-StableAMD.ps1) for exact managed teardown.' -ForegroundColor DarkCyan
     return $result
 }
 
@@ -303,6 +362,7 @@ try {
     [StableAmd.NativeJob]::Assign($supervisorJob, [int]$result.ProcessId)
     Write-Host ''
     Write-Host 'StableAMD supervisor is active.' -ForegroundColor Green
+    Write-Host "Managed PIDs: backend $($result.BackendPid), application $($result.AppPid)." -ForegroundColor DarkCyan
     Write-Host 'This terminal now owns the StableAMD processes. Ctrl+C or closing this terminal stops StableAMD and releases VRAM.' -ForegroundColor Cyan
     Write-Host 'Live backend/application logs follow below:' -ForegroundColor DarkCyan
     Write-Host ''
@@ -310,9 +370,6 @@ try {
     & (Join-Path $PSScriptRoot 'Watch-StableAMD.ps1') -RepoRoot $RepoRoot -Tail 20
 }
 finally {
-    # Closing the job handle first guarantees process termination even if the
-    # normal script-level cleanup path is interrupted. Stop-StableAMD then
-    # verifies the repo-scoped process state and removes runtime state files.
     if ($supervisorJob -ne [IntPtr]::Zero) {
         [StableAmd.NativeJob]::Close($supervisorJob)
         $supervisorJob = [IntPtr]::Zero

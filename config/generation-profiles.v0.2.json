@@ -65,6 +65,116 @@
       ]
     },
     {
+      "id": "z-image-turbo",
+      "label": "Z-Image Turbo",
+      "family": "z-image-turbo",
+      "workflowSupport": "supported",
+      "match": { "namePatterns": ["z[_ .-]?image[_ .-]?turbo"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1.0, "sampler": "res_multistep", "scheduler": "simple" },
+      "resolutionTiers": [
+        {
+          "id": "small",
+          "label": "Small · faster",
+          "sizes": [
+            { "ratio": "1:1", "width": 768, "height": 768 },
+            { "ratio": "9:7", "width": 896, "height": 704 },
+            { "ratio": "7:9", "width": 704, "height": 896 },
+            { "ratio": "4:3", "width": 896, "height": 672 },
+            { "ratio": "3:4", "width": 672, "height": 896 },
+            { "ratio": "3:2", "width": 960, "height": 640 },
+            { "ratio": "2:3", "width": 640, "height": 960 },
+            { "ratio": "16:9", "width": 1024, "height": 576 },
+            { "ratio": "9:16", "width": 576, "height": 1024 },
+            { "ratio": "21:9", "width": 1008, "height": 432 },
+            { "ratio": "9:21", "width": 432, "height": 1008 }
+          ]
+        },
+        {
+          "id": "1024",
+          "label": "1024 · Recommended",
+          "recommended": true,
+          "sizes": [
+            { "ratio": "1:1", "width": 1024, "height": 1024 },
+            { "ratio": "9:7", "width": 1152, "height": 896 },
+            { "ratio": "7:9", "width": 896, "height": 1152 },
+            { "ratio": "4:3", "width": 1152, "height": 864 },
+            { "ratio": "3:4", "width": 864, "height": 1152 },
+            { "ratio": "3:2", "width": 1248, "height": 832 },
+            { "ratio": "2:3", "width": 832, "height": 1248 },
+            { "ratio": "16:9", "width": 1280, "height": 720 },
+            { "ratio": "9:16", "width": 720, "height": 1280 },
+            { "ratio": "21:9", "width": 1344, "height": 576 },
+            { "ratio": "9:21", "width": 576, "height": 1344 }
+          ]
+        },
+        {
+          "id": "1280",
+          "label": "1280 · Large",
+          "sizes": [
+            { "ratio": "1:1", "width": 1280, "height": 1280 },
+            { "ratio": "9:7", "width": 1440, "height": 1120 },
+            { "ratio": "7:9", "width": 1120, "height": 1440 },
+            { "ratio": "4:3", "width": 1472, "height": 1104 },
+            { "ratio": "3:4", "width": 1104, "height": 1472 },
+            { "ratio": "3:2", "width": 1536, "height": 1024 },
+            { "ratio": "2:3", "width": 1024, "height": 1536 },
+            { "ratio": "16:9", "width": 1536, "height": 864 },
+            { "ratio": "9:16", "width": 864, "height": 1536 },
+            { "ratio": "21:9", "width": 1680, "height": 720 },
+            { "ratio": "9:21", "width": 720, "height": 1680 }
+          ]
+        },
+        {
+          "id": "1536",
+          "label": "1536 · XL / experimental",
+          "experimental": true,
+          "sizes": [
+            { "ratio": "1:1", "width": 1536, "height": 1536 },
+            { "ratio": "9:7", "width": 1728, "height": 1344 },
+            { "ratio": "7:9", "width": 1344, "height": 1728 },
+            { "ratio": "4:3", "width": 1728, "height": 1296 },
+            { "ratio": "3:4", "width": 1296, "height": 1728 },
+            { "ratio": "3:2", "width": 1872, "height": 1248 },
+            { "ratio": "2:3", "width": 1248, "height": 1872 },
+            { "ratio": "16:9", "width": 2048, "height": 1152 },
+            { "ratio": "9:16", "width": 1152, "height": 2048 },
+            { "ratio": "21:9", "width": 2016, "height": 864 },
+            { "ratio": "9:21", "width": 864, "height": 2016 }
+          ]
+        }
+      ],
+      "combinations": [
+        { "id": "fast-6-step", "label": "Fast 6-step", "sampler": "res_multistep", "scheduler": "simple", "steps": 6, "cfg": 1.0, "experimental": true },
+        { "id": "recommended-8-step", "label": "Recommended 8-step", "sampler": "res_multistep", "scheduler": "simple", "steps": 8, "cfg": 1.0, "recommended": true },
+        { "id": "quality-12-step", "label": "12-step experimental", "sampler": "res_multistep", "scheduler": "simple", "steps": 12, "cfg": 1.0, "experimental": true }
+      ]
+    },
+    {
+      "id": "krea2-turbo",
+      "label": "Krea 2 Turbo (FP8)",
+      "family": "krea2",
+      "workflowSupport": "supported",
+      "match": { "namePatterns": ["krea[_ .-]?2.*turbo", "krea2.*turbo"] },
+      "defaults": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1.0, "sampler": "euler", "scheduler": "simple" },
+      "resolutionTiers": [
+        {
+          "id": "1024",
+          "label": "1024 · First acceptance",
+          "recommended": true,
+          "sizes": [
+            { "ratio": "1:1", "width": 1024, "height": 1024 },
+            { "ratio": "4:3", "width": 1152, "height": 864 },
+            { "ratio": "3:4", "width": 864, "height": 1152 },
+            { "ratio": "16:9", "width": 1280, "height": 720 },
+            { "ratio": "9:16", "width": 720, "height": 1280 }
+          ]
+        }
+      ],
+      "combinations": [
+        { "id": "official-turbo-8", "label": "Official Turbo 8-step", "sampler": "euler", "scheduler": "simple", "steps": 8, "cfg": 1.0, "recommended": true }
+      ]
+    },
+    {
       "id": "sd3-medium",
       "label": "Stable Diffusion 3 Medium",
       "family": "sd3",

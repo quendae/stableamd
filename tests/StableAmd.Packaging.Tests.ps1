@@ -40,6 +40,7 @@ Describe 'StableAMD v0.1 release packaging' {
         Test-Path $result.ZipPath | Should -BeTrue
         Test-Path $result.PackageRoot | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'Start-StableAMD.cmd') | Should -BeTrue
+        Test-Path (Join-Path $result.PackageRoot 'Stop-StableAMD.cmd') | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_server.py') | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'app/frontend/index.html') | Should -BeTrue
         Test-Path (Join-Path $result.PackageRoot 'config/stableamd.default.json') | Should -BeTrue
@@ -50,6 +51,51 @@ Describe 'StableAMD v0.1 release packaging' {
         Test-Path (Join-Path $result.PackageRoot 'diagnostics') | Should -BeFalse
         Test-Path (Join-Path $result.PackageRoot 'tests') | Should -BeFalse
         Test-Path (Join-Path $result.PackageRoot '.git') | Should -BeFalse
+    }
+
+    It 'packages the Character Sheet v2 Identity Edit backend modules' {
+        $buildScript = Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1'
+        $output = Join-Path $TestDrive 'v03-dist'
+        $result = & $buildScript -RepoRoot $repoRoot -OutputDirectory $output -Version '0.3.0-character-sheet-test'
+
+        Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_krea_identity_edit.py') | Should -BeTrue
+        Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_character_sheet_v2.py') | Should -BeTrue
+        Test-Path (Join-Path $result.PackageRoot 'app/backend/stableamd_v03_edit_server.py') | Should -BeTrue
+    }
+
+    It 'packages the Text-to-SVG backend and Vector workspace assets' {
+        $buildScript = Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1'
+        $output = Join-Path $TestDrive 'v03-vector-dist'
+        $result = & $buildScript -RepoRoot $repoRoot -OutputDirectory $output -Version '0.3.0-vector-test'
+
+        @(
+            'app/backend/stableamd_v03_vector.py',
+            'app/backend/stableamd_v03_vector_assets.py',
+            'app/backend/stableamd_v03_svg_vectorizer.py',
+            'app/backend/stableamd_v03_svg_sanitize.py',
+            'app/backend/stableamd_v03_svg_preview.py',
+            'app/frontend/app-vector.js',
+            'app/frontend/vector.css'
+        ) | ForEach-Object {
+            Test-Path (Join-Path $result.PackageRoot $_) | Should -BeTrue
+        }
+    }
+
+    It 'packages the Image-to-SVG v1 backend and workspace surface' {
+        $buildScript = Join-Path $repoRoot 'scripts/Build-StableAMDPackage.ps1'
+        $output = Join-Path $TestDrive 'v03-image-vector-dist'
+        $result = & $buildScript -RepoRoot $repoRoot -OutputDirectory $output -Version '0.3.0-image-to-svg-test'
+
+        @(
+            'app/backend/stableamd_v03_image_to_svg.py',
+            'app/backend/stableamd_generation_jobs.py',
+            'app/backend/stableamd_v03_edit_server.py',
+            'app/frontend/index.html',
+            'app/frontend/app-vector.js',
+            'app/frontend/vector.css'
+        ) | ForEach-Object {
+            Test-Path (Join-Path $result.PackageRoot $_) | Should -BeTrue
+        }
     }
 
     It 'documents the completed RX 6950 XT clean-package and product-flow acceptance' {

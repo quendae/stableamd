@@ -226,7 +226,8 @@ Describe 'StableAMD model command scripts' {
     It 'starts ComfyUI with every configured model root as an external checkpoint path' {
         $script = Get-Content (Join-Path $PSScriptRoot '../scripts/Start-StableAMD.ps1') -Raw
         $script | Should -Match 'config\.models\.roots'
-        $script | Should -Match 'checkpoints:\s*\.'
+        $script | Should -Match "FolderType\s+'checkpoints'"
+        $script | Should -Match 'Add-StableAmdExtraModelRoot'
     }
 
     It 'installs local or Hugging Face models with resume validation and source metadata' {
