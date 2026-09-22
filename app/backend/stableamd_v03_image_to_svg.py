@@ -486,6 +486,9 @@ class ImageToSvgBridgeMixin:
                     raise base.StableAmdBridgeError("Creative Image-to-SVG requires the generation serialization lock.")
                 with lock:
                     working_source, creative_seconds, creative_result = self._creative_vector_raster(clean, source_path)
+                    release = getattr(self, "_release_vector_runtime", None)
+                    if callable(release):
+                        release()
 
             preprocess_image_to_svg(
                 working_source,
