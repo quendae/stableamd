@@ -603,6 +603,8 @@ class ImageToSvgApiMixin:
 
     def dispatch(self, method: str, target: str, body: bytes | None = None) -> tuple[int, Any]:
         path = target.split("?", 1)[0]
+        if method.upper() == "GET" and path == "/api/vector/image-to-svg/capabilities":
+            return 200, image_to_svg_capabilities(self.bridge)
         if method.upper() == "POST" and path == "/api/vector/image-to-svg":
             try:
                 request = validate_image_to_svg_request(self._decode_json(body))
