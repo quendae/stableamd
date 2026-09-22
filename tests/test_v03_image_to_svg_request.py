@@ -37,7 +37,7 @@ class ImageToSvgRequestTests(unittest.TestCase):
     def test_rejects_invalid_combinations(self):
         cases = [
             ({"source": {"kind": "gallery", "id": "../secret"}}, "source"),
-            ({"source": {"kind": "upload", "image": {}}, "mode": "photo-stylized"}, "upload"),
+            ({"source": {"kind": "upload", "image": {}}, "mode": "photo-stylized"}, "name"),
             ({"source": {"kind": "gallery", "id": "x"}, "stylization": "creative"}, "stylization"),
             (
                 {"source": {"kind": "gallery", "id": "x"}, "mode": "photo-direct",
