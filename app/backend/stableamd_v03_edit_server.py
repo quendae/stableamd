@@ -17,6 +17,7 @@ from stableamd_v03_controlnet import ControlNetApiMixin, ControlNetBridgeMixin  
 from stableamd_v03_depth_control import DepthControlApiMixin, DepthControlBridgeMixin  # noqa: F401,E402
 from stableamd_v03_pose_control import PoseControlBridgeMixin  # noqa: F401,E402
 from stableamd_v03_vector import VectorApiMixin, VectorBridgeMixin  # noqa: E402
+from stableamd_v03_image_to_svg import ImageToSvgApiMixin, ImageToSvgBridgeMixin  # noqa: E402
 from stableamd_v03_vector_assets import VectorAssetsApiMixin, VectorAssetsBridgeMixin  # noqa: E402
 from stableamd_v03_krea_identity_edit import (  # noqa: E402
     KreaIdentityEditApiMixin,
