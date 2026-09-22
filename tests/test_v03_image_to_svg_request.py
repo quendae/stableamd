@@ -106,8 +106,7 @@ class ImageToSvgRequestTests(unittest.TestCase):
 
 
 class ImageToSvgTestBridge:
-
-        def _vector_dependency_ready(self):
+    def _vector_dependency_ready(self):
         return True
 
     def _krea_image_edit_ready(self):
