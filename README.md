@@ -350,4 +350,6 @@ Useful project documents:
 4. evaluate infographic-oriented generation after Image-to-SVG, prioritizing text fidelity, layout and editable structure;
 5. keep Gaussian Splatting and video as post-v0.3 work.
 
+Image-to-SVG v1 implementation is now active against the locked design; physical acceptance remains pending. Acceptance worksheet: `docs/v0.3-image-to-svg-test.md`.
+
 The stable RX 6950 XT path takes priority over marginal throughput experiments that risk regressing already accepted workflows.
