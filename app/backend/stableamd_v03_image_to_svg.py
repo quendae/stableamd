@@ -292,6 +292,11 @@ def preprocess_image_to_svg(
             image = ImageOps.exif_transpose(opened).convert("RGBA")
         image = _apply_crop(image, crop_mode, crop, int(advanced["backgroundTolerance"]))
 
+        # Preprocess RGB only. Alpha is a structural source channel and must
+        # never be blurred/denoised/posterized along with color data.
+        source_alpha = image.getchannel("A")
+        image = image.convert("RGB")
+
         denoise = int(advanced["denoise"])
         smoothing = int(advanced["smoothing"])
         edge_strength = int(advanced["edgeStrength"])
@@ -306,9 +311,12 @@ def preprocess_image_to_svg(
         if edge_strength > 0:
             image = ImageEnhance.Sharpness(image).enhance(1.0 + edge_strength / 100)
         if mode != "artwork" or posterize > 0 or colors != "auto":
-            image = _posterize(image, posterize, colors)
+            image = _posterize(image.convert("RGBA"), posterize, colors).convert("RGB")
 
-        image = _resize_for_detail(image, detail)
+        image = _resize_for_detail(image.convert("RGBA"), detail)
+        if image.size != source_alpha.size:
+            source_alpha = source_alpha.resize(image.size, Image.Resampling.NEAREST)
+        image.putalpha(source_alpha)
 
         if background == "transparent":
             rgba = image.convert("RGBA")
