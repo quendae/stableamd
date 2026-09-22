@@ -34,6 +34,7 @@ class GenerationJobsApiMixin:
         self._generation_jobs: dict[str, dict[str, Any]] = {}
         self._generation_jobs_lock = RLock()
         self._generation_run_lock = Lock()
+        self._vector_run_lock = Lock()
 
     @staticmethod
     def _public_generation_job(record: dict[str, Any]) -> dict[str, Any]:
@@ -91,6 +92,61 @@ class GenerationJobsApiMixin:
 
     def _run_generation_job(self, job_id: str, request: dict[str, Any]) -> None:
         self._run_bridge_job(job_id, request, "generate")
+
+    def _run_vector_job(self, job_id: str, request: dict[str, Any], bridge_method: str) -> None:
+        # Local Image-to-SVG work is CPU-bound and must not wait behind GPU
+        # generation. Creative mode acquires the GPU lock only inside the bridge
+        # for its Krea preprocessing stage.
+        with self._vector_run_lock:
+            self._set_generation_job(job_id, status="running", startedAtUtc=_utc_now())
+            try:
+                runner = getattr(self.bridge, bridge_method)
+                if not callable(runner):
+                    raise base.StableAmdBridgeError(
+                        f"StableAMD bridge method '{bridge_method}' is unavailable."
+                    )
+                result = runner(request)
+            except Exception as exc:
+                self._set_generation_job(
+                    job_id,
+                    status="failed",
+                    completedAtUtc=_utc_now(),
+                    error=str(exc) or exc.__class__.__name__,
+                )
+                return
+            self._set_generation_job(
+                job_id,
+                status="completed",
+                completedAtUtc=_utc_now(),
+                result=result,
+                error=None,
+            )
+
+    def _submit_vector_job(self, request: dict[str, Any], bridge_method: str) -> dict[str, Any]:
+        method_name = str(bridge_method or "").strip()
+        if not method_name:
+            raise ValueError("Vector jobs require a bridge method.")
+        job_id = uuid.uuid4().hex
+        record = {
+            "jobId": job_id,
+            "jobKind": "vector",
+            "status": "queued",
+            "createdAtUtc": _utc_now(),
+            "startedAtUtc": None,
+            "completedAtUtc": None,
+            "error": None,
+            "result": None,
+        }
+        with self._generation_jobs_lock:
+            self._generation_jobs[job_id] = record
+        worker = Thread(
+            target=self._run_vector_job,
+            args=(job_id, dict(request), method_name),
+            name=f"stableamd-vector-{job_id[:8]}",
+            daemon=True,
+        )
+        worker.start()
+        return self._public_generation_job(record)
 
     def _submit_bridge_job(
         self,
