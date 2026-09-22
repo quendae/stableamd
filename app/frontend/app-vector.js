@@ -139,10 +139,61 @@
     });
   }
 
+  function imageVectorPreviewUrl(source) {
+    if (!source) return "";
+    if (source.kind === "upload") {
+      return source.image ? `data:${source.image.mimeType};base64,${source.image.dataBase64}` : "";
+    }
+    const record = state.history?.find((item) => String(vectorValue(item, "promptId", "PromptId") || "") === String(source.id || ""));
+    const path = vectorValue(record, "imagePath", "ImagePath");
+    return path ? imageUrl(path) : "";
+  }
+
+  function renderImageVectorCropEditor() {
+    const editor = vectorQuery("#image-vector-crop-editor");
+    const cropMode = vectorQuery("#image-vector-crop")?.value || "preserve";
+    if (!editor) return;
+    if (cropMode !== "manual" || !vectorState.imageSource) {
+      editor.hidden = true;
+      editor.replaceChildren();
+      return;
+    }
+    editor.hidden = false;
+    editor.replaceChildren();
+    const image = document.createElement("img");
+    image.className = "image-vector-crop-preview";
+    image.alt = "Image-to-SVG crop source";
+    image.src = imageVectorPreviewUrl(vectorState.imageSource);
+    const grid = document.createElement("div");
+    grid.className = "vector-crop-fields";
+    const values = vectorState.imageSource.crop || {x: 0, y: 0, width: 1, height: 1};
+    for (const [key, label] of [["x", "X"], ["y", "Y"], ["width", "Width"], ["height", "Height"]]) {
+      const wrapper = document.createElement("label");
+      wrapper.className = "field";
+      const span = document.createElement("span");
+      span.textContent = label;
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = key === "width" || key === "height" ? "1" : "0";
+      input.value = String(values[key]);
+      input.dataset.cropField = key;
+      input.addEventListener("input", () => {
+        vectorState.imageSource.crop = {
+          ...(vectorState.imageSource.crop || values),
+          [key]: Number(input.value),
+        };
+      });
+      wrapper.append(span, input);
+      grid.append(wrapper);
+    }
+    editor.append(image, grid);
+  }
+
   function setImageVectorSource(source, label) {
     vectorState.imageSource = source;
     const status = vectorQuery("#image-vector-source-status");
     if (status) status.textContent = label || "Image source selected.";
+    renderImageVectorCropEditor();
   }
 
   function useCurrentImageVector() {
@@ -188,8 +239,13 @@
     if (stylization) payload.stylization = stylization;
     if (cropMode === "manual") {
       const crop = vectorState.imageSource?.crop;
-      if (!crop) throw new Error("Manual crop is not configured yet. Select Auto-trim or Preserve canvas.");
-      payload.crop = crop;
+      if (!crop) throw new Error("Define the manual crop rectangle first.");
+      payload.crop = {
+        x: Math.max(0, Math.trunc(Number(crop.x))),
+        y: Math.max(0, Math.trunc(Number(crop.y))),
+        width: Math.max(1, Math.trunc(Number(crop.width))),
+        height: Math.max(1, Math.trunc(Number(crop.height))),
+      };
     }
     return payload;
   }
@@ -588,7 +644,7 @@
     vectorQuery("#image-vector-use-current")?.addEventListener("click", useCurrentImageVector);
     vectorQuery("#image-vector-from-gallery")?.addEventListener("click", chooseImageVectorGallery);
     vectorQuery("#image-vector-mode")?.addEventListener("change", () => { syncImageVectorStylization(); applyImageVectorPreset(); });
-    vectorQuery("#image-vector-stylization")?.addEventListener("change", applyImageVectorPreset);
+    vectorQuery("#image-vector-stylization")?.addEventListener("change", applyImageVectorPreset);\n    vectorQuery("#image-vector-crop")?.addEventListener("change", renderImageVectorCropEditor);
     for (const [id, output] of [
       ["#image-vector-smoothing", "#image-vector-smoothing-value"],
       ["#image-vector-edge", "#image-vector-edge-value"],
