@@ -47,6 +47,26 @@ Describe 'StableAMD v0.3 frontend contract' {
         $js | Should -Match 'capabilities.*img2img|img2img.*capabilities'
     }
 
+    It 'exposes the Image-to-SVG workflow with source modes and progressive controls' {
+        $js = Get-Content -LiteralPath (Join-Path $repoRoot 'app/frontend/app-vector.js') -Raw
+        $index = Get-Content -LiteralPath $indexPath -Raw
+
+        $js | Should -Match '/api/vector/image-to-svg'
+        $js | Should -Match 'image-vector-upload'
+        $js | Should -Match 'image-vector-use-current'
+        $js | Should -Match 'image-vector-from-gallery'
+        $js | Should -Match 'photo-stylized'
+        $js | Should -Match 'creative'
+        $js | Should -Match 'smoothing'
+        $js | Should -Match 'posterize'
+        $js | Should -Match 'backgroundTolerance'
+        $js | Should -Match 'vector-convert'
+        $index | Should -Match 'Text to SVG'
+        $index | Should -Match 'Image to SVG'
+        $index | Should -Match 'Manual crop'
+        $index | Should -Match 'Advanced'
+    }
+
     It 'manages bundle asset folders for diffusion models text encoders and VAE files' {
         Test-Path $frontendV03Path | Should -BeTrue
         $js = Get-Content -LiteralPath $frontendV03Path -Raw
