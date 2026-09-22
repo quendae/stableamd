@@ -188,7 +188,17 @@ def border_background_mask(
     return vector._border_connected_background_mask(pixels, width, height, tolerance=tolerance)
 
 
-def _alpha_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
+def _pil():
+    try:
+        from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+    except ImportError as exc:
+        raise base.StableAmdBridgeError(
+            "Image-to-SVG preprocessing requires Pillow in the managed StableAMD runtime."
+        ) from exc
+    return Image, ImageEnhance, ImageFilter, ImageOps
+
+
+def _alpha_bbox(image: Any) -> tuple[int, int, int, int] | None:
     alpha = image.getchannel("A")
     minimum, maximum = alpha.getextrema()
     if minimum == 255 and maximum == 255:
@@ -196,7 +206,7 @@ def _alpha_bbox(image: Image.Image) -> tuple[int, int, int, int] | None:
     return alpha.getbbox()
 
 
-def _background_bbox(image: Image.Image, tolerance: int) -> tuple[int, int, int, int] | None:
+def _background_bbox(image: Any, tolerance: int) -> tuple[int, int, int, int] | None:
     rgba = image.convert("RGBA")
     pixels = list(rgba.getdata())
     mask = border_background_mask(
@@ -215,7 +225,7 @@ def _background_bbox(image: Image.Image, tolerance: int) -> tuple[int, int, int,
     return min(xs), min(ys), max(xs) + 1, max(ys) + 1
 
 
-def _apply_crop(image: Image.Image, crop_mode: str, crop: dict[str, int] | None, tolerance: int) -> Image.Image:
+def _apply_crop(image: Any, crop_mode: str, crop: dict[str, int] | None, tolerance: int) -> Any:
     if crop_mode == "preserve":
         return image
     if crop_mode == "manual":
@@ -235,7 +245,7 @@ def _apply_crop(image: Image.Image, crop_mode: str, crop: dict[str, int] | None,
     return image.crop(bbox)
 
 
-def _posterize(image: Image.Image, amount: int, colors: int | str) -> Image.Image:
+def _posterize(image: Any, amount: int, colors: int | str) -> Any:
     if amount <= 0 and colors == "auto":
         return image
     levels = max(2, min(256, int(round(256 - (amount * 2.2)))))
@@ -248,7 +258,7 @@ def _posterize(image: Image.Image, amount: int, colors: int | str) -> Image.Imag
     return rgb.convert("RGBA")
 
 
-def _resize_for_detail(image: Image.Image, detail: str) -> Image.Image:
+def _resize_for_detail(image: Any, detail: str) -> Any:
     max_dim = {"simple": 1536, "medium": 2048, "detailed": 3072}[detail]
     if max(image.size) <= max_dim:
         return image
@@ -270,6 +280,7 @@ def preprocess_image_to_svg(
     crop: dict[str, int] | None,
     advanced: dict[str, Any],
 ) -> Path:
+    Image, ImageEnhance, ImageFilter, ImageOps = _pil()
     source = Path(source_path).resolve()
     destination = Path(destination_path).resolve()
     if not source.is_file():
